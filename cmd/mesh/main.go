@@ -20,10 +20,12 @@ import (
 )
 
 var (
+	version = "0.1.0"
 	cfg     *config.Config
 	rootCmd = &cobra.Command{
-		Use:   "mesh",
-		Short: "Agent-Mesh: Autonomous AI Agent Ops, Quota Pacing & Context Platform",
+		Use:     "mesh",
+		Version: version,
+		Short:   "Agent-Mesh: Autonomous AI Agent Ops, Quota Pacing & Context Platform",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			var err error
 			cfg, err = config.LoadConfig()
@@ -34,6 +36,14 @@ var (
 		},
 	}
 )
+
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print the agent-mesh version",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("mesh version %s\n", version)
+	},
+}
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
@@ -530,6 +540,7 @@ var taskAddCmd = &cobra.Command{
 
 func init() {
 	cfg = config.DefaultConfig()
+	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(routeCmd)
 	rootCmd.AddCommand(statuslineCmd)
