@@ -1,0 +1,339 @@
+package bridge
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+const (
+	DefaultRemoteHost  = "mansol-mbp"
+	LocalMansolPrefix  = "/Users/vincevasile/Documents/dev/mansol"
+	RemoteMansolPrefix = "/Users/mansolvv/Documents/dev/managed_solution"
+	DefaultSSHTimeout  = 2 * time.Second
+)
+
+// RepoMapping represents a repository configuration from scan-repos.json.
+type RepoMapping struct {
+	Name     string   `json:"name"`
+	Path     string   `json:"path"`
+	Projects []string `json:"projects,omitempty"`
+}
+
+// ScanReposConfig represents the root schema of scan-repos.json.
+type ScanReposConfig struct {
+	AuthorIdentities []string      `json:"author_identities,omitempty"`
+	Repos            []RepoMapping `json:"repos"`
+}
+
+// DefaultScanReposPath returns the path to ~/.agents/skills/ticket-notes/scan-repos.json.
+func DefaultScanReposPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".agents", "skills", "ticket-notes", "scan-repos.json")
+}
+
+// LoadScanRepos reads repo mappings from the given path (or default path if empty).
+func LoadScanRepos(configPath string) (*ScanReposConfig, error) {
+	if configPath == "" {
+		configPath = DefaultScanReposPath()
+	}
+	if configPath == "" {
+		return nil, fmt.Errorf("unable to determine user home directory")
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read scan-repos.json from %s: %w", configPath, err)
+	}
+
+	var cfg ScanReposConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse scan-repos.json: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// FindMappedRepo checks if targetPath matches or is inside one of the scanned repos.
+func FindMappedRepo(cfg *ScanReposConfig, targetPath string) *RepoMapping {
+	if cfg == nil || len(cfg.Repos) == 0 {
+		return nil
+	}
+
+	cleanTarget := filepath.Clean(targetPath)
+	for _, repo := range cfg.Repos {
+		cleanRepo := filepath.Clean(repo.Path)
+		if cleanTarget == cleanRepo || strings.HasPrefix(cleanTarget, cleanRepo+string(filepath.Separator)) {
+			return &repo
+		}
+	}
+	return nil
+}
+
+// ToRemotePath translates a local path to the remote mansol-mbp path.
+// Example: /Users/vincevasile/Documents/dev/mansol/foo -> /Users/mansolvv/Documents/dev/managed_solution/foo
+func ToRemotePath(localPath string) string {
+	clean := filepath.Clean(localPath)
+	if clean == LocalMansolPrefix {
+		return RemoteMansolPrefix
+	}
+	if strings.HasPrefix(clean, LocalMansolPrefix+string(filepath.Separator)) {
+		rel := strings.TrimPrefix(clean, LocalMansolPrefix)
+		return filepath.Join(RemoteMansolPrefix, rel)
+	}
+	return clean
+}
+
+// ToLocalPath translates a remote mansol-mbp path to the local path.
+// Example: /Users/mansolvv/Documents/dev/managed_solution/foo -> /Users/vincevasile/Documents/dev/mansol/foo
+func ToLocalPath(remotePath string) string {
+	clean := filepath.Clean(remotePath)
+	if clean == RemoteMansolPrefix {
+		return LocalMansolPrefix
+	}
+	if strings.HasPrefix(clean, RemoteMansolPrefix+string(filepath.Separator)) {
+		rel := strings.TrimPrefix(clean, RemoteMansolPrefix)
+		return filepath.Join(LocalMansolPrefix, rel)
+	}
+	return clean
+}
+
+// IsWorkRepo determines if the path resides under the local or remote Managed Solution tree.
+func IsWorkRepo(path string) bool {
+	clean := filepath.Clean(path)
+	return clean == LocalMansolPrefix ||
+		strings.HasPrefix(clean, LocalMansolPrefix+string(filepath.Separator)) ||
+		clean == RemoteMansolPrefix ||
+		strings.HasPrefix(clean, RemoteMansolPrefix+string(filepath.Separator))
+}
+
+// ProbeResult holds connectivity test metrics for an SSH host.
+type ProbeResult struct {
+	Host      string        `json:"host"`
+	Reachable bool          `json:"reachable"`
+	Latency   time.Duration `json:"latency"`
+	Error     string        `json:"error,omitempty"`
+}
+
+// ProbeSSH tests connectivity to the target host with the specified timeout (default 2s).
+func ProbeSSH(ctx context.Context, host string, timeout time.Duration) ProbeResult {
+	if host == "" {
+		host = DefaultRemoteHost
+	}
+	if timeout <= 0 {
+		timeout = DefaultSSHTimeout
+	}
+
+	timeoutSec := int(timeout.Seconds())
+	if timeoutSec < 1 {
+		timeoutSec = 2
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	start := time.Now()
+	cmd := exec.CommandContext(probeCtx, "ssh",
+		"-o", "BatchMode=yes",
+		"-o", fmt.Sprintf("ConnectTimeout=%d", timeoutSec),
+		"-o", "StrictHostKeyChecking=accept-new",
+		host,
+		"true",
+	)
+
+	err := cmd.Run()
+	duration := time.Since(start)
+
+	if err != nil {
+		errStr := err.Error()
+		if probeCtx.Err() == context.DeadlineExceeded {
+			errStr = fmt.Sprintf("connection timed out after %s", timeout)
+		}
+		return ProbeResult{
+			Host:      host,
+			Reachable: false,
+			Latency:   duration,
+			Error:     errStr,
+		}
+	}
+
+	return ProbeResult{
+		Host:      host,
+		Reachable: true,
+		Latency:   duration,
+	}
+}
+
+// CheckResult contains bridge diagnostics for a directory.
+type CheckResult struct {
+	Directory     string       `json:"directory"`
+	LocalPath     string       `json:"local_path"`
+	RemotePath    string       `json:"remote_path"`
+	IsWorkRepo    bool         `json:"is_work_repo"`
+	MappedRepo    *RepoMapping `json:"mapped_repo,omitempty"`
+	RemoteHost    string       `json:"remote_host"`
+	Probe         ProbeResult  `json:"probe"`
+	RouteDecision string       `json:"route_decision"`
+}
+
+// Check inspects directory mapping, path translation, and remote SSH connectivity.
+func Check(ctx context.Context, dir string, host string) (*CheckResult, error) {
+	if dir == "" {
+		var err error
+		dir, err = os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get current working directory: %w", err)
+		}
+	}
+
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		absDir = dir
+	}
+
+	if host == "" {
+		host = DefaultRemoteHost
+	}
+
+	localPath := ToLocalPath(absDir)
+	remotePath := ToRemotePath(absDir)
+	isWork := IsWorkRepo(absDir)
+
+	scanCfg, _ := LoadScanRepos("")
+	mappedRepo := FindMappedRepo(scanCfg, localPath)
+
+	probe := ProbeSSH(ctx, host, DefaultSSHTimeout)
+
+	decision := "local (standalone)"
+	if isWork || mappedRepo != nil {
+		if probe.Reachable {
+			decision = fmt.Sprintf("remote (%s)", host)
+		} else {
+			decision = fmt.Sprintf("local fallback (%s unreachable)", host)
+		}
+	} else if probe.Reachable {
+		decision = "local (non-work repo)"
+	}
+
+	return &CheckResult{
+		Directory:     absDir,
+		LocalPath:     localPath,
+		RemotePath:    remotePath,
+		IsWorkRepo:    isWork,
+		MappedRepo:    mappedRepo,
+		RemoteHost:    host,
+		Probe:         probe,
+		RouteDecision: decision,
+	}, nil
+}
+
+// LaunchOptions configures command or session launching across the bridge.
+type LaunchOptions struct {
+	Host       string
+	TargetDir  string
+	Args       []string
+	Timeout    time.Duration
+	ForceLocal bool
+}
+
+// quoteForShell returns a single-quoted shell argument safe for remote bash/zsh execution.
+func quoteForShell(arg string) string {
+	return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+}
+
+// Launch executes remote commands or interactive Claude sessions over SSH,
+// falling back to local execution without closing the shell.
+func Launch(ctx context.Context, opts LaunchOptions) error {
+	if opts.Host == "" {
+		opts.Host = DefaultRemoteHost
+	}
+	if opts.Timeout <= 0 {
+		opts.Timeout = DefaultSSHTimeout
+	}
+
+	if opts.TargetDir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get working directory: %w", err)
+		}
+		opts.TargetDir = cwd
+	}
+
+	absDir, err := filepath.Abs(opts.TargetDir)
+	if err != nil {
+		absDir = opts.TargetDir
+	}
+
+	localDir := ToLocalPath(absDir)
+	remoteDir := ToRemotePath(absDir)
+
+	// Default to interactive Claude session if no command specified
+	execArgs := opts.Args
+	if len(execArgs) == 0 {
+		execArgs = []string{"claude"}
+	}
+
+	// If force local requested, bypass probe
+	if opts.ForceLocal {
+		fmt.Printf("\033[1;33m[bridge]\033[0m Force local mode requested. Executing locally at: %s\n", localDir)
+		return executeLocally(ctx, localDir, execArgs)
+	}
+
+	// Probe remote host
+	fmt.Printf("\033[1;36m[bridge]\033[0m Probing SSH connectivity to %s (timeout: %s)...\n", opts.Host, opts.Timeout)
+	probe := ProbeSSH(ctx, opts.Host, opts.Timeout)
+
+	if probe.Reachable {
+		fmt.Printf("\033[1;32m✔ [bridge]\033[0m Connected to %s (%s). Executing remotely at %s...\n\n",
+			opts.Host, probe.Latency.Round(time.Millisecond), remoteDir)
+		return executeRemotely(ctx, opts.Host, remoteDir, execArgs)
+	}
+
+	// Remote unreachable: Fall back to local execution without closing shell
+	reason := probe.Error
+	if reason == "" {
+		reason = "host unreachable"
+	}
+	fmt.Fprintf(os.Stderr, "\033[1;31m✖ [bridge]\033[0m Remote host %s unreachable (%s).\n", opts.Host, reason)
+	fmt.Fprintf(os.Stderr, "\033[1;33m⚡ [bridge]\033[0m Falling back to local execution at %s (shell maintained)...\n\n", localDir)
+
+	return executeLocally(ctx, localDir, execArgs)
+}
+
+func executeRemotely(ctx context.Context, host, remoteDir string, args []string) error {
+	var quoted []string
+	for _, a := range args {
+		quoted = append(quoted, quoteForShell(a))
+	}
+	cmdString := strings.Join(quoted, " ")
+	remoteScript := fmt.Sprintf("cd %s && %s", quoteForShell(remoteDir), cmdString)
+
+	// -t forces pseudo-terminal allocation for interactive Claude/shells
+	sshCmd := exec.CommandContext(ctx, "ssh", "-t", host, remoteScript)
+	sshCmd.Stdin = os.Stdin
+	sshCmd.Stdout = os.Stdout
+	sshCmd.Stderr = os.Stderr
+
+	return sshCmd.Run()
+}
+
+func executeLocally(ctx context.Context, localDir string, args []string) error {
+	bin := args[0]
+	cmdArgs := args[1:]
+
+	cmd := exec.CommandContext(ctx, bin, cmdArgs...)
+	cmd.Dir = localDir
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
