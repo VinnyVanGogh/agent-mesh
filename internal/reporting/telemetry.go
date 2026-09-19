@@ -262,7 +262,7 @@ func FetchTelemetryWithRange(cfg *config.Config, rangeOpts DateRangeOptions) (
 			var globalMin, globalMax sql.NullString
 			_ = conn.QueryRow(`SELECT MIN(ts), MAX(ts) FROM requests`).Scan(&globalMin, &globalMax)
 			return work, personal, gemini, combined, fmt.Errorf("no telemetry records found between %s and %s (database spans %s to %s)",
-				rangeOpts.Since, rangeOpts.Until, formatPeriod(globalMin.String, globalMax.String), formatPeriod(globalMin.String, globalMax.String))
+				rangeOpts.Since, rangeOpts.Until, formatBoundDate(globalMin.String), formatBoundDate(globalMax.String))
 		}
 	}
 
@@ -413,6 +413,17 @@ func formatPeriod(start, end string) string {
 	return "Aug 1 – Sep 19, 2026"
 }
 
+func formatBoundDate(s string) string {
+	if s == "" {
+		return "unknown"
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err == nil {
+		return t.Format("Jan 2, 2006")
+	}
+	return s
+}
+
 func parseDateBound(s string, isEnd bool) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -436,6 +447,7 @@ func parseDateBound(s string, isEnd bool) (string, error) {
 	formats := []string{
 		time.RFC3339,
 		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
 		"2006-01-02",
 		"2006/01/02",
 		"01/02/2006",

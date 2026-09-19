@@ -281,45 +281,21 @@ var reportCmd = &cobra.Command{
 			defer cancel()
 
 			for _, t := range types {
-				var targetPath string
-				switch t {
-				case "personal":
-					targetPath = filepath.Join(home, "Desktop", "claude-code-personal-value-audit.pdf")
-				case "gemini":
-					targetPath = filepath.Join(home, "Desktop", "antigravity-gemini-native-report.pdf")
-				case "combined":
-					targetPath = filepath.Join(home, "Desktop", "multi-ai-fleet-executive-report.pdf")
-				default:
-					targetPath = filepath.Join(home, "Desktop", "managed-solution-ai-justification.pdf")
-				}
+				targetPath := reporting.ResolveBatchDestination(outFlag, t, cfg)
 
 				fmt.Printf("  • Rendering \033[1;33m%s\033[0m report...", t)
 				if err := reporting.RenderReport(ctx, t, cfg, targetPath, rangeOpts); err != nil {
 					fmt.Printf(" \033[1;31mFAILED\033[0m (%v)\n", err)
 				} else {
-					fmt.Printf(" \033[1;32m✔ DONE\033[0m -> %s\n", filepath.Base(targetPath))
+					fmt.Printf(" \033[1;32m✔ DONE\033[0m -> %s\n", targetPath)
 				}
 			}
-			fmt.Println("\033[1;32m✔ All reports successfully generated on Desktop!\033[0m")
+			fmt.Println("\033[1;32m✔ All reports successfully generated!\033[0m")
 			return
 		}
 
 		if outFlag == "" {
-			switch strings.ToLower(reportType) {
-			case "personal":
-				outFlag = filepath.Join(home, "Desktop", "claude-code-personal-value-audit.pdf")
-			case "gemini", "antigravity":
-				outFlag = filepath.Join(home, "Desktop", "antigravity-gemini-native-report.pdf")
-			case "combined", "fleet":
-				outFlag = filepath.Join(home, "Desktop", "multi-ai-fleet-executive-report.pdf")
-			default:
-				if cfg != nil && cfg.CompanyName != "" {
-					slug := strings.ToLower(strings.ReplaceAll(cfg.CompanyName, " ", "-"))
-					outFlag = filepath.Join(home, "Desktop", fmt.Sprintf("%s-ai-justification.pdf", slug))
-				} else {
-					outFlag = filepath.Join(home, "Desktop", "managed-solution-ai-justification.pdf")
-				}
-			}
+			outFlag = filepath.Join(home, "Desktop", reporting.DefaultReportFilename(reportType, cfg))
 		}
 
 		fmt.Printf("\033[1;36m[Agent-Mesh]\033[0m Rendering \033[1;33m%s\033[0m report via Chrome CDP...\n", reportType)

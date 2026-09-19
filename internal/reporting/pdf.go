@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html/template"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/chromedp/cdproto/page"
@@ -89,6 +90,11 @@ func generateWorkHTML(data WorkReportData) (string, error) {
   <style>
     @page { size: letter; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      max-height: 100%;
+      overflow: hidden;
+    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       color: #1e293b; background: #ffffff; padding: 30px 36px; font-size: 12.5px; line-height: 1.45;
@@ -129,6 +135,17 @@ func generateWorkHTML(data WorkReportData) (string, error) {
     .proposal-item .label { font-size: 9.5px; text-transform: uppercase; color: #94a3b8; font-weight: 600; }
     .proposal-item .value { font-size: 15.5px; font-weight: 700; color: #f8fafc; margin-top: 2px; }
     .footer { margin-top: 14px; border-top: 1px solid #e2e8f0; padding-top: 7px; display: flex; justify-content: space-between; font-size: 9.5px; color: #94a3b8; }
+    @media print {
+      html, body {
+        height: 100%;
+        max-height: 100%;
+        overflow: hidden;
+      }
+      .header, .kpi-grid, .two-col, .card, .proposal-box, .footer {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+    }
   </style>
 </head>
 <body>
@@ -299,6 +316,11 @@ func generatePersonalHTML(data PersonalReportData) (string, error) {
   <style>
     @page { size: letter; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      max-height: 100%;
+      overflow: hidden;
+    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       color: #1e293b; background: #ffffff; padding: 30px 36px; font-size: 12.5px; line-height: 1.45;
@@ -334,6 +356,17 @@ func generatePersonalHTML(data PersonalReportData) (string, error) {
     .highlight-item .label { font-size: 9.5px; text-transform: uppercase; color: #c7d2fe; font-weight: 600; }
     .highlight-item .value { font-size: 15.5px; font-weight: 700; color: #ffffff; margin-top: 2px; }
     .footer { margin-top: 14px; border-top: 1px solid #e2e8f0; padding-top: 7px; display: flex; justify-content: space-between; font-size: 9.5px; color: #94a3b8; }
+    @media print {
+      html, body {
+        height: 100%;
+        max-height: 100%;
+        overflow: hidden;
+      }
+      .header, .kpi-grid, .two-col, .card, .highlight-card, .footer {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+    }
   </style>
 </head>
 <body>
@@ -487,6 +520,11 @@ func generateGeminiHTML(data GeminiReportData) (string, error) {
   <style>
     @page { size: letter; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      max-height: 100%;
+      overflow: hidden;
+    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       color: #1e293b; background: #ffffff; padding: 30px 36px; font-size: 12.5px; line-height: 1.45;
@@ -525,6 +563,17 @@ func generateGeminiHTML(data GeminiReportData) (string, error) {
     .gradient-item .label { font-size: 9.5px; text-transform: uppercase; color: #bae6fd; font-weight: 600; }
     .gradient-item .value { font-size: 15.5px; font-weight: 700; color: #ffffff; margin-top: 2px; }
     .footer { margin-top: 14px; border-top: 1px solid #e2e8f0; padding-top: 7px; display: flex; justify-content: space-between; font-size: 9.5px; color: #94a3b8; }
+    @media print {
+      html, body {
+        height: 100%;
+        max-height: 100%;
+        overflow: hidden;
+      }
+      .header, .kpi-grid, .two-col, .card, .gradient-box, .footer {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+    }
   </style>
 </head>
 <body>
@@ -685,6 +734,11 @@ func generateCombinedHTML(data CombinedReportData) (string, error) {
   <style>
     @page { size: letter; margin: 0; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      max-height: 100%;
+      overflow: hidden;
+    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       color: #1e293b; background: #ffffff; padding: 30px 36px; font-size: 12px; line-height: 1.4;
@@ -723,6 +777,17 @@ func generateCombinedHTML(data CombinedReportData) (string, error) {
     .summary-item .label { font-size: 9px; text-transform: uppercase; color: #94a3b8; font-weight: 600; }
     .summary-item .value { font-size: 15px; font-weight: 700; color: #f8fafc; margin-top: 1px; }
     .footer { margin-top: 12px; border-top: 1px solid #e2e8f0; padding-top: 7px; display: flex; justify-content: space-between; font-size: 9px; color: #94a3b8; }
+    @media print {
+      html, body {
+        height: 100%;
+        max-height: 100%;
+        overflow: hidden;
+      }
+      .header, .kpi-grid, .two-col, .card, .summary-box, .footer {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+    }
   </style>
 </head>
 <body>
@@ -924,6 +989,7 @@ func renderHTMLToPDF(ctx context.Context, htmlContent string, outputPath string)
 				WithMarginBottom(0).
 				WithMarginLeft(0).
 				WithMarginRight(0).
+				WithPageRanges("1").
 				Do(ctx)
 			return pErr
 		}),
@@ -932,9 +998,77 @@ func renderHTMLToPDF(ctx context.Context, htmlContent string, outputPath string)
 		return fmt.Errorf("chromedp PDF generation failed: %w", err)
 	}
 
+	if dir := filepath.Dir(outputPath); dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create output directory %s: %w", dir, err)
+		}
+	}
+
 	if err := os.WriteFile(outputPath, buf, 0644); err != nil {
 		return fmt.Errorf("failed to write output PDF: %w", err)
 	}
 
 	return nil
+}
+
+// DefaultReportFilename returns the canonical file name for a report type and configuration.
+func DefaultReportFilename(reportType string, cfg *config.Config) string {
+	switch strings.ToLower(strings.TrimSpace(reportType)) {
+	case "personal":
+		return "claude-code-personal-value-audit.pdf"
+	case "gemini", "antigravity":
+		return "antigravity-gemini-native-report.pdf"
+	case "combined", "fleet":
+		return "multi-ai-fleet-executive-report.pdf"
+	default:
+		if cfg != nil && strings.TrimSpace(cfg.CompanyName) != "" {
+			slug := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(cfg.CompanyName), " ", "-"))
+			return fmt.Sprintf("%s-ai-justification.pdf", slug)
+		}
+		return "managed-solution-ai-justification.pdf"
+	}
+}
+
+// ResolveBatchDestination resolves a unique, collision-free file path for a report type.
+// If outputDirOrPattern is empty, it targets ~/Desktop/<default-filename>.
+// If outputDirOrPattern is a directory (or ends with a path separator), it places the default filename inside it.
+// If outputDirOrPattern is a file path (e.g. /tmp/report.pdf), it generates /tmp/report-<type>.pdf.
+func ResolveBatchDestination(outputDirOrPattern, reportType string, cfg *config.Config) string {
+	reportType = strings.ToLower(strings.TrimSpace(reportType))
+	defaultName := DefaultReportFilename(reportType, cfg)
+
+	if outputDirOrPattern == "" {
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, "Desktop", defaultName)
+	}
+
+	fi, err := os.Stat(outputDirOrPattern)
+	if (err == nil && fi.IsDir()) || strings.HasSuffix(outputDirOrPattern, string(filepath.Separator)) || strings.HasSuffix(outputDirOrPattern, "/") {
+		return filepath.Join(outputDirOrPattern, defaultName)
+	}
+
+	ext := filepath.Ext(outputDirOrPattern)
+	if ext == "" {
+		ext = ".pdf"
+		outputDirOrPattern += ext
+	}
+	base := strings.TrimSuffix(outputDirOrPattern, ext)
+	return fmt.Sprintf("%s-%s%s", base, reportType, ext)
+}
+
+// RenderAllReports generates all 4 executive reports (work, personal, gemini, combined)
+// ensuring collision-free file destinations. Returns a map of reportType -> generated path.
+func RenderAllReports(ctx context.Context, cfg *config.Config, outputDirOrPattern string, rangeOpts ...DateRangeOptions) (map[string]string, error) {
+	types := []string{"work", "personal", "gemini", "combined"}
+	generated := make(map[string]string)
+
+	for _, t := range types {
+		targetPath := ResolveBatchDestination(outputDirOrPattern, t, cfg)
+		if err := RenderReport(ctx, t, cfg, targetPath, rangeOpts...); err != nil {
+			return generated, fmt.Errorf("failed to render %s report to %s: %w", t, targetPath, err)
+		}
+		generated[t] = targetPath
+	}
+
+	return generated, nil
 }
