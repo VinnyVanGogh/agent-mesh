@@ -321,6 +321,40 @@ var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize agent-mesh directories and SQLite storage engine",
 	Run: func(cmd *cobra.Command, args []string) {
+		shellFlag, _ := cmd.Flags().GetBool("shell")
+		if shellFlag {
+			fmt.Println(`# Agent-Mesh Shell Integration
+# Add to ~/.zshrc or ~/.bashrc: eval "$(mesh init --shell)"
+
+alias ai-status="mesh status"
+alias ai-memo="mesh report --pdf --type work"
+alias ai-report="mesh report --pdf --type combined"
+alias ai-personal="mesh report --pdf --type personal"
+alias ai-gemini="mesh report --pdf --type gemini"
+alias ai-all="mesh report --pdf --type all"
+alias agy-status="mesh statusline"
+
+ai() {
+  eval "$(mesh route "$PWD" --eval 2>/dev/null)"
+  local TARGET_MODEL="${MESH_ROUTE_MODEL:-gemini-3.8-flash-high}"
+  local TARGET_CMD="${MESH_ROUTE_COMMAND:-agy}"
+
+  echo -e "\033[1;36m[Agent-Mesh]\033[0m Target: \033[1;32m$TARGET_MODEL\033[0m ($TARGET_CMD)"
+  echo -e "\033[0;33m[Context]\033[0m $MESH_ROUTE_REASON"
+
+  mesh statusline
+
+  if [[ "$MESH_ROUTE_TARGET" == "remote-claude" ]]; then
+    mesh bridge launch "$PWD" "$@"
+  elif [[ "$TARGET_CMD" == "claude" ]]; then
+    command claude "$@"
+  else
+    agy --model "$TARGET_MODEL" "$@"
+  fi
+}`)
+			return
+		}
+
 		if err := config.EnsureDataDir(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "Error creating data dir: %v\n", err)
 			os.Exit(1)
@@ -335,6 +369,8 @@ var initCmd = &cobra.Command{
 
 		fmt.Printf("\033[1;32m✔ Agent-Mesh initialized at: %s\033[0m\n", cfg.DataDir)
 		fmt.Printf("✔ SQLite database active with WAL mode: %s\n", cfg.DBPath)
+		fmt.Println("\nTo install shell aliases & auto-router, add this to your ~/.zshrc:")
+		fmt.Println("  \033[1;36meval \"$(mesh init --shell)\"\033[0m")
 	},
 }
 
@@ -520,6 +556,8 @@ func init() {
 	reportCmd.Flags().Bool("pdf", false, "Generate print-ready PDF report")
 	reportCmd.Flags().StringP("type", "t", "work", "Report type: work, personal, gemini, combined (default: work)")
 	reportCmd.Flags().StringP("output", "o", "", "Destination path for generated PDF")
+
+	initCmd.Flags().Bool("shell", false, "Print shell integration hook code for ~/.zshrc or ~/.bashrc")
 }
 
 func main() {

@@ -292,8 +292,13 @@ func Launch(ctx context.Context, opts LaunchOptions) error {
 	probe := ProbeSSH(ctx, opts.Host, opts.Timeout)
 
 	if probe.Reachable {
-		fmt.Printf("\033[1;32m✔ [bridge]\033[0m Connected to %s (%s). Executing remotely at %s...\n\n",
-			opts.Host, probe.Latency.Round(time.Millisecond), remoteDir)
+		fmt.Printf("\033[1;32m✔ [bridge]\033[0m Connected to %s (%s).\n",
+			opts.Host, probe.Latency.Round(time.Millisecond))
+
+		// Pre-flight background transcript sync: pull any remote Claude transcripts into local telemetry
+		syncRemoteTranscripts(ctx, opts.Host)
+
+		fmt.Printf("\033[1;36m[bridge]\033[0m Executing remotely at %s...\n\n", remoteDir)
 		return executeRemotely(ctx, opts.Host, remoteDir, execArgs)
 	}
 
@@ -306,6 +311,22 @@ func Launch(ctx context.Context, opts LaunchOptions) error {
 	fmt.Fprintf(os.Stderr, "\033[1;33m⚡ [bridge]\033[0m Falling back to local execution at %s (shell maintained)...\n\n", localDir)
 
 	return executeLocally(ctx, localDir, execArgs)
+}
+
+// syncRemoteTranscripts pulls remote Claude Code project transcripts into local storage
+func syncRemoteTranscripts(ctx context.Context, host string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	localProjectsDir := filepath.Join(home, ".claude", "projects")
+	remoteProjectsDir := fmt.Sprintf("%s:~/.claude/projects/", host)
+
+	syncCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(syncCtx, "rsync", "-az", "--update", "--exclude=*.lock", remoteProjectsDir, localProjectsDir)
+	_ = cmd.Run()
 }
 
 func executeRemotely(ctx context.Context, host, remoteDir string, args []string) error {
