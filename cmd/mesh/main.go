@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -18,13 +19,14 @@ import (
 	"github.com/vincevasile/agent-mesh/internal/reporting"
 	"github.com/vincevasile/agent-mesh/internal/router"
 	meshSync "github.com/vincevasile/agent-mesh/internal/sync"
+	"github.com/vincevasile/agent-mesh/internal/telemetry"
 )
 
 var (
 	version = "0.1.0"
 	cfg     *config.Config
 	rootCmd = &cobra.Command{
-		Use:     "mesh",
+		Use:     "mesh [command|args...]",
 		Version: version,
 		Short:   "Agent-Mesh: Autonomous AI Agent Ops, Quota Pacing & Context Platform",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -35,6 +37,10 @@ var (
 			}
 			return nil
 		},
+		FParseErrWhitelist: cobra.FParseErrWhitelist{
+			UnknownFlags: true,
+		},
+		Run: runSmartLaunch,
 	}
 )
 
@@ -628,6 +634,227 @@ var taskAddCmd = &cobra.Command{
 	},
 }
 
+var hookCmd = &cobra.Command{
+	Use:   "hook",
+	Short: "Agent-Mesh lifecycle and prompt hooks for Claude Code and Antigravity",
+}
+
+var hookPromptCmd = &cobra.Command{
+	Use:   "prompt",
+	Short: "Claude Code UserPromptSubmit hook: monitors 5h limit & stages handoff",
+	Run: func(cmd *cobra.Command, args []string) {
+		handleHookPrompt()
+	},
+}
+
+func handleHookPrompt() {
+	pacerState, err := router.LoadPacerState()
+	if err != nil {
+		fmt.Println("{}")
+		return
+	}
+
+	poolPersonal := pacerState.Pools[router.PoolPersonalClaude]
+	pool3P := pacerState.Pools[router.Pool3PClaude]
+	poolWork := pacerState.Pools[router.PoolWorkClaude]
+
+	var triggeredPool *router.QuotaPool
+	var warningReason string
+
+	checkPool := func(pool *router.QuotaPool) bool {
+		if pool == nil {
+			return false
+		}
+		if pool.FiveHour.UsedPct >= 85.0 || (pool.FiveHour.RemainingPct > 0 && pool.FiveHour.RemainingPct <= 15.0) {
+			resetStr := "soon"
+			if !pool.FiveHour.ResetsAt.IsZero() {
+				resetStr = pool.FiveHour.ResetsAt.Format("3:04pm")
+			} else if !pool.LockoutUntil.IsZero() {
+				resetStr = pool.LockoutUntil.Format("3:04pm")
+			}
+			warningReason = fmt.Sprintf("5-hour session quota is at %.0f%% (~%.0f%% left, resets @%s)", pool.FiveHour.UsedPct, pool.FiveHour.RemainingPct, resetStr)
+			return true
+		}
+		if pool.Weekly.UsedPct >= 85.0 || (pool.Weekly.RemainingPct > 0 && pool.Weekly.RemainingPct <= 15.0) {
+			resetStr := "soon"
+			if !pool.Weekly.ResetsAt.IsZero() {
+				resetStr = pool.Weekly.ResetsAt.Format("Mon 3:04pm")
+			}
+			warningReason = fmt.Sprintf("weekly quota is at %.0f%% (only %.0f%% remaining, resets @%s)", pool.Weekly.UsedPct, pool.Weekly.RemainingPct, resetStr)
+			return true
+		}
+		if pool.IsLocked {
+			warningReason = fmt.Sprintf("quota is currently locked (%s)", pool.LockoutReason)
+			return true
+		}
+		return false
+	}
+
+	if checkPool(poolPersonal) {
+		triggeredPool = poolPersonal
+	} else if checkPool(pool3P) {
+		triggeredPool = pool3P
+	} else if checkPool(poolWork) {
+		triggeredPool = poolWork
+	}
+
+	if triggeredPool == nil {
+		fmt.Println("{}")
+		return
+	}
+
+	// Quota is near limit (>= 85% used / <= 15% remaining)
+	cwd, _ := os.Getwd()
+
+	// Debounce notifications and clipboard overwrites to once per 15 mins
+	debounceFile := filepath.Join(os.TempDir(), "mesh-prelock-warned.ts")
+	shouldNotify := true
+	if stat, err := os.Stat(debounceFile); err == nil {
+		if time.Since(stat.ModTime()) < 15*time.Minute {
+			shouldNotify = false
+		}
+	}
+
+	if shouldNotify {
+		_ = os.WriteFile(debounceFile, []byte(fmt.Sprintf("%d", time.Now().Unix())), 0644)
+
+		// 1. Stage zero-token handoff snapshot directly into clipboard and /tmp/ai-handoff.md
+		var dbConn *sql.DB
+		if store, err := db.Open(cfg.DBPath); err == nil {
+			dbConn = store.DB()
+			defer store.Close()
+		}
+		_, _ = meshContext.GenerateHandoff(meshContext.HandoffOptions{
+			TargetModel:       "gemini",
+			ImmediateNextStep: fmt.Sprintf("Approaching quota limit: %s. Resume session seamlessly in Gemini.", warningReason),
+			Directory:         cwd,
+			DB:                dbConn,
+		})
+
+		// 2. Send desktop notification
+		telemetry.SendNotification(
+			"[Agent-Mesh] Quota Limit Warning (15% left)",
+			fmt.Sprintf("%s %s. Handoff staged in clipboard. Switch to Gemini (/model gemini-3.8-flash-high or open agy and paste).", triggeredPool.Name, warningReason),
+		)
+	}
+
+	// Return additionalContext to Claude Code so the model is aware and instructs the user
+	resp := map[string]string{
+		"additionalContext": fmt.Sprintf("⚠️ [AGENT-MESH QUOTA NOTICE]: %s %s. Agent-Mesh has pre-staged a zero-token context handoff snapshot in your system clipboard and /tmp/ai-handoff.md. Remind the user to prepare to switch to Gemini (/model gemini-3.8-flash-high or open Antigravity 'agy' and paste) before running out of turns.", triggeredPool.Name, warningReason),
+	}
+	out, _ := json.Marshal(resp)
+	fmt.Println(string(out))
+}
+
+func runSmartLaunch(cmd *cobra.Command, args []string) {
+	statusFlag, _ := cmd.Flags().GetBool("status")
+	if statusFlag {
+		statusCmd.Run(cmd, args)
+		return
+	}
+
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	forceClaude, _ := cmd.Flags().GetBool("claude")
+	forceGemini, _ := cmd.Flags().GetBool("gemini")
+	noSSH, _ := cmd.Flags().GetBool("no-ssh")
+
+	pacerState, _ := router.LoadPacerState()
+	cwd, _ := os.Getwd()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	remoteHost := "company-mbp"
+	if cfg != nil && cfg.RemoteHost != "" {
+		remoteHost = cfg.RemoteHost
+	}
+
+	var targetTool string
+	var targetModel string
+	var isRemoteWork bool
+
+	if forceClaude {
+		targetTool = "claude"
+		targetModel = "claude-sonnet-4-6"
+	} else if forceGemini {
+		targetTool = "agy"
+		targetModel = "gemini-3.8-flash-high"
+	} else {
+		decision, err := router.Route(ctx, cwd, pacerState, router.RouteOptions{
+			CheckSSH:   !noSSH,
+			RemoteHost: remoteHost,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Routing error: %v\n", err)
+			os.Exit(1)
+		}
+		targetTool = decision.Tool
+		targetModel = decision.Model
+		if decision.Target == router.TargetRemoteClaude {
+			isRemoteWork = true
+		}
+	}
+
+	// Always render the Tokyo Night statusline before launch
+	_ = router.RenderStatusline(os.Stdout, nil)
+
+	if dryRun {
+		fmt.Printf("\n\033[1;36m[Agent-Mesh :: Dry Run]\033[0m\n")
+		fmt.Printf("  • Tool:        %s\n", targetTool)
+		fmt.Printf("  • Model:       %s\n", targetModel)
+		fmt.Printf("  • Remote Work: %t\n", isRemoteWork)
+		fmt.Printf("  • Arguments:   %v\n", args)
+		return
+	}
+
+	// If remote work session on remote host:
+	if isRemoteWork {
+		err := bridge.Launch(ctx, bridge.LaunchOptions{
+			Host:       remoteHost,
+			TargetDir:  cwd,
+			Args:       args,
+			ForceLocal: false,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Bridge launch error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Local session execution
+	binName := targetTool
+	if binName == "" {
+		binName = "agy"
+	}
+
+	binPath, err := exec.LookPath(binName)
+	if err != nil {
+		altBin := "claude"
+		if binName == "claude" {
+			altBin = "agy"
+		}
+		binPath, err = exec.LookPath(altBin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: neither '%s' nor '%s' found in PATH.\n", binName, altBin)
+			os.Exit(1)
+		}
+		binName = altBin
+	}
+
+	subCmd := exec.Command(binPath, args...)
+	subCmd.Stdin = os.Stdin
+	subCmd.Stdout = os.Stdout
+	subCmd.Stderr = os.Stderr
+	subCmd.Env = os.Environ()
+
+	if err := subCmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		os.Exit(1)
+	}
+}
+
 func init() {
 	cfg = config.DefaultConfig()
 	rootCmd.AddCommand(versionCmd)
@@ -640,6 +867,15 @@ func init() {
 	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(taskCmd)
 	rootCmd.AddCommand(initCmd)
+	rootCmd.AddCommand(hookCmd)
+
+	hookCmd.AddCommand(hookPromptCmd)
+
+	rootCmd.Flags().BoolP("claude", "c", false, "Force route to Claude Code")
+	rootCmd.Flags().BoolP("gemini", "g", false, "Force route to Antigravity Gemini")
+	rootCmd.Flags().BoolP("status", "s", false, "Display fleet status & quota table")
+	rootCmd.Flags().BoolP("dry-run", "n", false, "Preview routed target without executing")
+	rootCmd.Flags().Bool("no-ssh", false, "Bypass remote SSH probe")
 
 	syncCmd.AddCommand(syncPullCmd)
 	syncCmd.AddCommand(syncExportCmd)
@@ -676,3 +912,4 @@ func main() {
 		os.Exit(1)
 	}
 }
+

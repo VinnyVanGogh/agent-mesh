@@ -11,9 +11,13 @@ import (
 )
 
 type RateLimitNotifier struct {
-	last3PLocked     bool
-	lastGeminiLocked bool
-	initialized      bool
+	last3PLocked      bool
+	lastGeminiLocked  bool
+	lastPersLocked    bool
+	warned3PPreLock   bool
+	warnedPersPreLock bool
+	warnedGemPreLock  bool
+	initialized       bool
 }
 
 func NewNotifier() *RateLimitNotifier {
@@ -45,19 +49,59 @@ func (n *RateLimitNotifier) check() {
 
 	pool3P := state.Pools[router.Pool3PClaude]
 	poolGem := state.Pools[router.PoolGeminiNative]
+	poolPers := state.Pools[router.PoolPersonalClaude]
 
 	is3PLocked := pool3P != nil && pool3P.IsLocked
 	isGemLocked := poolGem != nil && poolGem.IsLocked
+	isPersLocked := poolPers != nil && poolPers.IsLocked
 
 	if !n.initialized {
 		n.last3PLocked = is3PLocked
 		n.lastGeminiLocked = isGemLocked
+		n.lastPersLocked = isPersLocked
+		if pool3P != nil && pool3P.FiveHour.UsedPct >= 85.0 {
+			n.warned3PPreLock = true
+		}
+		if poolPers != nil && poolPers.FiveHour.UsedPct >= 85.0 {
+			n.warnedPersPreLock = true
+		}
 		n.initialized = true
 		return
 	}
 
+	// Personal Claude Pre-lockout warning (>= 85% used, ~15% left)
+	if poolPers != nil && !isPersLocked && poolPers.FiveHour.UsedPct >= 85.0 && !n.warnedPersPreLock {
+		resetStr := "soon"
+		if !poolPers.LockoutUntil.IsZero() {
+			resetStr = poolPers.LockoutUntil.Format("3:04pm")
+		}
+		SendNotification(
+			"[Agent-Mesh] Claude 5h Limit Warning (15% left)",
+			fmt.Sprintf("Claude Code 5-hour quota at %.0f%% (resets @%s). Handoff to Gemini staged in clipboard. Switch via /model gemini-3.8-flash-high or open agy.", poolPers.FiveHour.UsedPct, resetStr),
+		)
+		n.warnedPersPreLock = true
+	} else if poolPers != nil && poolPers.FiveHour.UsedPct < 80.0 {
+		n.warnedPersPreLock = false
+	}
+
+	// 3P Pre-lockout warning (>= 85% used, ~15% left)
+	if pool3P != nil && !is3PLocked && pool3P.FiveHour.UsedPct >= 85.0 && !n.warned3PPreLock {
+		resetStr := "soon"
+		if !pool3P.LockoutUntil.IsZero() {
+			resetStr = pool3P.LockoutUntil.Format("3:04pm")
+		}
+		SendNotification(
+			"[Agent-Mesh] 5h Quota Warning (15% left)",
+			fmt.Sprintf("3P Claude quota at %.0f%% (resets @%s). Handoff to Gemini staged in clipboard. Switch via /model gemini-3.8-flash-high or paste prompt.", pool3P.FiveHour.UsedPct, resetStr),
+		)
+		n.warned3PPreLock = true
+	} else if pool3P != nil && pool3P.FiveHour.UsedPct < 80.0 {
+		n.warned3PPreLock = false
+	}
+
 	// 3P Transition: Unlocked -> Locked
 	if is3PLocked && !n.last3PLocked {
+		n.warned3PPreLock = true
 		resetStr := "soon"
 		if pool3P != nil && !pool3P.LockoutUntil.IsZero() {
 			resetStr = pool3P.LockoutUntil.Format("3:04pm")
@@ -73,6 +117,27 @@ func (n *RateLimitNotifier) check() {
 		SendNotification(
 			"[Switch -> Claude] 3P Quota Ready",
 			"3P quota has reset! Ready to switch back to Claude 4.6 for deep architecture.",
+		)
+	}
+
+	// Personal Claude Transition: Unlocked -> Locked
+	if isPersLocked && !n.lastPersLocked {
+		n.warnedPersPreLock = true
+		resetStr := "soon"
+		if poolPers != nil && !poolPers.LockoutUntil.IsZero() {
+			resetStr = poolPers.LockoutUntil.Format("3:04pm")
+		}
+		SendNotification(
+			"[Switch -> Gemini] Claude Quota Locked",
+			fmt.Sprintf("Claude Code quota exhausted (resets @%s). Switch to Gemini 3.8 Flash in Antigravity (agy).", resetStr),
+		)
+	}
+
+	// Personal Claude Transition: Locked -> Reset
+	if !isPersLocked && n.lastPersLocked {
+		SendNotification(
+			"[Switch -> Claude] Claude Quota Ready",
+			"Claude Code quota has reset! Ready to switch back to Claude for deep architecture.",
 		)
 	}
 
@@ -94,6 +159,7 @@ func (n *RateLimitNotifier) check() {
 
 	n.last3PLocked = is3PLocked
 	n.lastGeminiLocked = isGemLocked
+	n.lastPersLocked = isPersLocked
 }
 
 func SendNotification(title, message string) {

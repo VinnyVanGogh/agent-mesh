@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)]()
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
-[![Pure Go](https://img.shields.io/badge/CGO-0%20(Pure%20Go)-blueviolet.svg)]()
+[![Pure Go](<https://img.shields.io/badge/CGO-0%20(Pure%20Go)-blueviolet.svg>)]()
 [![Statusline](https://img.shields.io/badge/Latency-%3C2ms-success.svg)]()
 
 > **Autonomous AI Agent Ops, Quota Pacing & Cross-AI Context Platform for Claude Code and Google Antigravity / Gemini.**
@@ -15,7 +15,7 @@ Agent-Mesh unifies disparate AI agent tooling into a single, high-performance st
 
 ```
                                  AGENT-MESH ARCHITECTURE
-                                 
+
       ┌────────────────────────┐                   ┌────────────────────────┐
       │      Claude Code       │                   │   Google Antigravity   │
       │  (Work & Personal Pro) │                   │    (Gemini CLI / 3P)   │
@@ -75,14 +75,18 @@ Agent-Mesh eliminates these pain points with a single, zero-dependency Go platfo
 ## Key Features
 
 ### ⚡ Sub-2ms Tokyo Night Statusline
+
 An ultra-low-latency statusline generator designed to integrate into Claude Code (`settings.json`) and Antigravity. Renders recessed Braille and block progress meters displaying:
+
 - Current active model & account role (`󰛡 Gemini (Native)` vs `🪪 Claude Max`).
 - Rolling 5-hour session quota consumption and exact reset time.
 - Weekly quota runway and reset target.
 - Dynamic routing advice with turn runway estimation.
 
 ### 🧭 Dynamic Multi-Pool Routing Waterfall
+
 Tracks 4 quota pools concurrently:
+
 1. **Work Claude** (Corporate subscription)
 2. **Personal Claude** (Claude Max 5x pool)
 3. **Gemini Native** (Google Antigravity primary daily driver)
@@ -91,7 +95,9 @@ Tracks 4 quota pools concurrently:
 Inspects the current working directory, git origin, SSH reachability to corporate nodes, and quota headroom to instantly route each command to the optimal model.
 
 ### 🔄 Zero-Clarification Context Handoff Engine
+
 Run `mesh handoff` in any repository to synthesize an authoritative continuation prompt containing:
+
 - Target model prompt framing (Gemini or Claude).
 - Current repository name and active git branch.
 - Short file modification status (`git status --short`).
@@ -101,8 +107,17 @@ Run `mesh handoff` in any repository to synthesize an authoritative continuation
 
 Automatically copies to the system clipboard (`pbcopy` / `xclip`) and writes `/tmp/ai-handoff.md`. Press `Cmd+V` in the destination AI session to resume execution with zero follow-up clarification needed.
 
+> [!TIP]
+> **Zero Token Waste (Pure Go Engine)**
+> Unlike LLM-based context generation scripts, `mesh handoff` consumes **0 AI tokens** and costs **$0.00** to run. It queries `git` and SQLite directly in `<10ms` using compiled Go.
+> - **Works When 100% Rate-Limited**: Because no LLM API calls are made, handoffs work flawlessly even when your Anthropic or Gemini quota is completely exhausted or you are offline.
+> - **Zero Hallucination**: Emits exact ground-truth git diffs and modified files rather than fuzzy AI summaries.
+> - **Preemptive 5-Hour Warning**: When your quota approaches 85% used (~15% left), `mesh hook prompt` automatically stages this handoff in your clipboard and alerts you before you run out of turns.
+
+
 ### 🌉 Resilient Work Bridge & Remote `tmux` Persistence
 Seamlessly bridges local workstations with enterprise hardware (e.g., `company-mbp`):
+
 - **Dynamic Path Translation**: Translates local mirror paths to remote enterprise repo structures.
 - **2-Second Latency Probe**: Tests SSH reachability with a fast timeout and latency benchmark.
 - **Persistent `tmux` Execution**: Automatically creates or attaches to named remote `tmux` sessions (`mesh-<repo>`). Dropping an SSH connection never kills running builds or agent tasks.
@@ -110,7 +125,9 @@ Seamlessly bridges local workstations with enterprise hardware (e.g., `company-m
 - **Zero-Close Shell Fallback**: If the remote host is offline, falls back to local execution without closing the terminal window.
 
 ### 📄 Executive ROI Briefing Suite ("The Boss Card")
+
 Pure Go PDF rendering engine powered by Chrome DevTools Protocol (`chromedp`). Eliminates all Node, Bun, and Playwright dependencies:
+
 - **Work Report (`--type work`)**: "The Boss Card." Displays net engineering value delivered, requests processed, and cache efficiency. When `hourly_rate` is set, calculates hours saved; when `0.0`, highlights direct value-to-cost multipliers (e.g., `14.4x net return on upgrade`).
 - **Personal Audit (`--type personal`)**: Value audit covering Claude Max usage (100k+ requests, token distributions, cost benchmarks).
 - **Gemini Native Report (`--type gemini`)**: Antigravity token throughput, flash vs. pro distributions, and code review logs.
@@ -118,7 +135,9 @@ Pure Go PDF rendering engine powered by Chrome DevTools Protocol (`chromedp`). E
 - **Batch Generation (`--type all`)**: Renders all 4 print-ready PDFs to `~/Desktop` with a single command.
 
 ### 🌐 Multi-Machine Fleet & Air-Gapped MDM Support
+
 Engineered for developers who use separate hardware for work and personal engineering:
+
 - **`machine_role = "work" | "personal" | "hybrid"`**: Enforces 100% account attribution on dedicated laptops without guessing folder paths.
 - **Network Sync (`mesh sync pull <remote>`)**: Syncs transcripts across machines over SSH or Tailscale.
 - **Air-Gapped Export/Import (`mesh sync export` & `mesh sync import`)**: Packages telemetry into compressed `.tar.gz` bundles. Move telemetry across corporate firewalls via AirDrop, Slack, or secure thumbdrives with idempotent SQLite merging.
@@ -131,12 +150,14 @@ Engineered for developers who use separate hardware for work and personal engine
 ### 1. Installation
 
 #### Homebrew (macOS & Linux)
+
 ```bash
 brew tap VinnyVanGogh/tap
 brew install mesh
 ```
 
 #### From Source (Go 1.23+)
+
 ```bash
 git clone https://github.com/VinnyVanGogh/agent-mesh.git
 cd agent-mesh
@@ -145,13 +166,16 @@ go build -o ~/.local/bin/meshd ./cmd/meshd
 ```
 
 Verify the installation:
+
 ```bash
 mesh version
 # mesh version 0.1.0
 ```
 
 #### macOS Background Daemon Setup
+
 Install `meshd` as a user LaunchAgent:
+
 ```bash
 cat << 'EOF' > ~/Library/LaunchAgents/com.vincevasile.agent-mesh.daemon.plist
 <?xml version="1.0" encoding="UTF-8"?>
@@ -182,6 +206,7 @@ launchctl load ~/Library/LaunchAgents/com.vincevasile.agent-mesh.daemon.plist
 ### 2. Shell Integration
 
 Add the shell evaluation hook to your `~/.zshrc` or `~/.bashrc`:
+
 ```bash
 eval "$(mesh init --shell)"
 ```
@@ -228,7 +253,24 @@ remote_host = "company-mbp"
 
 ## CLI Command Reference
 
+### Primary Interactive Launcher (`mesh`)
+
+Run `mesh` directly to launch the dynamically routed AI session (with Tokyo Night statusline and remote bridge integration):
+
+```bash
+# Automatically launches optimal AI (remote Claude tmux, local Claude, or Antigravity agy)
+mesh
+
+# Pass prompts or flags directly to the routed AI
+mesh "implement new authentication flow"
+mesh --claude        # Force route to Claude Code
+mesh --gemini        # Force route to Antigravity Gemini (agy)
+mesh --dry-run       # Preview routed target, model, and bridge status without executing
+mesh --status        # Quick display of fleet status & quota table
+```
+
 ### Pacing & Status
+
 ```bash
 # Display live fleet status, quota gauges, active tasks, and routing advice
 mesh status
@@ -244,6 +286,7 @@ mesh route --eval
 ```
 
 ### Reporting & Executive ROI
+
 ```bash
 # Generate Work Justification Memo ("The Boss Card") PDF
 mesh report --pdf --type work
@@ -269,6 +312,7 @@ mesh report --pdf --type work -o ~/Documents/Boss-Card-Q1.pdf
 ```
 
 ### Context Handoff
+
 ```bash
 # Generate handoff prompt to Gemini and copy to clipboard
 mesh handoff --to gemini
@@ -281,9 +325,13 @@ mesh handoff --push company-mbp
 
 # Pull handoff context from remote machine into local clipboard
 mesh handoff --pull company-mbp
+
+# Claude Code hook: evaluates 5h quota, alerts at 85%+ used & stages handoff
+mesh hook prompt
 ```
 
 ### Remote Bridge & Sessions
+
 ```bash
 # Check remote SSH connectivity, latency, and path translation
 mesh bridge check ~/Documents/dev/company/partner-center-api
@@ -296,6 +344,7 @@ mesh bridge launch ~/Documents/dev/company/partner-center-api go test ./...
 ```
 
 ### Multi-Machine Synchronization
+
 ```bash
 # Pull transcripts from remote host over SSH/Tailscale & ingest into local DB
 mesh sync pull company-mbp
@@ -308,6 +357,7 @@ mesh sync import ~/Desktop/work-telemetry.tar.gz
 ```
 
 ### Task Tracking
+
 ```bash
 # List all active tasks
 mesh task list
@@ -326,6 +376,7 @@ mesh task add "Migrate rate-limit notifier to pure Go"
 Agent-Mesh renders a 5-line recessed Tokyo Night terminal widget in `<2ms` with zero CPU overhead. It dynamically detects whether you are active in Claude Code or Antigravity and switches badges, account indicators, and runway advice in real time.
 
 ### 1. Claude Code Integration
+
 Point `~/.claude/settings.json` statusline command to `mesh statusline`:
 
 ```json
@@ -337,6 +388,7 @@ Point `~/.claude/settings.json` statusline command to `mesh statusline`:
 ```
 
 ### 2. Google Antigravity / Gemini CLI Integration
+
 When using Antigravity (`agy`), `mesh statusline` is automatically displayed before agent execution via the shell integration:
 
 ```bash
@@ -348,10 +400,12 @@ alias agy="mesh statusline && agy"
 ```
 
 The statusline dynamically displays:
+
 - **`󰛡 Gemini (Native)`** when routing to Antigravity (`gemini-3.8-flash-high` or `gemini-3.1-pro-high`).
 - **`🪪 Claude Max / Pro`** when routing to Anthropic Claude models.
 
 ### 3. tmux Statusbar Integration
+
 Display live agent fleet pacing directly in your tmux status bar. Add to `~/.tmux.conf`:
 
 ```tmux
@@ -360,6 +414,7 @@ set -g status-interval 10
 ```
 
 ### Visual Output (Tokyo Night Palette)
+
 ```
 󰛡 Gemini (Native) │ 🪪 personal@gmail.com │ ⚡ mesh:active
 📁 agent-mesh │ 🐙 main │ 🦴 CAVEMAN
@@ -375,15 +430,19 @@ Benchmark: **1.8ms** execution time (compiled pure Go, sub-process safe).
 ## Technical Architecture & Design Decisions
 
 ### 1. Pure Go SQLite (Zero CGO)
+
 Agent-Mesh uses `modernc.org/sqlite` rather than `mattn/go-sqlite3`. This allows compiling the binary with `CGO_ENABLED=0`, producing 100% statically linked binaries with zero dynamic library dependencies while retaining full SQLite WAL mode, memory concurrency, and FTS5 full-text search.
 
 ### 2. Native Chrome DevTools Protocol (`chromedp`)
+
 Executive PDF generation communicates directly with the local Google Chrome binary (`/Applications/Google Chrome.app`) over WebSockets via Chrome DevTools Protocol. This eliminates the need for Node.js, Bun, Playwright, or Puppeteer runtimes. Reports are rendered in ~1.5 seconds.
 
 ### 3. Non-Blocking Tail Ingestion
+
 The `meshd` daemon maintains an event-driven file watcher (`fsnotify`) with byte-offset cursors stored in `~/.agent-mesh/ingest-cursors.json`. Transcripts are scanned using 4MB line buffers, extracting token metrics and attributing spend with zero noticeable CPU overhead (<0.1% CPU, 19MB RAM).
 
 ### 4. Idempotent Data Model
+
 Every telemetry record generates a deterministic SHA-256 idempotency key based on its raw transcript payload. Syncing transcripts repeatedly or importing bundles across machines will never duplicate token accounting or financial numbers.
 
 ---
@@ -393,6 +452,7 @@ Every telemetry record generates a deterministic SHA-256 idempotency key based o
 Agent-Mesh includes full multi-platform release configurations via `.goreleaser.yaml` and automated GitHub Actions (`.github/workflows/ci.yml`):
 
 Supported build targets:
+
 - `darwin/arm64` (Apple Silicon M1/M2/M3/M4)
 - `darwin/amd64` (Intel Mac)
 - `linux/amd64` (Standard Linux)
