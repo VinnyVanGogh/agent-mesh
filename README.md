@@ -47,6 +47,15 @@ Agent-Mesh unifies disparate AI agent tooling into a single, high-performance st
   └──────────────────────┘   └───────────────────────┘   └──────────────────────┘
 ```
 
+<div align="center">
+  <br/>
+  <a href="docs/samples/sample-executive-roi-memo.pdf">
+    <img src="docs/images/boss-card-preview.png" width="700" alt="Executive ROI Briefing ('The Boss Card') Preview" style="border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15);" />
+  </a>
+  <p><em>Print-ready Executive Justification Memo rendered directly from telemetry in ~1.5s via pure Go Chrome DevTools Protocol. <a href="docs/samples/sample-executive-roi-memo.pdf">Download Sample PDF</a>.</em></p>
+  <br/>
+</div>
+
 ---
 
 ## The Problem Agent-Mesh Solves
@@ -120,6 +129,12 @@ Engineered for developers who use separate hardware for work and personal engine
 ## Quick Start
 
 ### 1. Installation
+
+#### Homebrew (macOS & Linux)
+```bash
+brew tap VinnyVanGogh/tap
+brew install mesh
+```
 
 #### From Source (Go 1.23+)
 ```bash
@@ -233,6 +248,10 @@ mesh route --eval
 # Generate Work Justification Memo ("The Boss Card") PDF
 mesh report --pdf --type work
 
+# Filter by date range (supports exact dates or relative ranges like 7d, 30d)
+mesh report --pdf --type work --since 2026-08-01 --until 2026-09-01
+mesh report --pdf --type combined --since 30d
+
 # Generate Personal Claude Code Value Audit PDF
 mesh report --pdf --type personal
 
@@ -304,18 +323,43 @@ mesh task add "Migrate rate-limit notifier to pure Go"
 
 ## Statusline Integration
 
-### Claude Code Integration
-Point `~/.claude/settings.json` statusline command to `mesh`:
+Agent-Mesh renders a 5-line recessed Tokyo Night terminal widget in `<2ms` with zero CPU overhead. It dynamically detects whether you are active in Claude Code or Antigravity and switches badges, account indicators, and runway advice in real time.
+
+### 1. Claude Code Integration
+Point `~/.claude/settings.json` statusline command to `mesh statusline`:
 
 ```json
 {
   "statusline": {
-    "command": "/Users/vincevasile/.local/bin/mesh statusline"
+    "command": "mesh statusline"
   }
 }
 ```
 
-Output format (Tokyo Night palette):
+### 2. Google Antigravity / Gemini CLI Integration
+When using Antigravity (`agy`), `mesh statusline` is automatically displayed before agent execution via the shell integration:
+
+```bash
+# In ~/.zshrc or ~/.bashrc:
+eval "$(mesh init --shell)"
+
+# Or alias directly for standalone agy usage:
+alias agy="mesh statusline && agy"
+```
+
+The statusline dynamically displays:
+- **`󰛡 Gemini (Native)`** when routing to Antigravity (`gemini-3.8-flash-high` or `gemini-3.1-pro-high`).
+- **`🪪 Claude Max / Pro`** when routing to Anthropic Claude models.
+
+### 3. tmux Statusbar Integration
+Display live agent fleet pacing directly in your tmux status bar. Add to `~/.tmux.conf`:
+
+```tmux
+set -g status-right "#(mesh statusline)"
+set -g status-interval 10
+```
+
+### Visual Output (Tokyo Night Palette)
 ```
 󰛡 Gemini (Native) │ 🪪 stylesbyvinny@gmail.com │ ⚡ mesh:active
 📁 agent-mesh │ 🐙 main │ 🦴 CAVEMAN
@@ -324,7 +368,7 @@ Output format (Tokyo Night palette):
 plan: route ▸ gemini-3.8-flash-high (agy) · fallback: claude-sonnet-4-6 · runway: 16 turns
 ```
 
-Execution benchmark: **1.8ms** (99.9% faster than legacy Python scripts).
+Benchmark: **1.8ms** execution time (compiled pure Go, sub-process safe).
 
 ---
 

@@ -48,11 +48,17 @@ func RenderExecutiveMemoPDF(ctx context.Context, data MemoData, outputPath strin
 	return RenderReport(ctx, "work", cfg, outputPath)
 }
 
-func RenderReport(ctx context.Context, reportType string, cfg *config.Config, outputPath string) error {
-	workData, personalData, geminiData, combinedData := FetchTelemetry(cfg)
+func RenderReport(ctx context.Context, reportType string, cfg *config.Config, outputPath string, rangeOpts ...DateRangeOptions) error {
+	var opts DateRangeOptions
+	if len(rangeOpts) > 0 {
+		opts = rangeOpts[0]
+	}
+	workData, personalData, geminiData, combinedData, err := FetchTelemetryWithRange(cfg, opts)
+	if err != nil {
+		return err
+	}
 
 	var htmlContent string
-	var err error
 
 	switch strings.ToLower(strings.TrimSpace(reportType)) {
 	case "work", "boss":
