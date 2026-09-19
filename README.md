@@ -102,7 +102,7 @@ Run `mesh handoff` in any repository to synthesize an authoritative continuation
 Automatically copies to the system clipboard (`pbcopy` / `xclip`) and writes `/tmp/ai-handoff.md`. Press `Cmd+V` in the destination AI session to resume execution with zero follow-up clarification needed.
 
 ### 🌉 Resilient Work Bridge & Remote `tmux` Persistence
-Seamlessly bridges local workstations with enterprise hardware (e.g., `mansol-mbp`):
+Seamlessly bridges local workstations with enterprise hardware (e.g., `company-mbp`):
 - **Dynamic Path Translation**: Translates local mirror paths to remote enterprise repo structures.
 - **2-Second Latency Probe**: Tests SSH reachability with a fast timeout and latency benchmark.
 - **Persistent `tmux` Execution**: Automatically creates or attaches to named remote `tmux` sessions (`mesh-<repo>`). Dropping an SSH connection never kills running builds or agent tasks.
@@ -200,7 +200,7 @@ Configuration is located at `~/.agent-mesh/config.toml` (or `~/.agent-mesh/confi
 # ==============================================================================
 
 # Executive Reporting Metadata
-company_name = "Managed Solution"
+company_name = "Company Name"
 engineer_name = "Vince Vasile"
 
 # Billable Client Rate (Hourly)
@@ -210,8 +210,8 @@ engineer_name = "Vince Vasile"
 hourly_rate = 0.0
 
 # Account Attribution
-work_email = "vvasile@managedsolution.com"
-personal_email = "stylesbyvinny@gmail.com"
+work_email = "user@example.com"
+personal_email = "personal@gmail.com"
 
 # Machine Role: "work", "personal", or "hybrid" (default)
 # - "work": Treats 100% of telemetry on this machine as work activity.
@@ -220,8 +220,8 @@ personal_email = "stylesbyvinny@gmail.com"
 machine_role = "hybrid"
 
 # Work Bridge & Remote Node
-work_repo_root = "~/Documents/dev/mansol"
-remote_host = "mansol-mbp"
+work_repo_root = "~/Documents/dev/company"
+remote_host = "company-mbp"
 ```
 
 ---
@@ -277,28 +277,28 @@ mesh handoff --to gemini
 mesh handoff --to claude --step "Implement modernc.org/sqlite schema migration"
 
 # Push handoff context directly to remote machine and remote clipboard
-mesh handoff --push mansol-mbp
+mesh handoff --push company-mbp
 
 # Pull handoff context from remote machine into local clipboard
-mesh handoff --pull mansol-mbp
+mesh handoff --pull company-mbp
 ```
 
 ### Remote Bridge & Sessions
 ```bash
 # Check remote SSH connectivity, latency, and path translation
-mesh bridge check ~/Documents/dev/mansol/partner-center-api
+mesh bridge check ~/Documents/dev/company/partner-center-api
 
 # Launch interactive Claude session in persistent remote tmux
-mesh bridge launch ~/Documents/dev/mansol/partner-center-api
+mesh bridge launch ~/Documents/dev/company/partner-center-api
 
 # Execute remote build command inside remote tmux session
-mesh bridge launch ~/Documents/dev/mansol/partner-center-api go test ./...
+mesh bridge launch ~/Documents/dev/company/partner-center-api go test ./...
 ```
 
 ### Multi-Machine Synchronization
 ```bash
 # Pull transcripts from remote host over SSH/Tailscale & ingest into local DB
-mesh sync pull mansol-mbp
+mesh sync pull company-mbp
 
 # Export local telemetry database into portable compressed bundle
 mesh sync export -o ~/Desktop/work-telemetry.tar.gz
@@ -361,7 +361,7 @@ set -g status-interval 10
 
 ### Visual Output (Tokyo Night Palette)
 ```
-󰛡 Gemini (Native) │ 🪪 stylesbyvinny@gmail.com │ ⚡ mesh:active
+󰛡 Gemini (Native) │ 🪪 personal@gmail.com │ ⚡ mesh:active
 📁 agent-mesh │ 🐙 main │ 🦴 CAVEMAN
 ▏███████████████░░░░░▕ session:75% ~25% left @4:12pm
 ▏████████████████░░░░▕ weekly:81% ~19% left @tue 8:11pm
