@@ -314,9 +314,42 @@ func executeRemotely(ctx context.Context, host, remoteDir string, args []string)
 		quoted = append(quoted, quoteForShell(a))
 	}
 	cmdString := strings.Join(quoted, " ")
-	remoteScript := fmt.Sprintf("cd %s && %s", quoteForShell(remoteDir), cmdString)
 
-	// -t forces pseudo-terminal allocation for interactive Claude/shells
+	// Sanitize session name from repo directory (e.g. "mansol-partner-center-api")
+	sessionName := "mesh-" + filepath.Base(remoteDir)
+	sessionName = strings.ReplaceAll(sessionName, ".", "-")
+	sessionName = strings.ReplaceAll(sessionName, ":", "-")
+
+	// Smart remote script:
+	// If tmux is installed on remote node:
+	//   1. Check if session exists -> attach to it (`tmux attach-session -t <name>`)
+	//   2. Else create new detached session with the command and attach (`tmux new-session -s <name> ...`)
+	// If tmux is not installed on remote node:
+	//   Directly executes `cd <dir> && <cmd>`
+	remoteScript := fmt.Sprintf(`
+if command -v tmux >/dev/null 2>&1; then
+    if tmux has-session -t %s 2>/dev/null; then
+        echo -e "\033[1;36m[bridge]\033[0m Re-attaching to existing remote tmux session: \033[1;32m%s\033[0m"
+        exec tmux attach-session -t %s
+    else
+        echo -e "\033[1;36m[bridge]\033[0m Spawning persistent remote tmux session: \033[1;32m%s\033[0m"
+        cd %s && exec tmux new-session -s %s %s
+    fi
+else
+    cd %s && %s
+fi`,
+		quoteForShell(sessionName),
+		sessionName,
+		quoteForShell(sessionName),
+		sessionName,
+		quoteForShell(remoteDir),
+		quoteForShell(sessionName),
+		cmdString,
+		quoteForShell(remoteDir),
+		cmdString,
+	)
+
+	// -t forces pseudo-terminal allocation for interactive tmux and Claude sessions
 	sshCmd := exec.CommandContext(ctx, "ssh", "-t", host, remoteScript)
 	sshCmd.Stdin = os.Stdin
 	sshCmd.Stdout = os.Stdout

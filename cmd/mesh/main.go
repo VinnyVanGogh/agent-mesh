@@ -239,11 +239,12 @@ var reportCmd = &cobra.Command{
 		outFlag, _ := cmd.Flags().GetString("output")
 
 		if !pdfFlag {
-			fmt.Println("Usage: mesh report --pdf [--type work|personal|gemini|combined] [--output <path>]")
+			fmt.Println("Usage: mesh report --pdf [--type work|personal|gemini|combined|all] [--output <path>]")
 			fmt.Println("  --type work        Executive Justification Memo (Boss Card)")
 			fmt.Println("  --type personal    Personal Claude Code Value Audit (102k+ turns, $7,500+ value)")
 			fmt.Println("  --type gemini      Antigravity & Gemini Native Report (Flash, Pro, Brain logs, Reviews)")
 			fmt.Println("  --type combined    Unified Multi-AI Fleet Executive Report ($14,000+ total value)")
+			fmt.Println("  --type all         Generate all 4 reports in one batch")
 			return
 		}
 
@@ -252,6 +253,37 @@ var reportCmd = &cobra.Command{
 		}
 
 		home, _ := os.UserHomeDir()
+
+		if strings.ToLower(reportType) == "all" {
+			types := []string{"work", "personal", "gemini", "combined"}
+			fmt.Println("\033[1;36m[Agent-Mesh]\033[0m Generating all 4 executive PDF reports...")
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+
+			for _, t := range types {
+				var targetPath string
+				switch t {
+				case "personal":
+					targetPath = filepath.Join(home, "Desktop", "claude-code-personal-value-audit.pdf")
+				case "gemini":
+					targetPath = filepath.Join(home, "Desktop", "antigravity-gemini-native-report.pdf")
+				case "combined":
+					targetPath = filepath.Join(home, "Desktop", "multi-ai-fleet-executive-report.pdf")
+				default:
+					targetPath = filepath.Join(home, "Desktop", "managed-solution-ai-justification.pdf")
+				}
+
+				fmt.Printf("  • Rendering \033[1;33m%s\033[0m report...", t)
+				if err := reporting.RenderReport(ctx, t, cfg, targetPath); err != nil {
+					fmt.Printf(" \033[1;31mFAILED\033[0m (%v)\n", err)
+				} else {
+					fmt.Printf(" \033[1;32m✔ DONE\033[0m -> %s\n", filepath.Base(targetPath))
+				}
+			}
+			fmt.Println("\033[1;32m✔ All reports successfully generated on Desktop!\033[0m")
+			return
+		}
+
 		if outFlag == "" {
 			switch strings.ToLower(reportType) {
 			case "personal":
