@@ -17,6 +17,7 @@ import (
 	"github.com/vincevasile/agent-mesh/internal/db"
 	"github.com/vincevasile/agent-mesh/internal/reporting"
 	"github.com/vincevasile/agent-mesh/internal/router"
+	meshSync "github.com/vincevasile/agent-mesh/internal/sync"
 )
 
 var (
@@ -454,6 +455,29 @@ var handoffCmd = &cobra.Command{
 	Use:   "handoff",
 	Short: "Synthesize zero-clarification handoff prompt and copy to clipboard",
 	Run: func(cmd *cobra.Command, args []string) {
+		pullHost, _ := cmd.Flags().GetString("pull")
+		pushHost, _ := cmd.Flags().GetString("push")
+
+		// If --pull is requested, fetch handoff from remote machine
+		if cmd.Flags().Changed("pull") {
+			if pullHost == "" {
+				pullHost = cfg.RemoteHost
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			rec, err := meshSync.PullHandoff(ctx, pullHost)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error pulling handoff from %s: %v\n", pullHost, err)
+				os.Exit(1)
+			}
+			_ = rec
+			fmt.Printf("\033[1;32m✔ Handoff context pulled from %s and copied to clipboard!\033[0m\n", pullHost)
+			fmt.Printf("  • Prompt saved: /tmp/ai-handoff.md\n")
+			fmt.Printf("  • Ready to paste (Cmd+V) in current session.\n")
+			return
+		}
+
 		targetModel, _ := cmd.Flags().GetString("to")
 		nextStep, _ := cmd.Flags().GetString("step")
 		cwd, _ := os.Getwd()
@@ -472,6 +496,87 @@ var handoffCmd = &cobra.Command{
 		fmt.Printf("  • Files:        %d modified\n", len(record.ModifiedFiles))
 		fmt.Printf("  • State saved:  ~/.agent-mesh/handoff.json\n")
 		fmt.Printf("  • Prompt saved: /tmp/ai-handoff.md\n")
+
+		// If --push is requested, push to remote host
+		if cmd.Flags().Changed("push") {
+			if pushHost == "" {
+				pushHost = cfg.RemoteHost
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := meshSync.PushHandoff(ctx, pushHost, record); err != nil {
+				fmt.Fprintf(os.Stderr, "\033[1;31m✖ Failed to push handoff to %s: %v\033[0m\n", pushHost, err)
+			} else {
+				fmt.Printf("\033[1;32m✔ Pushed active handoff directly to remote host: %s (remote clipboard armed)!\033[0m\n", pushHost)
+			}
+		}
+	},
+}
+
+var syncCmd = &cobra.Command{
+	Use:   "sync",
+	Short: "Synchronize telemetry, transcripts, and handoff states across machines",
+}
+
+var syncPullCmd = &cobra.Command{
+	Use:   "pull [remote_host]",
+	Short: "Pull remote transcripts over SSH/rsync and ingest into local telemetry DB",
+	Run: func(cmd *cobra.Command, args []string) {
+		host := cfg.RemoteHost
+		if len(args) > 0 && args[0] != "" {
+			host = args[0]
+		}
+		if host == "" {
+			host = "mansol-mbp"
+		}
+
+		fmt.Printf("\033[1;36m[sync]\033[0m Pulling transcripts from %s...\n", host)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+
+		res, err := meshSync.PullTranscripts(ctx, host, cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\033[1;31m✖ Sync pull failed: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("\033[1;32m✔ Telemetry synchronization complete!\033[0m\n")
+		fmt.Printf("  • Remote Host:      %s\n", res.Host)
+		fmt.Printf("  • Ingested Records: %d new\n", res.RecordsIngested)
+		fmt.Printf("  • Duration:         %s\n", res.Duration.Round(time.Millisecond))
+	},
+}
+
+var syncExportCmd = &cobra.Command{
+	Use:   "export",
+	Short: "Export local telemetry records into a portable compressed bundle for air-gapped or non-SSH transfer",
+	Run: func(cmd *cobra.Command, args []string) {
+		outPath, _ := cmd.Flags().GetString("output")
+		dest, count, err := meshSync.ExportBundle(outPath, cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Export error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\033[1;32m✔ Telemetry bundle exported successfully!\033[0m\n")
+		fmt.Printf("  • Archive:     %s\n", dest)
+		fmt.Printf("  • Records:     %d\n", count)
+		fmt.Printf("  • Machine:     %s\n", cfg.MachineRole)
+		fmt.Printf("  • To import:   mesh sync import %s\n", dest)
+	},
+}
+
+var syncImportCmd = &cobra.Command{
+	Use:   "import [bundle_path]",
+	Short: "Import telemetry records from an exported bundle into local telemetry DB",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		bundlePath := args[0]
+		count, err := meshSync.ImportBundle(bundlePath, cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Import error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\033[1;32m✔ Successfully imported %d new records into telemetry database!\033[0m\n", count)
 	},
 }
 
@@ -547,8 +652,14 @@ func init() {
 	rootCmd.AddCommand(reportCmd)
 	rootCmd.AddCommand(bridgeCmd)
 	rootCmd.AddCommand(handoffCmd)
+	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(taskCmd)
 	rootCmd.AddCommand(initCmd)
+
+	syncCmd.AddCommand(syncPullCmd)
+	syncCmd.AddCommand(syncExportCmd)
+	syncCmd.AddCommand(syncImportCmd)
+	syncExportCmd.Flags().StringP("output", "o", "", "Destination path for exported .tar.gz bundle")
 
 	bridgeCmd.AddCommand(bridgeCheckCmd)
 	bridgeCmd.AddCommand(bridgeLaunchCmd)
@@ -559,6 +670,8 @@ func init() {
 
 	handoffCmd.Flags().String("to", "gemini", "Target model family (gemini or claude)")
 	handoffCmd.Flags().String("step", "", "Immediate next step description")
+	handoffCmd.Flags().String("push", "", "Push active handoff context to remote host over SSH/Tailscale")
+	handoffCmd.Flags().String("pull", "", "Pull active handoff context from remote host over SSH/Tailscale")
 
 	routeCmd.Flags().BoolP("eval", "e", false, "Output recommendation as shell environment variables for eval")
 	routeCmd.Flags().BoolP("json", "j", false, "Output recommendation in JSON format")

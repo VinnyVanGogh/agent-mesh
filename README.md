@@ -45,6 +45,11 @@ mesh report --pdf --type all                # Generate all 4 executive PDF repor
 mesh bridge check [dir]                     # Test remote SSH & repo path mapping
 mesh bridge launch [dir]                    # Launch remote session in tmux with fallback
 mesh handoff                                # Cross-model switch prompt to clipboard
+mesh handoff --push [remote]                # Push active context directly to remote machine
+mesh handoff --pull [remote]                # Pull remote context to local clipboard
+mesh sync pull [remote]                     # Pull remote transcripts over SSH/Tailscale into local DB
+mesh sync export -o bundle.tar.gz           # Export telemetry bundle for air-gapped / MDM transfer
+mesh sync import bundle.tar.gz              # Ingest exported telemetry bundle into local DB
 mesh task list                              # SQLite task management
 ```
 
@@ -66,7 +71,30 @@ work_email = "vvasile@managedsolution.com"
 personal_email = "stylesbyvinny@gmail.com"
 work_repo_root = "~/Documents/dev/mansol"
 remote_host = "mansol-mbp"
+
+# Machine Role: "work", "personal", or "hybrid" (default)
+# - "work": Forces all ingested activity on this machine to corporate work attribution.
+# - "personal": Forces all ingested activity to personal attribution.
+# - "hybrid": Dynamically inspects repository paths and git authors.
+machine_role = "hybrid"
 ```
+
+---
+
+## Multi-Machine & Air-Gapped Setups
+
+For developers using dedicated hardware (e.g., corporate laptop + personal workstation):
+
+1. **Connected via SSH / Tailscale**:
+   - Run `mesh sync pull work-laptop` from your personal machine to pull transcripts into your central telemetry DB.
+   - Run `mesh handoff --push work-laptop` before stepping away to prime the remote machine's clipboard.
+   - Run `mesh handoff --pull personal-desktop` when picking up work on the other machine.
+
+2. **Air-Gapped / Strict Corporate MDM (Inbound SSH Blocked)**:
+   - On the work machine: `mesh sync export -o ~/Desktop/work-telemetry.tar.gz`
+   - Move archive via Slack, AirDrop, or secure thumbdrive.
+   - On your personal machine: `mesh sync import ~/Desktop/work-telemetry.tar.gz`
+   - Run `mesh report --pdf --type combined` to produce your unified multi-AI executive memo.
 
 ---
 

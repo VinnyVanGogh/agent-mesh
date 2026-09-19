@@ -21,6 +21,7 @@ type Config struct {
 	PersonalEmail   string  `json:"personal_email" toml:"personal_email"`
 	WorkRepoRoot    string  `json:"work_repo_root" toml:"work_repo_root"`
 	RemoteHost      string  `json:"remote_host" toml:"remote_host"`
+	MachineRole     string  `json:"machine_role" toml:"machine_role"` // "hybrid" (default), "work", or "personal"
 }
 
 // DefaultConfig returns the default configuration.
@@ -42,6 +43,7 @@ func DefaultConfig() *Config {
 		PersonalEmail:   "stylesbyvinny@gmail.com",
 		WorkRepoRoot:    filepath.Join(home, "Documents", "dev", "mansol"),
 		RemoteHost:      "mansol-mbp",
+		MachineRole:     "hybrid",
 	}
 }
 

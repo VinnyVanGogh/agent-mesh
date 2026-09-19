@@ -238,9 +238,16 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 	cwd, _ := record["cwd"].(string)
 	accountEmail := w.cfg.PersonalEmail
 
-	// Classify: if work repo (from scan-repos or path), attribute to work
-	if bridge.IsWorkRepo(cwd) || strings.Contains(sourcePath, "mansol") || strings.Contains(sourcePath, "partner") || strings.Contains(sourcePath, "vps-hr") {
+	switch strings.ToLower(strings.TrimSpace(w.cfg.MachineRole)) {
+	case "work":
 		accountEmail = w.cfg.WorkEmail
+	case "personal":
+		accountEmail = w.cfg.PersonalEmail
+	default:
+		// Hybrid mode: classify based on repo path and folder heuristics
+		if bridge.IsWorkRepo(cwd) || strings.Contains(sourcePath, "mansol") || strings.Contains(sourcePath, "partner") || strings.Contains(sourcePath, "vps-hr") {
+			accountEmail = w.cfg.WorkEmail
+		}
 	}
 
 	// Idempotency key
