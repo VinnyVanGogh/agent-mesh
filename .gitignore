@@ -1,4 +1,4 @@
 bin/
-mesh
+/mesh
 *.pdf
 .DS_Store
