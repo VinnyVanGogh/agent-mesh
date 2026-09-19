@@ -956,6 +956,7 @@ func renderHTMLToPDF(ctx context.Context, htmlContent string, outputPath string)
 		chromedp.Headless,
 		chromedp.DisableGPU,
 		chromedp.NoSandbox,
+		chromedp.Flag("disable-dev-shm-usage", true),
 	)
 
 	// Prefer system Google Chrome if present

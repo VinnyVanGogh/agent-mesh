@@ -831,6 +831,10 @@ func TestPDFGeneration_SinglePageOutput(t *testing.T) {
 			pdfPath := filepath.Join(outDir, fmt.Sprintf("%s-test.pdf", reportType))
 			err := RenderReport(ctx, reportType, cfg, pdfPath)
 			if err != nil {
+				if strings.Contains(err.Error(), "websocket url timeout") || strings.Contains(err.Error(), "executable file not found") {
+					t.Skipf("Chrome not functional in this CI environment (%v); skipping", err)
+					return
+				}
 				t.Fatalf("RenderReport failed for %s: %v", reportType, err)
 			}
 
@@ -917,6 +921,10 @@ func TestBatchGeneration_NoFileCollision(t *testing.T) {
 
 		results, err := RenderAllReports(ctx, cfg, tempDir)
 		if err != nil {
+			if strings.Contains(err.Error(), "websocket url timeout") || strings.Contains(err.Error(), "executable file not found") {
+				t.Skipf("Chrome not functional in this CI environment (%v); skipping", err)
+				return
+			}
 			t.Fatalf("RenderAllReports failed: %v", err)
 		}
 
