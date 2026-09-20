@@ -22,6 +22,8 @@ type Config struct {
 	WorkRepoRoot    string  `json:"work_repo_root" toml:"work_repo_root"`
 	RemoteHost      string  `json:"remote_host" toml:"remote_host"`
 	MachineRole     string  `json:"machine_role" toml:"machine_role"` // "hybrid" (default), "work", or "personal"
+	GooglePlanTier  string  `json:"google_plan_tier" toml:"google_plan_tier"` // e.g. "Google AI Ultra" or "Ultra"
+	ClaudePlanTier  string  `json:"claude_plan_tier" toml:"claude_plan_tier"` // e.g. "Max 5x" or "Pro"
 }
 
 // DefaultConfig returns the default configuration.
@@ -44,6 +46,8 @@ func DefaultConfig() *Config {
 		WorkRepoRoot:    filepath.Join(home, "Documents", "dev", "work"),
 		RemoteHost:      "company-mbp",
 		MachineRole:     "hybrid",
+		GooglePlanTier:  "Google AI Ultra",
+		ClaudePlanTier:  "Pro",
 	}
 }
 

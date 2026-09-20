@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/VinnyVanGogh/agent-mesh/internal/config"
 )
 
 // Tokyo Night Palette
@@ -76,6 +78,8 @@ type StatuslinePayload struct {
 	Cost struct {
 		TotalCostUSD *float64 `json:"total_cost_usd"`
 	} `json:"cost"`
+	PlanTier string `json:"plan_tier"`
+	Email    string `json:"email"`
 }
 
 type gitCacheInfo struct {
@@ -252,22 +256,42 @@ func RenderStatusline(w io.Writer, r io.Reader) error {
 	}
 	modelPart := fmt.Sprintf("%s %s%s%s", modelIcon, Cyan, modelName, Reset)
 
-	// 6. Account badge
+	// 6. Plan tier badge
+	planTier := payload.PlanTier
+	cfg, _ := config.LoadConfig()
+	if planTier == "" || planTier == "Google AI Pro" {
+		if strings.Contains(strings.ToLower(modelName), "gemini") {
+			if cfg != nil && cfg.GooglePlanTier != "" {
+				planTier = cfg.GooglePlanTier
+			} else {
+				planTier = "Google AI Ultra"
+			}
+		} else if cfg != nil && cfg.ClaudePlanTier != "" {
+			planTier = cfg.ClaudePlanTier
+		}
+	}
+
+	// 7. Account badge
 	var accountBadge string
-	if isWork {
+	if payload.Email != "" {
+		accountBadge = fmt.Sprintf("🪪 %s%s%s", Gray, payload.Email, Reset)
+	} else if isWork {
 		accountBadge = fmt.Sprintf("🪪 %swork%s", Teal, Reset)
 	} else {
 		accountBadge = fmt.Sprintf("🪪 %spersonal%s", Gray, Reset)
 	}
 
-	// 7. Cost badge
+	// 8. Cost badge
 	var costBadge string
 	if payload.Cost.TotalCostUSD != nil && *payload.Cost.TotalCostUSD > 0.001 {
 		costBadge = fmt.Sprintf("💰 %s$%.2f%s", Yellow, *payload.Cost.TotalCostUSD, Reset)
 	}
 
-	// 8. Line 1
+	// 9. Line 1
 	line1Parts := []string{modelPart, accountBadge}
+	if planTier != "" {
+		line1Parts = append(line1Parts, fmt.Sprintf("%s✨ %s%s", Magenta, planTier, Reset))
+	}
 	if costBadge != "" {
 		line1Parts = append(line1Parts, costBadge)
 	}
