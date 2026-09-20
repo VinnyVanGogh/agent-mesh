@@ -51,8 +51,8 @@ type scanReposFile struct {
 	} `json:"repos"`
 }
 
-// IsWorkRepo determines whether the given directory is part of Managed Solution
-// by matching ~/.agents/skills/ticket-notes/scan-repos.json or ~/Documents/dev/mansol*.
+// IsWorkRepo determines whether the given directory is part of an enterprise work repo
+// by matching configured paths or ~/.agents/skills/ticket-notes/scan-repos.json.
 func IsWorkRepo(cwd string) (bool, string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -75,10 +75,10 @@ func IsWorkRepo(cwd string) (bool, string, error) {
 		evalCwd = cleanCwd
 	}
 
-	// 1. Check pattern: ~/Documents/dev/mansol*
-	mansolPrefix := filepath.Join(home, "Documents", "dev", "mansol")
-	if strings.HasPrefix(cleanCwd, mansolPrefix) || strings.HasPrefix(evalCwd, mansolPrefix) {
-		return true, "prefix: ~/Documents/dev/mansol*", nil
+	// 1. Check pattern: ~/Documents/dev/work*
+	workPrefix := filepath.Join(home, "Documents", "dev", "work")
+	if strings.HasPrefix(cleanCwd, workPrefix) || strings.HasPrefix(evalCwd, workPrefix) {
+		return true, "prefix: ~/Documents/dev/work*", nil
 	}
 
 	// 2. Check scan-repos.json: ~/.agents/skills/ticket-notes/scan-repos.json
@@ -105,14 +105,6 @@ func IsWorkRepo(cwd string) (bool, string, error) {
 		}
 	}
 
-	// 3. Fallback: check git remote for managed solution
-	gitConfigPath := filepath.Join(cleanCwd, ".git", "config")
-	if cfgData, err := os.ReadFile(gitConfigPath); err == nil {
-		if strings.Contains(strings.ToLower(string(cfgData)), "managedsolution") {
-			return true, "git remote: managedsolution", nil
-		}
-	}
-
 	return false, "", nil
 }
 
@@ -120,7 +112,7 @@ func IsWorkRepo(cwd string) (bool, string, error) {
 // Uses a fast cached result (/tmp/agent-mesh-ssh-<host>.cache) if within 20s.
 func CheckSSHConnectivity(ctx context.Context, host string) bool {
 	if host == "" {
-		host = "mansol-mbp"
+		host = "company-mbp"
 	}
 
 	cachePath := filepath.Join(os.TempDir(), fmt.Sprintf("agent-mesh-ssh-%s.cache", host))
@@ -155,8 +147,8 @@ func CheckSSHConnectivity(ctx context.Context, host string) bool {
 }
 
 // Route executes the dynamic waterfall routing engine:
-// 1. Check if cwd is a Managed Solution work repo.
-// 2. If work repo: check SSH connectivity to mansol-mbp -> route to remote Claude.
+// 1. Check if cwd is an enterprise work repo.
+// 2. If work repo: check SSH connectivity to remote node -> route to remote Claude.
 // 3. If personal repo: compare quota headroom, preferring Gemini Native as primary daily driver,
 //    falling back to 3P Claude / personal Claude when Gemini is locked out.
 func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOptions) (*RouteDecision, error) {
@@ -171,7 +163,7 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 	}
 
 	if opts.RemoteHost == "" {
-		opts.RemoteHost = "mansol-mbp"
+		opts.RemoteHost = "company-mbp"
 	}
 
 	if pacerState == nil {
@@ -196,7 +188,6 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 
 	if isWork {
 		decision.AccountRole = "work"
-		decision.AccountEmail = "vvasile@managedsolution.com"
 
 		sshOk := false
 		if opts.CheckSSH {
@@ -209,7 +200,7 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 			decision.Tool = "ssh"
 			decision.Model = "claude-opus-5"
 			decision.Command = fmt.Sprintf("ssh -t %s \"cd %s && claude\"", opts.RemoteHost, absCwd)
-			decision.Reason = fmt.Sprintf("Managed Solution work repo (%s); remote node %s reachable via SSH (Highest Priority)", workSrc, opts.RemoteHost)
+			decision.Reason = fmt.Sprintf("Enterprise work repo (%s); remote node %s reachable via SSH (Highest Priority)", workSrc, opts.RemoteHost)
 			return decision, nil
 		}
 
@@ -218,7 +209,7 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 		decision.Tool = "claude"
 		decision.Model = "claude-opus-5"
 		decision.Command = "claude"
-		decision.Reason = fmt.Sprintf("Managed Solution work repo (%s); remote node %s unreachable via SSH, routing to local Claude Code with work account", workSrc, opts.RemoteHost)
+		decision.Reason = fmt.Sprintf("Enterprise work repo (%s); remote node %s unreachable via SSH, routing to local Claude Code with work account", workSrc, opts.RemoteHost)
 		if opts.CheckSSH {
 			decision.Warnings = append(decision.Warnings, fmt.Sprintf("Remote node %s unreachable via SSH; falling back to local Claude", opts.RemoteHost))
 		}
@@ -227,7 +218,6 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 
 	// 2. Personal Repo: Quota Headroom Waterfall
 	decision.AccountRole = "personal"
-	decision.AccountEmail = "stylesbyvinny@gmail.com"
 
 	poolGemini := pacerState.Pools[PoolGeminiNative]
 	pool3P := pacerState.Pools[Pool3PClaude]

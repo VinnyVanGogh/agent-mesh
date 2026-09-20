@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vincevasile/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/agent-mesh/internal/config"
 	_ "modernc.org/sqlite"
 )
 
@@ -274,11 +274,11 @@ func createMockTelemetryDB(t *testing.T) string {
 		inputTokens  int64
 		outputTokens int64
 	}{
-		{"2026-08-10T10:00:00Z", "vvasile@managedsolution.com", "claude", 50.0, 500000, 450000, 50000},
-		{"2026-08-15T12:00:00Z", "vvasile@managedsolution.com", "claude", 100.0, 1000000, 900000, 100000},
-		{"2026-08-20T14:00:00Z", "stylesbyvinny@gmail.com", "claude", 250.0, 2500000, 2300000, 200000},
-		{"2026-09-01T09:00:00Z", "stylesbyvinny@gmail.com", "gemini", 20.0, 3000000, 2800000, 200000},
-		{"2026-09-15T16:00:00Z", "vvasile@managedsolution.com", "gemini", 15.0, 2000000, 1900000, 100000},
+		{"2026-08-10T10:00:00Z", "jane@acmework.com", "claude", 50.0, 500000, 450000, 50000},
+		{"2026-08-15T12:00:00Z", "jane@acmework.com", "claude", 100.0, 1000000, 900000, 100000},
+		{"2026-08-20T14:00:00Z", "jane.personal@example.com", "claude", 250.0, 2500000, 2300000, 200000},
+		{"2026-09-01T09:00:00Z", "jane.personal@example.com", "gemini", 20.0, 3000000, 2800000, 200000},
+		{"2026-09-15T16:00:00Z", "jane@acmework.com", "gemini", 15.0, 2000000, 1900000, 100000},
 	}
 
 	stmt, err := db.Prepare(`INSERT INTO requests (ts, account_email, model_family, cost_usd, total_tokens, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)`)
@@ -305,10 +305,10 @@ func TestFetchTelemetryWithRange_ValidRange(t *testing.T) {
 
 	cfg := &config.Config{
 		TelemetryDBPath: dbPath,
-		WorkEmail:       "vvasile@managedsolution.com",
-		PersonalEmail:   "stylesbyvinny@gmail.com",
-		CompanyName:     "Managed Solution",
-		EngineerName:    "Vince Vasile",
+		WorkEmail:       "jane@acmework.com",
+		PersonalEmail:   "jane.personal@example.com",
+		CompanyName:     "Acme Corp",
+		EngineerName:    "Jane Doe",
 		HourlyRate:      150.0,
 	}
 
@@ -362,8 +362,8 @@ func TestFetchTelemetryWithRange_OutOfRangeError(t *testing.T) {
 
 	cfg := &config.Config{
 		TelemetryDBPath: dbPath,
-		WorkEmail:       "vvasile@managedsolution.com",
-		PersonalEmail:   "stylesbyvinny@gmail.com",
+		WorkEmail:       "jane@acmework.com",
+		PersonalEmail:   "jane.personal@example.com",
 	}
 
 	// Query with date range far in the past where no records exist
@@ -396,7 +396,7 @@ func TestFetchTelemetryWithRange_HourlyRateBehavior(t *testing.T) {
 	t.Run("hourly_rate == 0.0 (billable hours omitted)", func(t *testing.T) {
 		cfg := &config.Config{
 			TelemetryDBPath: dbPath,
-			WorkEmail:       "vvasile@managedsolution.com",
+			WorkEmail:       "jane@acmework.com",
 			HourlyRate:      0.0,
 		}
 
@@ -437,7 +437,7 @@ func TestFetchTelemetryWithRange_HourlyRateBehavior(t *testing.T) {
 	t.Run("hourly_rate > 0.0 (billable hours populated)", func(t *testing.T) {
 		cfg := &config.Config{
 			TelemetryDBPath: dbPath,
-			WorkEmail:       "vvasile@managedsolution.com",
+			WorkEmail:       "jane@acmework.com",
 			HourlyRate:      150.0,
 		}
 
@@ -476,10 +476,10 @@ func TestFetchTelemetryWithRange_CompanyAndEngineerFields(t *testing.T) {
 	t.Run("populated company and engineer names", func(t *testing.T) {
 		cfg := &config.Config{
 			TelemetryDBPath: dbPath,
-			WorkEmail:       "vvasile@managedsolution.com",
-			PersonalEmail:   "stylesbyvinny@gmail.com",
-			CompanyName:     "Managed Solution",
-			EngineerName:    "Vince Vasile",
+			WorkEmail:       "jane@acmework.com",
+			PersonalEmail:   "jane.personal@example.com",
+			CompanyName:     "Acme Corp",
+			EngineerName:    "Jane Doe",
 		}
 
 		work, personal, gemini, combined, err := FetchTelemetryWithRange(cfg, DateRangeOptions{})
@@ -487,11 +487,11 @@ func TestFetchTelemetryWithRange_CompanyAndEngineerFields(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		if !work.HasCompanyName || work.CompanyName != "Managed Solution" {
-			t.Errorf("expected HasCompanyName true and CompanyName 'Managed Solution', got %v, %q", work.HasCompanyName, work.CompanyName)
+		if !work.HasCompanyName || work.CompanyName != "Acme Corp" {
+			t.Errorf("expected HasCompanyName true and CompanyName 'Acme Corp', got %v, %q", work.HasCompanyName, work.CompanyName)
 		}
-		if !work.HasEngineerName || work.EngineerName != "Vince Vasile" {
-			t.Errorf("expected HasEngineerName true and EngineerName 'Vince Vasile', got %v, %q", work.HasEngineerName, work.EngineerName)
+		if !work.HasEngineerName || work.EngineerName != "Jane Doe" {
+			t.Errorf("expected HasEngineerName true and EngineerName 'Jane Doe', got %v, %q", work.HasEngineerName, work.EngineerName)
 		}
 		if !personal.HasEngineerName || !gemini.HasEngineerName || !combined.HasEngineerName {
 			t.Errorf("expected all reports to indicate HasEngineerName = true")
@@ -502,19 +502,19 @@ func TestFetchTelemetryWithRange_CompanyAndEngineerFields(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to render work HTML: %v", err)
 		}
-		if !strings.Contains(workHTML, "Managed Solution —") {
+		if !strings.Contains(workHTML, "Acme Corp —") {
 			t.Errorf("expected company title prefix in work HTML")
 		}
-		if !strings.Contains(workHTML, "<div class=\"org\">Managed Solution</div>") {
+		if !strings.Contains(workHTML, "<div class=\"org\">Acme Corp</div>") {
 			t.Errorf("expected org div in work HTML")
 		}
-		if !strings.Contains(workHTML, "Engineer: Vince Vasile") {
-			t.Errorf("expected Engineer: Vince Vasile in work HTML")
+		if !strings.Contains(workHTML, "Engineer: Jane Doe") {
+			t.Errorf("expected Engineer: Jane Doe in work HTML")
 		}
-		if !strings.Contains(workHTML, "across Managed Solution repositories") {
+		if !strings.Contains(workHTML, "across Acme Corp repositories") {
 			t.Errorf("expected company repo reference in proposal box")
 		}
-		if !strings.Contains(workHTML, "For Internal Managed Solution Review Only") {
+		if !strings.Contains(workHTML, "For Internal Acme Corp Review Only") {
 			t.Errorf("expected confidential footer with company name")
 		}
 
@@ -523,8 +523,8 @@ func TestFetchTelemetryWithRange_CompanyAndEngineerFields(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to render personal HTML: %v", err)
 		}
-		if !strings.Contains(personalHTML, "Engineer: Vince Vasile") {
-			t.Errorf("expected Engineer: Vince Vasile in personal HTML")
+		if !strings.Contains(personalHTML, "Engineer: Jane Doe") {
+			t.Errorf("expected Engineer: Jane Doe in personal HTML")
 		}
 
 		// Check Gemini HTML
@@ -532,8 +532,8 @@ func TestFetchTelemetryWithRange_CompanyAndEngineerFields(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to render gemini HTML: %v", err)
 		}
-		if !strings.Contains(geminiHTML, "Operator: Vince Vasile") {
-			t.Errorf("expected Operator: Vince Vasile in gemini HTML")
+		if !strings.Contains(geminiHTML, "Operator: Jane Doe") {
+			t.Errorf("expected Operator: Jane Doe in gemini HTML")
 		}
 
 		// Check Combined HTML
@@ -541,16 +541,16 @@ func TestFetchTelemetryWithRange_CompanyAndEngineerFields(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to render combined HTML: %v", err)
 		}
-		if !strings.Contains(combinedHTML, "Lead Engineer: Vince Vasile") {
-			t.Errorf("expected Lead Engineer: Vince Vasile in combined HTML")
+		if !strings.Contains(combinedHTML, "Lead Engineer: Jane Doe") {
+			t.Errorf("expected Lead Engineer: Jane Doe in combined HTML")
 		}
 	})
 
 	t.Run("empty company and engineer names", func(t *testing.T) {
 		cfg := &config.Config{
 			TelemetryDBPath: dbPath,
-			WorkEmail:       "vvasile@managedsolution.com",
-			PersonalEmail:   "stylesbyvinny@gmail.com",
+			WorkEmail:       "jane@acmework.com",
+			PersonalEmail:   "jane.personal@example.com",
 			CompanyName:     "",
 			EngineerName:    "",
 		}
@@ -581,7 +581,7 @@ func TestFetchTelemetryWithRange_CompanyAndEngineerFields(t *testing.T) {
 		if strings.Contains(workHTML, "Engineer:") {
 			t.Errorf("Engineer label should not be present when engineer name is empty")
 		}
-		if !strings.Contains(workHTML, "Account: <code>vvasile@managedsolution.com</code>") {
+		if !strings.Contains(workHTML, "Account: <code>jane@acmework.com</code>") {
 			t.Errorf("should fallback to Account: <email> when engineer name is empty")
 		}
 		if !strings.Contains(workHTML, "across core repositories") {
@@ -818,8 +818,8 @@ func TestPDFGeneration_SinglePageOutput(t *testing.T) {
 
 	outDir := t.TempDir()
 	cfg := config.DefaultConfig()
-	cfg.CompanyName = "Managed Solution"
-	cfg.EngineerName = "Vince Vasile"
+	cfg.CompanyName = "Acme Corp"
+	cfg.EngineerName = "Jane Doe"
 	cfg.HourlyRate = 175.0
 
 	types := []string{"work", "personal", "gemini", "combined"}

@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vincevasile/agent-mesh/internal/bridge"
-	"github.com/vincevasile/agent-mesh/internal/config"
-	meshContext "github.com/vincevasile/agent-mesh/internal/context"
+	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
+	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	meshContext "github.com/VinnyVanGogh/agent-mesh/internal/context"
 	_ "modernc.org/sqlite"
 )
 
@@ -36,7 +36,7 @@ func PullTranscripts(ctx context.Context, host string, cfg *config.Config) (*Syn
 		host = cfg.RemoteHost
 	}
 	if host == "" {
-		host = "mansol-mbp"
+		host = "company-mbp"
 	}
 
 	start := time.Now()
@@ -157,7 +157,7 @@ func IngestTranscripts(cfg *config.Config) (int64, error) {
 			case "personal":
 				accountEmail = cfg.PersonalEmail
 			default:
-				if bridge.IsWorkRepo(cwd) || strings.Contains(path, "mansol") || strings.Contains(path, "partner") || strings.Contains(path, "vps-hr") {
+				if bridge.IsWorkRepo(cwd) {
 					accountEmail = cfg.WorkEmail
 				}
 			}
@@ -402,7 +402,7 @@ func ImportBundle(bundlePath string, cfg *config.Config) (int64, error) {
 // PushHandoff pushes the local handoff context to remoteHost over SSH/scp and stages it in remote clipboard.
 func PushHandoff(ctx context.Context, host string, record *meshContext.HandoffRecord) error {
 	if host == "" {
-		host = "mansol-mbp"
+		host = "company-mbp"
 	}
 
 	probe := bridge.ProbeSSH(ctx, host, 3*time.Second)
@@ -437,7 +437,7 @@ fi
 // PullHandoff retrieves the active handoff context from remoteHost over SSH and loads it into local clipboard.
 func PullHandoff(ctx context.Context, host string) (*meshContext.HandoffRecord, error) {
 	if host == "" {
-		host = "mansol-mbp"
+		host = "company-mbp"
 	}
 
 	probe := bridge.ProbeSSH(ctx, host, 3*time.Second)

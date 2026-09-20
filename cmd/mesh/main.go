@@ -12,14 +12,14 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/vincevasile/agent-mesh/internal/bridge"
-	"github.com/vincevasile/agent-mesh/internal/config"
-	meshContext "github.com/vincevasile/agent-mesh/internal/context"
-	"github.com/vincevasile/agent-mesh/internal/db"
-	"github.com/vincevasile/agent-mesh/internal/reporting"
-	"github.com/vincevasile/agent-mesh/internal/router"
-	meshSync "github.com/vincevasile/agent-mesh/internal/sync"
-	"github.com/vincevasile/agent-mesh/internal/telemetry"
+	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
+	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	meshContext "github.com/VinnyVanGogh/agent-mesh/internal/context"
+	"github.com/VinnyVanGogh/agent-mesh/internal/db"
+	"github.com/VinnyVanGogh/agent-mesh/internal/reporting"
+	"github.com/VinnyVanGogh/agent-mesh/internal/router"
+	meshSync "github.com/VinnyVanGogh/agent-mesh/internal/sync"
+	"github.com/VinnyVanGogh/agent-mesh/internal/telemetry"
 )
 
 var (
@@ -64,7 +64,7 @@ var statusCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
 
-		remoteHost := "mansol-mbp"
+		remoteHost := "company-mbp"
 		if cfg != nil && cfg.RemoteHost != "" {
 			remoteHost = cfg.RemoteHost
 		}
@@ -81,7 +81,7 @@ var statusCmd = &cobra.Command{
 			pool3p := pacerState.Pools[router.Pool3PClaude]
 
 			if workPool != nil {
-				workName := "Managed Solution (Work)"
+				workName := "Enterprise (Work)"
 				if cfg != nil && cfg.CompanyName != "" {
 					workName = fmt.Sprintf("%s (Work)", cfg.CompanyName)
 				}
@@ -143,7 +143,7 @@ var routeCmd = &cobra.Command{
 			cwd, _ = os.Getwd()
 		}
 
-		remoteHost := "mansol-mbp"
+		remoteHost := "company-mbp"
 		if cfg != nil && cfg.RemoteHost != "" {
 			remoteHost = cfg.RemoteHost
 		}
@@ -190,7 +190,7 @@ var routeCmd = &cobra.Command{
 		fmt.Println("\033[1;36m[Agent-Mesh :: Dynamic Router]\033[0m")
 		fmt.Printf("  • Workspace:          %s\n", decision.Workspace)
 		if decision.IsWorkRepo {
-			fmt.Printf("  • Context Type:       \033[1;32mManaged Solution Work Repo\033[0m (%s)\n", decision.WorkRepoSource)
+			fmt.Printf("  • Context Type:       \033[1;32mEnterprise Work Repo\033[0m (%s)\n", decision.WorkRepoSource)
 			if decision.SSHReachable {
 				fmt.Printf("  • Node Reachability:  \033[1;32m✔ %s is reachable via SSH\033[0m\n", decision.RemoteHost)
 			} else if !noSSH {
@@ -389,7 +389,7 @@ var bridgeCheckCmd = &cobra.Command{
 		if len(args) > 0 {
 			targetDir = args[0]
 		}
-		host := "mansol-mbp"
+		host := "company-mbp"
 		if cfg != nil && cfg.RemoteHost != "" {
 			host = cfg.RemoteHost
 		}
@@ -425,7 +425,7 @@ var bridgeLaunchCmd = &cobra.Command{
 			targetDir = args[0]
 			passArgs = args[1:]
 		}
-		host := "mansol-mbp"
+		host := "company-mbp"
 		if cfg != nil && cfg.RemoteHost != "" {
 			host = cfg.RemoteHost
 		}
@@ -518,7 +518,7 @@ var syncPullCmd = &cobra.Command{
 			host = args[0]
 		}
 		if host == "" {
-			host = "mansol-mbp"
+			host = "company-mbp"
 		}
 
 		fmt.Printf("\033[1;36m[sync]\033[0m Pulling transcripts from %s...\n", host)

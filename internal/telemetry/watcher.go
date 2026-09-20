@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/vincevasile/agent-mesh/internal/bridge"
-	"github.com/vincevasile/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
+	"github.com/VinnyVanGogh/agent-mesh/internal/config"
 	_ "modernc.org/sqlite"
 )
 
@@ -245,7 +245,7 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 		accountEmail = w.cfg.PersonalEmail
 	default:
 		// Hybrid mode: classify based on repo path and folder heuristics
-		if bridge.IsWorkRepo(cwd) || strings.Contains(sourcePath, "mansol") || strings.Contains(sourcePath, "partner") || strings.Contains(sourcePath, "vps-hr") {
+		if bridge.IsWorkRepo(cwd) || bridge.IsWorkRepo(sourcePath) {
 			accountEmail = w.cfg.WorkEmail
 		}
 	}

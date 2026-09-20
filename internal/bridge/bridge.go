@@ -12,11 +12,22 @@ import (
 )
 
 const (
-	DefaultRemoteHost  = "mansol-mbp"
-	LocalMansolPrefix  = "/Users/vincevasile/Documents/dev/mansol"
-	RemoteMansolPrefix = "/Users/mansolvv/Documents/dev/managed_solution"
-	DefaultSSHTimeout  = 2 * time.Second
+	DefaultRemoteHost = "company-mbp"
+	DefaultSSHTimeout = 2 * time.Second
 )
+
+var (
+	LocalWorkPrefix  = filepath.Join(getHomeDir(), "Documents", "dev", "work")
+	RemoteWorkPrefix = "/Users/remote/Documents/dev/work"
+)
+
+func getHomeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "."
+	}
+	return home
+}
 
 // RepoMapping represents a repository configuration from scan-repos.json.
 type RepoMapping struct {
@@ -78,41 +89,41 @@ func FindMappedRepo(cfg *ScanReposConfig, targetPath string) *RepoMapping {
 	return nil
 }
 
-// ToRemotePath translates a local path to the remote mansol-mbp path.
-// Example: /Users/vincevasile/Documents/dev/mansol/foo -> /Users/mansolvv/Documents/dev/managed_solution/foo
+// ToRemotePath translates a local path to the remote enterprise path.
+// Example: ~/Documents/dev/work/foo -> /Users/remote/Documents/dev/work/foo
 func ToRemotePath(localPath string) string {
 	clean := filepath.Clean(localPath)
-	if clean == LocalMansolPrefix {
-		return RemoteMansolPrefix
+	if clean == LocalWorkPrefix {
+		return RemoteWorkPrefix
 	}
-	if strings.HasPrefix(clean, LocalMansolPrefix+string(filepath.Separator)) {
-		rel := strings.TrimPrefix(clean, LocalMansolPrefix)
-		return filepath.Join(RemoteMansolPrefix, rel)
+	if strings.HasPrefix(clean, LocalWorkPrefix+string(filepath.Separator)) {
+		rel := strings.TrimPrefix(clean, LocalWorkPrefix)
+		return filepath.Join(RemoteWorkPrefix, rel)
 	}
 	return clean
 }
 
-// ToLocalPath translates a remote mansol-mbp path to the local path.
-// Example: /Users/mansolvv/Documents/dev/managed_solution/foo -> /Users/vincevasile/Documents/dev/mansol/foo
+// ToLocalPath translates a remote enterprise path to the local path.
+// Example: /Users/remote/Documents/dev/work/foo -> ~/Documents/dev/work/foo
 func ToLocalPath(remotePath string) string {
 	clean := filepath.Clean(remotePath)
-	if clean == RemoteMansolPrefix {
-		return LocalMansolPrefix
+	if clean == RemoteWorkPrefix {
+		return LocalWorkPrefix
 	}
-	if strings.HasPrefix(clean, RemoteMansolPrefix+string(filepath.Separator)) {
-		rel := strings.TrimPrefix(clean, RemoteMansolPrefix)
-		return filepath.Join(LocalMansolPrefix, rel)
+	if strings.HasPrefix(clean, RemoteWorkPrefix+string(filepath.Separator)) {
+		rel := strings.TrimPrefix(clean, RemoteWorkPrefix)
+		return filepath.Join(LocalWorkPrefix, rel)
 	}
 	return clean
 }
 
-// IsWorkRepo determines if the path resides under the local or remote Managed Solution tree.
+// IsWorkRepo determines if the path resides under the local or remote work repo tree.
 func IsWorkRepo(path string) bool {
 	clean := filepath.Clean(path)
-	return clean == LocalMansolPrefix ||
-		strings.HasPrefix(clean, LocalMansolPrefix+string(filepath.Separator)) ||
-		clean == RemoteMansolPrefix ||
-		strings.HasPrefix(clean, RemoteMansolPrefix+string(filepath.Separator))
+	return clean == LocalWorkPrefix ||
+		strings.HasPrefix(clean, LocalWorkPrefix+string(filepath.Separator)) ||
+		clean == RemoteWorkPrefix ||
+		strings.HasPrefix(clean, RemoteWorkPrefix+string(filepath.Separator))
 }
 
 // ProbeResult holds connectivity test metrics for an SSH host.
@@ -336,7 +347,7 @@ func executeRemotely(ctx context.Context, host, remoteDir string, args []string)
 	}
 	cmdString := strings.Join(quoted, " ")
 
-	// Sanitize session name from repo directory (e.g. "mansol-partner-center-api")
+	// Sanitize session name from repo directory (e.g. "mesh-api-service")
 	sessionName := "mesh-" + filepath.Base(remoteDir)
 	sessionName = strings.ReplaceAll(sessionName, ".", "-")
 	sessionName = strings.ReplaceAll(sessionName, ":", "-")

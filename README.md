@@ -177,16 +177,16 @@ mesh version
 Install `meshd` as a user LaunchAgent:
 
 ```bash
-cat << 'EOF' > ~/Library/LaunchAgents/com.vincevasile.agent-mesh.daemon.plist
+cat << 'EOF' > ~/Library/LaunchAgents/com.agentmesh.daemon.plist
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.vincevasile.agent-mesh.daemon</string>
+    <string>com.agentmesh.daemon</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/vincevasile/.local/bin/meshd</string>
+        <string>/opt/homebrew/bin/meshd</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -200,7 +200,7 @@ cat << 'EOF' > ~/Library/LaunchAgents/com.vincevasile.agent-mesh.daemon.plist
 </plist>
 EOF
 
-launchctl load ~/Library/LaunchAgents/com.vincevasile.agent-mesh.daemon.plist
+launchctl load ~/Library/LaunchAgents/com.agentmesh.daemon.plist
 ```
 
 ### 2. Shell Integration
@@ -226,7 +226,7 @@ Configuration is located at `~/.agent-mesh/config.toml` (or `~/.agent-mesh/confi
 
 # Executive Reporting Metadata
 company_name = "Company Name"
-engineer_name = "Vince Vasile"
+engineer_name = "Staff Engineer"
 
 # Billable Client Rate (Hourly)
 # Set to your client billing rate (e.g., 250.0).
@@ -471,6 +471,6 @@ Supported build targets:
 
 ## License
 
-Copyright © 2026 Vince Vasile.
+Copyright © 2026 Agent-Mesh Contributors.
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.

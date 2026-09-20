@@ -1,4 +1,4 @@
-module github.com/vincevasile/agent-mesh
+module github.com/VinnyVanGogh/agent-mesh
 
 go 1.26.2
 

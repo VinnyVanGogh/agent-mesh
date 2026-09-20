@@ -11,7 +11,7 @@ import (
 
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
-	"github.com/vincevasile/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/agent-mesh/internal/config"
 )
 
 // Backwards-compatible MemoData struct
@@ -218,7 +218,7 @@ func generateWorkHTML(data WorkReportData) (string, error) {
         </li>
         <li class="project-item">
           <div>
-            <div class="project-name">Exchange / Mansol Mail Router</div>
+            <div class="project-name">Exchange & Enterprise Mail Router</div>
             <div class="project-impact">Routing logic, security filters, payload parsing</div>
           </div>
           <div style="font-weight: 700; color: #0284c7;">$296 value</div>
@@ -898,7 +898,7 @@ func generateCombinedHTML(data CombinedReportData) (string, error) {
   <div class="summary-box">
     <h2>Executive Multi-AI Strategy & Upgrade Path</h2>
     <p>
-      The multi-model fleet strategy is validated: high-volume iterative coding on Claude Max, automated diff review gates on Gemini Native, and enterprise delivery on Managed Solution repos. Upgrading Vince's work seat to <strong>Claude Max 20x ($200/mo)</strong> unlocks the final capacity bottleneck, enabling over 200,000 turns/month across all repositories.
+      The multi-model fleet strategy is validated: high-volume iterative coding on Claude Max, automated diff review gates on Gemini Native, and enterprise delivery across production repositories. Upgrading the engineering work seat to <strong>Claude Max 20x ($200/mo)</strong> unlocks the final capacity bottleneck, enabling over 200,000 turns/month across all repositories.
     </p>
     <div class="summary-grid">
       <div class="summary-item">

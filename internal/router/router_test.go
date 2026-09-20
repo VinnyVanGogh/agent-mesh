@@ -8,7 +8,7 @@ import (
 )
 
 func BenchmarkStatusline(b *testing.B) {
-	payload := `{"model":{"display_name":"Claude 3.7 Sonnet"},"workspace":{"current_dir":"/Users/vincevasile/Documents/dev/agent-mesh"},"cost":{"total_cost_usd":0.43},"context_window":{"used_percentage":18,"remaining_tokens":164000}}`
+	payload := `{"model":{"display_name":"Claude 3.7 Sonnet"},"workspace":{"current_dir":"/path/to/project-mesh"},"cost":{"total_cost_usd":0.43},"context_window":{"used_percentage":18,"remaining_tokens":164000}}`
 	
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -37,7 +37,7 @@ func BenchmarkRoute(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := Route(ctx, "/Users/vincevasile/Documents/dev/agent-mesh", pacerState, RouteOptions{
+		_, err := Route(ctx, "/path/to/project-mesh", pacerState, RouteOptions{
 			CheckSSH: false,
 		})
 		if err != nil {

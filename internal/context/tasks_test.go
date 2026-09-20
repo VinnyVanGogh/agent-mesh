@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	_ "modernc.org/sqlite"
-	"github.com/vincevasile/agent-mesh/internal/db"
+	"github.com/VinnyVanGogh/agent-mesh/internal/db"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {
@@ -26,7 +26,7 @@ func TestTaskCRUD(t *testing.T) {
 	database := setupTestDB(t)
 
 	// 1. Create Task
-	task1, err := CreateTask(database, "Implement bridge package", "/Users/vincevasile/Documents/dev/agent-mesh", "feature/bridge", "personal")
+	task1, err := CreateTask(database, "Implement bridge package", "/path/to/personal/agent-mesh", "feature/bridge", "personal")
 	if err != nil {
 		t.Fatalf("CreateTask failed: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestTaskCRUD(t *testing.T) {
 		t.Errorf("unexpected status: %s", task1.Status)
 	}
 
-	task2, err := CreateTask(database, "Fix partner center API", "/Users/vincevasile/Documents/dev/mansol/python_projects/partner-center-api", "main", "work")
+	task2, err := CreateTask(database, "Fix API service", "/path/to/work/services/api-service", "main", "work")
 	if err != nil {
 		t.Fatalf("CreateTask 2 failed: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestTaskCRUD(t *testing.T) {
 	}
 
 	// 3. Get Active Task for Repo
-	foundActive, err := GetActiveTaskForRepo(database, "/Users/vincevasile/Documents/dev/mansol/python_projects/partner-center-api")
+	foundActive, err := GetActiveTaskForRepo(database, "/path/to/work/services/api-service")
 	if err != nil {
 		t.Fatalf("GetActiveTaskForRepo failed: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestTaskCRUD(t *testing.T) {
 func TestHandoffGeneration(t *testing.T) {
 	database := setupTestDB(t)
 
-	_, err := CreateTask(database, "Test Handoff Flow", "/Users/vincevasile/Documents/dev/agent-mesh", "main", "personal")
+	_, err := CreateTask(database, "Test Handoff Flow", ".", "main", "personal")
 	if err != nil {
 		t.Fatalf("failed to create task: %v", err)
 	}

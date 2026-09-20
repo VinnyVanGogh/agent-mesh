@@ -7,6 +7,17 @@ import (
 )
 
 func TestPathTranslation(t *testing.T) {
+	// Set generic prefixes for test predictability
+	origLocal := LocalWorkPrefix
+	origRemote := RemoteWorkPrefix
+	defer func() {
+		LocalWorkPrefix = origLocal
+		RemoteWorkPrefix = origRemote
+	}()
+
+	LocalWorkPrefix = "/Users/developer/Documents/dev/work"
+	RemoteWorkPrefix = "/Users/remote/Documents/dev/work"
+
 	tests := []struct {
 		name       string
 		local      string
@@ -14,27 +25,27 @@ func TestPathTranslation(t *testing.T) {
 		isWorkRepo bool
 	}{
 		{
-			name:       "mansol root",
-			local:      "/Users/vincevasile/Documents/dev/mansol",
-			remote:     "/Users/mansolvv/Documents/dev/managed_solution",
+			name:       "work root",
+			local:      "/Users/developer/Documents/dev/work",
+			remote:     "/Users/remote/Documents/dev/work",
 			isWorkRepo: true,
 		},
 		{
-			name:       "partner center subrepo",
-			local:      "/Users/vincevasile/Documents/dev/mansol/python_projects/partner-center-api",
-			remote:     "/Users/mansolvv/Documents/dev/managed_solution/python_projects/partner-center-api",
+			name:       "api service subrepo",
+			local:      "/Users/developer/Documents/dev/work/services/api-service",
+			remote:     "/Users/remote/Documents/dev/work/services/api-service",
 			isWorkRepo: true,
 		},
 		{
 			name:       "deep nested file",
-			local:      "/Users/vincevasile/Documents/dev/mansol/vps-hr-automation/scripts/sync.sh",
-			remote:     "/Users/mansolvv/Documents/dev/managed_solution/vps-hr-automation/scripts/sync.sh",
+			local:      "/Users/developer/Documents/dev/work/automation/scripts/sync.sh",
+			remote:     "/Users/remote/Documents/dev/work/automation/scripts/sync.sh",
 			isWorkRepo: true,
 		},
 		{
 			name:       "non work repo",
-			local:      "/Users/vincevasile/Documents/dev/agent-mesh",
-			remote:     "/Users/vincevasile/Documents/dev/agent-mesh",
+			local:      "/Users/developer/Documents/personal/project",
+			remote:     "/Users/developer/Documents/personal/project",
 			isWorkRepo: false,
 		},
 	}
@@ -66,12 +77,12 @@ func TestLoadScanRepos(t *testing.T) {
 	jsonPath := filepath.Join(tmpDir, "scan-repos.json")
 
 	content := `{
-		"author_identities": ["VinnyVanGogh", "Vince Vasile"],
+		"author_identities": ["VinnyVanGogh", "Developer"],
 		"repos": [
 			{
-				"name": "Partner Center Analytics",
-				"path": "/Users/vincevasile/Documents/dev/mansol/python_projects/partner-center-api",
-				"projects": ["partner-center"]
+				"name": "Analytics Service",
+				"path": "/Users/developer/Documents/dev/work/services/analytics-api",
+				"projects": ["analytics"]
 			}
 		]
 	}`
@@ -88,15 +99,15 @@ func TestLoadScanRepos(t *testing.T) {
 	if len(cfg.Repos) != 1 {
 		t.Fatalf("expected 1 repo, got %d", len(cfg.Repos))
 	}
-	if cfg.Repos[0].Name != "Partner Center Analytics" {
+	if cfg.Repos[0].Name != "Analytics Service" {
 		t.Errorf("unexpected repo name: %s", cfg.Repos[0].Name)
 	}
 
-	repo := FindMappedRepo(cfg, "/Users/vincevasile/Documents/dev/mansol/python_projects/partner-center-api/src/main.py")
+	repo := FindMappedRepo(cfg, "/Users/developer/Documents/dev/work/services/analytics-api/src/main.py")
 	if repo == nil {
 		t.Fatalf("expected mapped repo, got nil")
 	}
-	if repo.Name != "Partner Center Analytics" {
-		t.Errorf("expected repo name 'Partner Center Analytics', got %s", repo.Name)
+	if repo.Name != "Analytics Service" {
+		t.Errorf("expected repo name 'Analytics Service', got %s", repo.Name)
 	}
 }

@@ -39,10 +39,10 @@ func DefaultConfig() *Config {
 		CompanyName:     "",
 		EngineerName:    "",
 		HourlyRate:      0.0,
-		WorkEmail:       "vvasile@managedsolution.com",
-		PersonalEmail:   "stylesbyvinny@gmail.com",
-		WorkRepoRoot:    filepath.Join(home, "Documents", "dev", "mansol"),
-		RemoteHost:      "mansol-mbp",
+		WorkEmail:       "engineer@company.com",
+		PersonalEmail:   "personal@gmail.com",
+		WorkRepoRoot:    filepath.Join(home, "Documents", "dev", "work"),
+		RemoteHost:      "company-mbp",
 		MachineRole:     "hybrid",
 	}
 }

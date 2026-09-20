@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/vincevasile/agent-mesh/internal/config"
-	"github.com/vincevasile/agent-mesh/internal/telemetry"
+	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/agent-mesh/internal/telemetry"
 )
 
 func main() {

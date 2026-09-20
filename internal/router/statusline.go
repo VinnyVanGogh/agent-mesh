@@ -255,9 +255,9 @@ func RenderStatusline(w io.Writer, r io.Reader) error {
 	// 6. Account badge
 	var accountBadge string
 	if isWork {
-		accountBadge = fmt.Sprintf("🪪 %svvasile@managedsolution.com%s", Teal, Reset)
+		accountBadge = fmt.Sprintf("🪪 %swork%s", Teal, Reset)
 	} else {
-		accountBadge = fmt.Sprintf("🪪 %sstylesbyvinny@gmail.com%s", Gray, Reset)
+		accountBadge = fmt.Sprintf("🪪 %spersonal%s", Gray, Reset)
 	}
 
 	// 7. Cost badge
@@ -402,7 +402,7 @@ func RenderStatusline(w io.Writer, r io.Reader) error {
 	if pacerState != nil {
 		var planParts []string
 		if isWork {
-			planParts = append(planParts, fmt.Sprintf("route ▸ %sremote-claude (mansol-mbp)%s", Green, Reset))
+			planParts = append(planParts, fmt.Sprintf("route ▸ %sremote-claude%s", Green, Reset))
 			planParts = append(planParts, fmt.Sprintf("fallback: %slocal-work%s", Yellow, Reset))
 			if pacerState.Pools[PoolWorkClaude] != nil {
 				planParts = append(planParts, fmt.Sprintf("runway: %d turns", pacerState.Pools[PoolWorkClaude].TurnsRunway))

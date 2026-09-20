@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/vincevasile/agent-mesh/internal/router"
+	"github.com/VinnyVanGogh/agent-mesh/internal/router"
 )
 
 type RateLimitNotifier struct {

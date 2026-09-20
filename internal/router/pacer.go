@@ -128,22 +128,20 @@ func LoadPacerState() (*PacerState, error) {
 
 	// Initialize the 4 pools
 	state.Pools[PoolWorkClaude] = &QuotaPool{
-		ID:           PoolWorkClaude,
-		Name:         "Claude (Work)",
-		AccountEmail: "vvasile@managedsolution.com",
-		BurnRate5h:   claudeBurn5h,
-		BurnRateW:    claudeBurnW,
-		FiveHour:     QuotaWindow{RemainingPct: 100},
-		Weekly:       QuotaWindow{RemainingPct: 100},
+		ID:         PoolWorkClaude,
+		Name:       "Claude (Work)",
+		BurnRate5h: claudeBurn5h,
+		BurnRateW:  claudeBurnW,
+		FiveHour:   QuotaWindow{RemainingPct: 100},
+		Weekly:     QuotaWindow{RemainingPct: 100},
 	}
 	state.Pools[PoolPersonalClaude] = &QuotaPool{
-		ID:           PoolPersonalClaude,
-		Name:         "Claude (Personal)",
-		AccountEmail: "stylesbyvinny@gmail.com",
-		BurnRate5h:   claudeBurn5h,
-		BurnRateW:    claudeBurnW,
-		FiveHour:     QuotaWindow{RemainingPct: 100},
-		Weekly:       QuotaWindow{RemainingPct: 100},
+		ID:         PoolPersonalClaude,
+		Name:       "Claude (Personal)",
+		BurnRate5h: claudeBurn5h,
+		BurnRateW:  claudeBurnW,
+		FiveHour:   QuotaWindow{RemainingPct: 100},
+		Weekly:     QuotaWindow{RemainingPct: 100},
 	}
 	state.Pools[PoolGeminiNative] = &QuotaPool{
 		ID:          PoolGeminiNative,
@@ -335,7 +333,7 @@ func readSamplesTail(path string, state *PacerState) {
 		}
 
 		email := strings.ToLower(sample.AccountEmail)
-		isWork := strings.Contains(email, "managedsolution.com")
+		isWork := !strings.Contains(email, "gmail.com") && !strings.Contains(email, "personal") && email != ""
 		isPersonal := strings.Contains(email, "gmail.com") || (!isWork && email != "")
 
 		if isWork && !workFound {
