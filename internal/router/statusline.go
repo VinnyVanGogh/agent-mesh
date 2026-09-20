@@ -47,7 +47,22 @@ var (
 	RampFiveHot  = RGB{232, 93, 62}
 	RampWeekCool = RGB{255, 121, 198}
 	RampWeekHot  = RGB{168, 46, 88}
+
+	cachedConfig     *config.Config
+	cachedConfigTime time.Time
 )
+
+func getCachedConfig() *config.Config {
+	if cachedConfig != nil && time.Since(cachedConfigTime) < 10*time.Second {
+		return cachedConfig
+	}
+	cfg, err := config.LoadConfig()
+	if err == nil {
+		cachedConfig = cfg
+		cachedConfigTime = time.Now()
+	}
+	return cachedConfig
+}
 
 type StatuslinePayload struct {
 	Model struct {
@@ -144,9 +159,9 @@ func formatResetTime(t time.Time, includeDay bool) string {
 // fastGitInfo reads git branch and cache without launching slow subprocesses.
 func fastGitInfo(dir string) (branch, dirty, sync string) {
 	// 1. Check git cache in /tmp first (<0.1ms)
-	h := md5.Sum([]byte(dir))
+	h := md5.Sum([]byte(fmt.Sprintf("%d:%s", os.Getuid(), dir)))
 	cacheKey := hex.EncodeToString(h[:8])
-	cacheFile := filepath.Join(os.TempDir(), fmt.Sprintf("statusline-git-%s.cache", cacheKey))
+	cacheFile := filepath.Join(os.TempDir(), fmt.Sprintf("statusline-git-u%d-%s.cache", os.Getuid(), cacheKey))
 	if stat, err := os.Stat(cacheFile); err == nil && time.Since(stat.ModTime()) < 20*time.Second {
 		if data, err := os.ReadFile(cacheFile); err == nil {
 			var gc gitCacheInfo
@@ -258,7 +273,7 @@ func RenderStatusline(w io.Writer, r io.Reader) error {
 
 	// 6. Plan tier badge
 	planTier := payload.PlanTier
-	cfg, _ := config.LoadConfig()
+	cfg := getCachedConfig()
 	if planTier == "" || planTier == "Google AI Pro" {
 		if strings.Contains(strings.ToLower(modelName), "gemini") {
 			if cfg != nil && cfg.GooglePlanTier != "" {

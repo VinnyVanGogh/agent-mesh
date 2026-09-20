@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -325,7 +326,7 @@ var initCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		shellFlag, _ := cmd.Flags().GetBool("shell")
 		if shellFlag {
-			fmt.Println(`# Agent-Mesh Shell Integration
+			fmt.Print(`# Agent-Mesh Shell Integration
 # Add to ~/.zshrc or ~/.bashrc: eval "$(mesh init --shell)"
 
 alias ai-status="mesh status"
@@ -351,9 +352,46 @@ ai() {
   elif [[ "$TARGET_CMD" == "claude" ]]; then
     command claude "$@"
   else
-    agy --model "$TARGET_MODEL" "$@"
+    command agy --model "$TARGET_MODEL" "$@"
   fi
-}`)
+}
+
+claude() {
+  local force=false
+  local clean_args=()
+  for arg in "$@"; do
+    if [[ "$arg" == "--force" ]]; then
+      force=true
+    else
+      clean_args+=("$arg")
+    fi
+  done
+
+  if [[ "$force" == true ]]; then
+    command claude "${clean_args[@]}"
+  else
+    mesh --claude "${clean_args[@]}"
+  fi
+}
+
+agy() {
+  local force=false
+  local clean_args=()
+  for arg in "$@"; do
+    if [[ "$arg" == "--force" ]]; then
+      force=true
+    else
+      clean_args+=("$arg")
+    fi
+  done
+
+  if [[ "$force" == true ]]; then
+    command agy "${clean_args[@]}"
+  else
+    mesh --gemini "${clean_args[@]}"
+  fi
+}
+`)
 			return
 		}
 
@@ -707,7 +745,7 @@ func handleHookPrompt() {
 	cwd, _ := os.Getwd()
 
 	// Debounce notifications and clipboard overwrites to once per 15 mins
-	debounceFile := filepath.Join(os.TempDir(), "mesh-prelock-warned.ts")
+	debounceFile := filepath.Join(os.TempDir(), fmt.Sprintf("mesh-prelock-warned-u%d.ts", os.Getuid()))
 	shouldNotify := true
 	if stat, err := os.Stat(debounceFile); err == nil {
 		if time.Since(stat.ModTime()) < 15*time.Minute {
@@ -841,17 +879,21 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 		binName = altBin
 	}
 
-	subCmd := exec.Command(binPath, args...)
-	subCmd.Stdin = os.Stdin
-	subCmd.Stdout = os.Stdout
-	subCmd.Stderr = os.Stderr
-	subCmd.Env = os.Environ()
+	execArgs := append([]string{binName}, args...)
+	if err := syscall.Exec(binPath, execArgs, os.Environ()); err != nil {
+		// Fallback to exec.Command if syscall.Exec fails (e.g. on non-Unix)
+		subCmd := exec.Command(binPath, args...)
+		subCmd.Stdin = os.Stdin
+		subCmd.Stdout = os.Stdout
+		subCmd.Stderr = os.Stderr
+		subCmd.Env = os.Environ()
 
-	if err := subCmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+		if err := subCmd.Run(); err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				os.Exit(exitErr.ExitCode())
+			}
+			os.Exit(1)
 		}
-		os.Exit(1)
 	}
 }
 

@@ -172,15 +172,29 @@ func (w *Watcher) processFile(filePath string) {
 		return
 	}
 
-	scanner := bufio.NewScanner(file)
-	// Allow large token payload lines (up to 4MB)
-	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
-
+	reader := bufio.NewReaderSize(file, 64*1024)
 	var newOffset int64 = lastOffset
 
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		newOffset += int64(len(line)) + 1 // +1 for newline
+	for {
+		var line []byte
+		var isPrefix bool
+		for {
+			chunk, prefix, err := reader.ReadLine()
+			if err != nil {
+				if len(line) > 0 {
+					w.ingestLine(line, filePath)
+				}
+				w.cursors.Set(filePath, newOffset)
+				return
+			}
+			line = append(line, chunk...)
+			newOffset += int64(len(chunk))
+			isPrefix = prefix
+			if !isPrefix {
+				newOffset++ // +1 for newline character delimiter
+				break
+			}
+		}
 
 		if len(line) == 0 {
 			continue
@@ -188,8 +202,6 @@ func (w *Watcher) processFile(filePath string) {
 
 		w.ingestLine(line, filePath)
 	}
-
-	w.cursors.Set(filePath, newOffset)
 }
 
 func (w *Watcher) ingestLine(line []byte, sourcePath string) {
@@ -225,8 +237,15 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 		sessionID, _ = record["session_id"].(string)
 	}
 
-	// Model name
+	// Model name & family
 	model, _ := msg["model"].(string)
+	modelFamily := "claude"
+	lowerModel := strings.ToLower(model)
+	if strings.Contains(lowerModel, "gemini") {
+		modelFamily = "gemini"
+	} else if strings.Contains(lowerModel, "gpt") || strings.Contains(lowerModel, "o1") || strings.Contains(lowerModel, "o3") {
+		modelFamily = "openai"
+	}
 
 	// Timestamp
 	ts, _ := record["timestamp"].(string)
@@ -261,13 +280,14 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 		idempotency_key, detected_via, ts, model, model_family,
 		input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
 		session_id, account_email, raw_json
-	) VALUES (?, 'transcript', ?, ?, 'claude', ?, ?, ?, ?, ?, ?, ?, ?);
+	) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 
 	_, _ = w.db.Exec(query,
 		idempotencyKey,
 		ts,
 		model,
+		modelFamily,
 		int64(inputTokens),
 		int64(outputTokens),
 		int64(cacheRead),

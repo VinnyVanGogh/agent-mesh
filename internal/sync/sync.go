@@ -58,7 +58,12 @@ func PullTranscripts(ctx context.Context, host string, cfg *config.Config) (*Syn
 	remoteClaudeDir := fmt.Sprintf("%s:~/.claude/projects/", host)
 
 	claudeCmd := exec.CommandContext(ctx, "rsync", "-az", "--update", "--exclude=*.lock", remoteClaudeDir, localClaudeDir)
-	_ = claudeCmd.Run()
+	if out, err := claudeCmd.CombinedOutput(); err != nil {
+		// Log warning but continue if directory doesn't exist remotely yet
+		if !strings.Contains(string(out), "No such file or directory") {
+			return nil, fmt.Errorf("rsync claude projects failed: %w (%s)", err, strings.TrimSpace(string(out)))
+		}
+	}
 
 	// 2. Rsync Antigravity brain logs
 	localBrainDir := filepath.Join(home, ".gemini", "antigravity-cli", "brain")
@@ -66,7 +71,11 @@ func PullTranscripts(ctx context.Context, host string, cfg *config.Config) (*Syn
 	remoteBrainDir := fmt.Sprintf("%s:~/.gemini/antigravity-cli/brain/", host)
 
 	brainCmd := exec.CommandContext(ctx, "rsync", "-az", "--update", remoteBrainDir, localBrainDir)
-	_ = brainCmd.Run()
+	if out, err := brainCmd.CombinedOutput(); err != nil {
+		if !strings.Contains(string(out), "No such file or directory") {
+			return nil, fmt.Errorf("rsync antigravity brain failed: %w (%s)", err, strings.TrimSpace(string(out)))
+		}
+	}
 
 	// 3. Ingest into telemetry DB
 	inserted, err := IngestTranscripts(cfg)
@@ -142,7 +151,16 @@ func IngestTranscripts(cfg *config.Config) (int64, error) {
 			if sessionID == "" {
 				sessionID, _ = record["session_id"].(string)
 			}
+			// Model name & family
 			model, _ := msg["model"].(string)
+			modelFamily := "claude"
+			lowerModel := strings.ToLower(model)
+			if strings.Contains(lowerModel, "gemini") {
+				modelFamily = "gemini"
+			} else if strings.Contains(lowerModel, "gpt") || strings.Contains(lowerModel, "o1") || strings.Contains(lowerModel, "o3") {
+				modelFamily = "openai"
+			}
+
 			ts, _ := record["timestamp"].(string)
 			if ts == "" {
 				ts = time.Now().UTC().Format(time.RFC3339)
@@ -167,13 +185,14 @@ func IngestTranscripts(cfg *config.Config) (int64, error) {
 				idempotency_key, detected_via, ts, model, model_family,
 				input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
 				session_id, account_email, raw_json
-			) VALUES (?, 'transcript', ?, ?, 'claude', ?, ?, ?, ?, ?, ?, ?, ?);
+			) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 			`
 
 			res, err := db.Exec(query,
 				fmt.Sprintf("sync:%s:%s", sessionID, ts),
 				ts,
 				model,
+				modelFamily,
 				int64(inputTokens),
 				int64(outputTokens),
 				int64(cacheRead),

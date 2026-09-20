@@ -1,6 +1,7 @@
 package context
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -106,7 +107,9 @@ func GatherGitContext(dir string) GitContext {
 }
 
 func execGit(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	return string(out), err

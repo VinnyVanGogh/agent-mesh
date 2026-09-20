@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/VinnyVanGogh/agent-mesh/internal/router"
@@ -165,7 +166,13 @@ func (n *RateLimitNotifier) check() {
 func SendNotification(title, message string) {
 	log.Printf("[meshd notify] %s: %s", title, message)
 
+	// Safely escape quotes and backslashes for AppleScript string literals
+	safeTitle := strings.ReplaceAll(title, `\`, `\\`)
+	safeTitle = strings.ReplaceAll(safeTitle, `"`, `\"`)
+	safeMsg := strings.ReplaceAll(message, `\`, `\\`)
+	safeMsg = strings.ReplaceAll(safeMsg, `"`, `\"`)
+
 	// AppleScript notification
-	script := fmt.Sprintf(`display notification "%s" with title "%s" sound name "Glass"`, message, title)
+	script := fmt.Sprintf(`display notification "%s" with title "%s" sound name "Glass"`, safeMsg, safeTitle)
 	_ = exec.Command("osascript", "-e", script).Run()
 }
