@@ -21,6 +21,7 @@ type Config struct {
 	PersonalEmail   string  `json:"personal_email" toml:"personal_email"`
 	WorkRepoRoot    string  `json:"work_repo_root" toml:"work_repo_root"`
 	RemoteHost      string  `json:"remote_host" toml:"remote_host"`
+	RemoteRepoRoot  string  `json:"remote_repo_root" toml:"remote_repo_root"` // e.g. "~/Documents/dev/managed_solution" or "~/Documents/dev/work"
 	MachineRole     string  `json:"machine_role" toml:"machine_role"` // "hybrid" (default), "work", or "personal"
 	GooglePlanTier  string  `json:"google_plan_tier" toml:"google_plan_tier"` // e.g. "Google AI Ultra" or "Ultra"
 	ClaudePlanTier  string  `json:"claude_plan_tier" toml:"claude_plan_tier"` // e.g. "Max 5x" or "Pro"
@@ -45,6 +46,7 @@ func DefaultConfig() *Config {
 		PersonalEmail:   "personal@gmail.com",
 		WorkRepoRoot:    filepath.Join(home, "Documents", "dev", "work"),
 		RemoteHost:      "company-mbp",
+		RemoteRepoRoot:  "~/Documents/dev/work",
 		MachineRole:     "hybrid",
 		GooglePlanTier:  "Google AI Ultra",
 		ClaudePlanTier:  "Pro",
@@ -91,6 +93,15 @@ func LoadConfig() (*Config, error) {
 	cfg.DataDir = expandPath(cfg.DataDir, home)
 	cfg.DBPath = expandPath(cfg.DBPath, home)
 	cfg.TelemetryDBPath = expandPath(cfg.TelemetryDBPath, home)
+
+	if cfg.RemoteRepoRoot == "" {
+		if strings.Contains(strings.ToLower(cfg.CompanyName), "managed solution") ||
+			strings.Contains(strings.ToLower(cfg.WorkRepoRoot), "mansol") {
+			cfg.RemoteRepoRoot = "~/Documents/dev/managed_solution"
+		} else {
+			cfg.RemoteRepoRoot = "~/Documents/dev/work"
+		}
+	}
 
 	return cfg, nil
 }

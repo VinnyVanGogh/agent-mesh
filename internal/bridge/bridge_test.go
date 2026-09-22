@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/VinnyVanGogh/agent-mesh/internal/config"
 )
 
 func TestPathTranslation(t *testing.T) {
@@ -111,3 +113,92 @@ func TestLoadScanRepos(t *testing.T) {
 		t.Errorf("expected repo name 'Analytics Service', got %s", repo.Name)
 	}
 }
+
+func TestSmartPathTranslation(t *testing.T) {
+	home := getHomeDir()
+	cfg := &config.Config{
+		WorkRepoRoot:   filepath.Join(home, "Documents", "dev", "mansol"),
+		RemoteRepoRoot: "~/Documents/dev/managed_solution",
+	}
+
+	scanCfg := &ScanReposConfig{
+		Repos: []RepoMapping{
+			{
+				Name: "GitHub Repo Prod",
+				Path: filepath.Join(home, "Documents", "dev", "mansol-apps-server", "github_repo-prod"),
+			},
+			{
+				Name: "Partner Center API",
+				Path: filepath.Join(home, "Documents", "dev", "mansol", "python_projects", "partner-center-api"),
+			},
+		},
+	}
+
+	// 1. Mapped repo root translation
+	localRepo := filepath.Join(home, "Documents", "dev", "mansol-apps-server", "github_repo-prod")
+	expectedRemote := "~/Documents/dev/managed_solution/github_repo-prod"
+	gotRemote := ToRemotePathWithConfig(localRepo, cfg, scanCfg)
+	if gotRemote != expectedRemote {
+		t.Errorf("ToRemotePathWithConfig(%q) = %q, want %q", localRepo, gotRemote, expectedRemote)
+	}
+
+	// 2. Mapped repo subpath translation
+	localSub := filepath.Join(home, "Documents", "dev", "mansol-apps-server", "github_repo-prod", "file_sharing", "sync.py")
+	expectedSubRemote := "~/Documents/dev/managed_solution/github_repo-prod/file_sharing/sync.py"
+	gotSubRemote := ToRemotePathWithConfig(localSub, cfg, scanCfg)
+	if gotSubRemote != expectedSubRemote {
+		t.Errorf("ToRemotePathWithConfig(%q) = %q, want %q", localSub, gotSubRemote, expectedSubRemote)
+	}
+
+	// 3. Reverse translation back to local
+	gotLocal := ToLocalPathWithConfig(expectedRemote, cfg, scanCfg)
+	if gotLocal != localRepo {
+		t.Errorf("ToLocalPathWithConfig(%q) = %q, want %q", expectedRemote, gotLocal, localRepo)
+	}
+
+	// 4. Reverse translation of subpath back to local
+	gotLocalSub := ToLocalPathWithConfig(expectedSubRemote, cfg, scanCfg)
+	if gotLocalSub != localSub {
+		t.Errorf("ToLocalPathWithConfig(%q) = %q, want %q", expectedSubRemote, gotLocalSub, localSub)
+	}
+
+	// 5. General path under home directory uses ~ instead of local username
+	localGeneric := filepath.Join(home, "Documents", "dev", "personal_tool")
+	expectedGeneric := "~/Documents/dev/personal_tool"
+	gotGeneric := ToRemotePathWithConfig(localGeneric, cfg, scanCfg)
+	if gotGeneric != expectedGeneric {
+		t.Errorf("ToRemotePathWithConfig(%q) = %q, want %q", localGeneric, gotGeneric, expectedGeneric)
+	}
+}
+
+func TestShellPathForDir(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{
+			input: "~/Documents/dev/managed_solution/github_repo-prod",
+			want:  `"$HOME"/'Documents/dev/managed_solution/github_repo-prod'`,
+		},
+		{
+			input: "~",
+			want:  `"$HOME"`,
+		},
+		{
+			input: "/opt/repos/app",
+			want:  `'/opt/repos/app'`,
+		},
+		{
+			input: "~/path with spaces/repo",
+			want:  `"$HOME"/'path with spaces/repo'`,
+		},
+	}
+
+	for _, tc := range tests {
+		got := ShellPathForDir(tc.input)
+		if got != tc.want {
+			t.Errorf("ShellPathForDir(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+}
+

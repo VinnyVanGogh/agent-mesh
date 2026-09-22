@@ -370,7 +370,7 @@ claude() {
   if [[ "$force" == true ]]; then
     command claude "${clean_args[@]}"
   else
-    mesh --claude "${clean_args[@]}"
+    mesh "${clean_args[@]}"
   fi
 }
 
@@ -388,7 +388,7 @@ agy() {
   if [[ "$force" == true ]]; then
     command agy "${clean_args[@]}"
   else
-    mesh --gemini "${clean_args[@]}"
+    mesh "${clean_args[@]}"
   fi
 }
 `)

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/VinnyVanGogh/agent-mesh/internal/config"
 )
 
 const (
@@ -90,9 +92,34 @@ func FindMappedRepo(cfg *ScanReposConfig, targetPath string) *RepoMapping {
 }
 
 // ToRemotePath translates a local path to the remote enterprise path.
-// Example: ~/Documents/dev/work/foo -> /Users/remote/Documents/dev/work/foo
+// It checks configured repositories, work prefixes, and replaces local home with ~
+// so that local usernames are never leaked or used on remote hosts.
 func ToRemotePath(localPath string) string {
+	cfg, _ := config.LoadConfig()
+	scanCfg, _ := LoadScanRepos("")
+	return ToRemotePathWithConfig(localPath, cfg, scanCfg)
+}
+
+// ToRemotePathWithConfig translates localPath using the provided config and repo scans.
+func ToRemotePathWithConfig(localPath string, cfg *config.Config, scanCfg *ScanReposConfig) string {
+	if localPath == "" {
+		return ""
+	}
 	clean := filepath.Clean(localPath)
+	home := getHomeDir()
+
+	remoteRoot := "~/Documents/dev/work"
+	workRoot := LocalWorkPrefix
+	if cfg != nil {
+		if cfg.RemoteRepoRoot != "" {
+			remoteRoot = cfg.RemoteRepoRoot
+		}
+		if cfg.WorkRepoRoot != "" {
+			workRoot = cfg.WorkRepoRoot
+		}
+	}
+
+	// 1. If LocalWorkPrefix is set (e.g. in tests), honor it directly
 	if clean == LocalWorkPrefix {
 		return RemoteWorkPrefix
 	}
@@ -100,13 +127,69 @@ func ToRemotePath(localPath string) string {
 		rel := strings.TrimPrefix(clean, LocalWorkPrefix)
 		return filepath.Join(RemoteWorkPrefix, rel)
 	}
+
+	// 2. Check scan-repos.json mapping
+	if scanCfg != nil {
+		mapped := FindMappedRepo(scanCfg, clean)
+		if mapped != nil {
+			mappedClean := filepath.Clean(mapped.Path)
+			repoBase := filepath.Base(mappedClean)
+			rel, err := filepath.Rel(mappedClean, clean)
+			if err == nil && rel != "." && rel != "" {
+				return filepath.Join(remoteRoot, repoBase, rel)
+			}
+			return filepath.Join(remoteRoot, repoBase)
+		}
+	}
+
+	// 3. Check work repo root
+	if clean == workRoot {
+		return remoteRoot
+	}
+	if strings.HasPrefix(clean, workRoot+string(filepath.Separator)) {
+		rel := strings.TrimPrefix(clean, workRoot+string(filepath.Separator))
+		return filepath.Join(remoteRoot, rel)
+	}
+
+	// 4. Translate local home directory (~/...) so remote shell uses ~ not local username
+	if clean == home {
+		return "~"
+	}
+	if strings.HasPrefix(clean, home+string(filepath.Separator)) {
+		rel := strings.TrimPrefix(clean, home+string(filepath.Separator))
+		return "~/" + rel
+	}
+
 	return clean
 }
 
 // ToLocalPath translates a remote enterprise path to the local path.
-// Example: /Users/remote/Documents/dev/work/foo -> ~/Documents/dev/work/foo
 func ToLocalPath(remotePath string) string {
+	cfg, _ := config.LoadConfig()
+	scanCfg, _ := LoadScanRepos("")
+	return ToLocalPathWithConfig(remotePath, cfg, scanCfg)
+}
+
+// ToLocalPathWithConfig translates remotePath using the provided config and repo scans.
+func ToLocalPathWithConfig(remotePath string, cfg *config.Config, scanCfg *ScanReposConfig) string {
+	if remotePath == "" {
+		return ""
+	}
 	clean := filepath.Clean(remotePath)
+	home := getHomeDir()
+
+	remoteRoot := "~/Documents/dev/work"
+	workRoot := LocalWorkPrefix
+	if cfg != nil {
+		if cfg.RemoteRepoRoot != "" {
+			remoteRoot = cfg.RemoteRepoRoot
+		}
+		if cfg.WorkRepoRoot != "" {
+			workRoot = cfg.WorkRepoRoot
+		}
+	}
+
+	// 1. If RemoteWorkPrefix is set (e.g. in tests), honor it directly
 	if clean == RemoteWorkPrefix {
 		return LocalWorkPrefix
 	}
@@ -114,16 +197,75 @@ func ToLocalPath(remotePath string) string {
 		rel := strings.TrimPrefix(clean, RemoteWorkPrefix)
 		return filepath.Join(LocalWorkPrefix, rel)
 	}
+
+	// 2. Check scan-repos.json for repo matching by basename
+	if scanCfg != nil {
+		for _, repo := range scanCfg.Repos {
+			repoBase := filepath.Base(filepath.Clean(repo.Path))
+			targetRemote := filepath.Join(remoteRoot, repoBase)
+			if clean == targetRemote {
+				return filepath.Clean(repo.Path)
+			}
+			if strings.HasPrefix(clean, targetRemote+string(filepath.Separator)) {
+				rel := strings.TrimPrefix(clean, targetRemote+string(filepath.Separator))
+				return filepath.Join(filepath.Clean(repo.Path), rel)
+			}
+		}
+	}
+
+	// 3. Check remoteRoot prefix
+	if clean == remoteRoot {
+		return workRoot
+	}
+	if strings.HasPrefix(clean, remoteRoot+string(filepath.Separator)) {
+		rel := strings.TrimPrefix(clean, remoteRoot+string(filepath.Separator))
+		return filepath.Join(workRoot, rel)
+	}
+
+	// 4. If remotePath begins with ~, translate to local home
+	if clean == "~" {
+		return home
+	}
+	if strings.HasPrefix(clean, "~/") {
+		rel := strings.TrimPrefix(clean, "~/")
+		return filepath.Join(home, rel)
+	}
+
 	return clean
 }
 
 // IsWorkRepo determines if the path resides under the local or remote work repo tree.
 func IsWorkRepo(path string) bool {
 	clean := filepath.Clean(path)
-	return clean == LocalWorkPrefix ||
+	if clean == LocalWorkPrefix ||
 		strings.HasPrefix(clean, LocalWorkPrefix+string(filepath.Separator)) ||
 		clean == RemoteWorkPrefix ||
-		strings.HasPrefix(clean, RemoteWorkPrefix+string(filepath.Separator))
+		strings.HasPrefix(clean, RemoteWorkPrefix+string(filepath.Separator)) {
+		return true
+	}
+
+	cfg, _ := config.LoadConfig()
+	if cfg != nil {
+		if cfg.WorkRepoRoot != "" {
+			workClean := filepath.Clean(cfg.WorkRepoRoot)
+			if clean == workClean || strings.HasPrefix(clean, workClean+string(filepath.Separator)) {
+				return true
+			}
+		}
+		if cfg.RemoteRepoRoot != "" {
+			remoteClean := filepath.Clean(cfg.RemoteRepoRoot)
+			if clean == remoteClean || strings.HasPrefix(clean, remoteClean+string(filepath.Separator)) {
+				return true
+			}
+		}
+	}
+
+	scanCfg, _ := LoadScanRepos("")
+	if scanCfg != nil && FindMappedRepo(scanCfg, clean) != nil {
+		return true
+	}
+
+	return false
 }
 
 // ProbeResult holds connectivity test metrics for an SSH host.
@@ -255,9 +397,27 @@ type LaunchOptions struct {
 	ForceLocal bool
 }
 
-// quoteForShell returns a single-quoted shell argument safe for remote bash/zsh execution.
-func quoteForShell(arg string) string {
+// QuoteForShell returns a single-quoted shell argument safe for remote bash/zsh execution.
+func QuoteForShell(arg string) string {
 	return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+}
+
+func quoteForShell(arg string) string {
+	return QuoteForShell(arg)
+}
+
+// ShellPathForDir formats a directory path for safe remote shell execution.
+// If the path begins with ~, it wraps $HOME so the remote shell expands ~ without quoting issues.
+func ShellPathForDir(path string) string {
+	clean := filepath.Clean(path)
+	if clean == "~" {
+		return `"$HOME"`
+	}
+	if strings.HasPrefix(clean, "~/") {
+		sub := strings.TrimPrefix(clean, "~/")
+		return fmt.Sprintf(`"$HOME"/%s`, quoteForShell(sub))
+	}
+	return quoteForShell(clean)
 }
 
 // Launch executes remote commands or interactive Claude sessions over SSH,
@@ -352,6 +512,8 @@ func executeRemotely(ctx context.Context, host, remoteDir string, args []string)
 	sessionName = strings.ReplaceAll(sessionName, ".", "-")
 	sessionName = strings.ReplaceAll(sessionName, ":", "-")
 
+	remoteCdPath := ShellPathForDir(remoteDir)
+
 	// Smart remote script:
 	// If tmux is installed on remote node:
 	//   1. Check if session exists -> attach to it (`tmux attach-session -t <name>`)
@@ -374,10 +536,10 @@ fi`,
 		sessionName,
 		quoteForShell(sessionName),
 		sessionName,
-		quoteForShell(remoteDir),
+		remoteCdPath,
 		quoteForShell(sessionName),
 		cmdString,
-		quoteForShell(remoteDir),
+		remoteCdPath,
 		cmdString,
 	)
 

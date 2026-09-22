@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
 )
 
 type RouteTarget string
@@ -196,10 +198,11 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 		decision.SSHReachable = sshOk
 
 		if sshOk {
+			remoteCwd := bridge.ToRemotePath(absCwd)
 			decision.Target = TargetRemoteClaude
 			decision.Tool = "ssh"
 			decision.Model = "claude-opus-5"
-			decision.Command = fmt.Sprintf("ssh -t %s \"cd %s && claude\"", opts.RemoteHost, absCwd)
+			decision.Command = fmt.Sprintf("ssh -t %s \"cd %s && claude\"", opts.RemoteHost, bridge.ShellPathForDir(remoteCwd))
 			decision.Reason = fmt.Sprintf("Enterprise work repo (%s); remote node %s reachable via SSH (Highest Priority)", workSrc, opts.RemoteHost)
 			return decision, nil
 		}
