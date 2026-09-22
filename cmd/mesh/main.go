@@ -798,8 +798,8 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 
 	pacerState, _ := router.LoadPacerState()
 	cwd, _ := os.Getwd()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	routeCtx, routeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer routeCancel()
 
 	remoteHost := "company-mbp"
 	if cfg != nil && cfg.RemoteHost != "" {
@@ -817,7 +817,7 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 		targetTool = "agy"
 		targetModel = "gemini-3.8-flash-high"
 	} else {
-		decision, err := router.Route(ctx, cwd, pacerState, router.RouteOptions{
+		decision, err := router.Route(routeCtx, cwd, pacerState, router.RouteOptions{
 			CheckSSH:   !noSSH,
 			RemoteHost: remoteHost,
 		})
@@ -846,7 +846,7 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 
 	// If remote work session on remote host:
 	if isRemoteWork {
-		err := bridge.Launch(ctx, bridge.LaunchOptions{
+		err := bridge.Launch(context.Background(), bridge.LaunchOptions{
 			Host:       remoteHost,
 			TargetDir:  cwd,
 			Args:       args,
