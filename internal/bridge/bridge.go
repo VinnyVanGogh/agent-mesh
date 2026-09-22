@@ -276,6 +276,9 @@ type ProbeResult struct {
 	Error     string        `json:"error,omitempty"`
 }
 
+// ProbeSSHFunc allows mocking SSH connectivity probing in unit tests.
+var ProbeSSHFunc = ProbeSSH
+
 // ProbeSSH tests connectivity to the target host with the specified timeout (default 2s).
 func ProbeSSH(ctx context.Context, host string, timeout time.Duration) ProbeResult {
 	if host == "" {
@@ -460,11 +463,59 @@ func Launch(ctx context.Context, opts LaunchOptions) error {
 
 	// Probe remote host
 	fmt.Printf("\033[1;36m[bridge]\033[0m Probing SSH connectivity to %s (timeout: %s)...\n", opts.Host, opts.Timeout)
-	probe := ProbeSSH(ctx, opts.Host, opts.Timeout)
+	probe := ProbeSSHFunc(ctx, opts.Host, opts.Timeout)
 
 	if probe.Reachable {
 		fmt.Printf("\033[1;32m✔ [bridge]\033[0m Connected to %s (%s).\n",
 			opts.Host, probe.Latency.Round(time.Millisecond))
+
+		// Check if remote directory exists on remote host
+		repoInfo := GetRepoInfo(localDir)
+		targetRemoteRoot := remoteDir
+		targetLocalRoot := localDir
+		if repoInfo.IsRepo && repoInfo.RepoRoot != "" {
+			targetLocalRoot = repoInfo.RepoRoot
+			targetRemoteRoot = ToRemotePath(repoInfo.RepoRoot)
+		}
+
+		if !RemoteDirExistsFunc(ctx, opts.Host, targetRemoteRoot) {
+			fmt.Printf("\n\033[1;33m⚠️  [bridge]\033[0m Remote directory does not exist on %s: \033[1;37m%s\033[0m\n", opts.Host, targetRemoteRoot)
+			if repoInfo.RemoteURL != "" {
+				fmt.Printf("   Repository: \033[1;36m%s\033[0m (branch: %s)\n\n", repoInfo.RemoteURL, repoInfo.Branch)
+				ok := PromptYesNoFunc(fmt.Sprintf("Would you like to pull/clone this repo on %s?", opts.Host), false)
+				if ok {
+					fmt.Printf("\033[1;36m[bridge]\033[0m Cloning repository to %s on %s...\n", targetRemoteRoot, opts.Host)
+					if err := CloneRepoOnRemote(ctx, opts.Host, repoInfo.RemoteURL, repoInfo.Branch, targetRemoteRoot); err != nil {
+						fmt.Fprintf(os.Stderr, "\033[1;31m✖ [bridge]\033[0m Clone failed: %v\n", err)
+						fmt.Fprintf(os.Stderr, "\033[1;33m⚡ [bridge]\033[0m Opening locally at %s (shell maintained)...\n\n", localDir)
+						return executeLocally(ctx, localDir, execArgs)
+					}
+					fmt.Printf("\033[1;32m✔ [bridge]\033[0m Successfully cloned repo to %s.\n\n", targetRemoteRoot)
+				} else {
+					fmt.Fprintf(os.Stderr, "\033[1;33m⚡ [bridge]\033[0m Opening locally at %s (shell maintained)...\n\n", localDir)
+					return executeLocally(ctx, localDir, execArgs)
+				}
+			} else {
+				fmt.Printf("   Local path: \033[1;36m%s\033[0m (no remote origin configured)\n\n", targetLocalRoot)
+				ok := PromptYesNoFunc(fmt.Sprintf("Would you like to sync this repo to %s via rsync?", opts.Host), false)
+				if ok {
+					fmt.Printf("\033[1;36m[bridge]\033[0m Syncing repo to %s on %s via rsync...\n", targetRemoteRoot, opts.Host)
+					if err := SyncDirectoryToRemote(ctx, opts.Host, targetLocalRoot, targetRemoteRoot); err != nil {
+						fmt.Fprintf(os.Stderr, "\033[1;31m✖ [bridge]\033[0m Sync failed: %v\n", err)
+						fmt.Fprintf(os.Stderr, "\033[1;33m⚡ [bridge]\033[0m Opening locally at %s (shell maintained)...\n\n", localDir)
+						return executeLocally(ctx, localDir, execArgs)
+					}
+					fmt.Printf("\033[1;32m✔ [bridge]\033[0m Successfully synced repo to %s.\n\n", targetRemoteRoot)
+				} else {
+					fmt.Fprintf(os.Stderr, "\033[1;33m⚡ [bridge]\033[0m Opening locally at %s (shell maintained)...\n\n", localDir)
+					return executeLocally(ctx, localDir, execArgs)
+				}
+			}
+		}
+
+		if !RemoteDirExistsFunc(ctx, opts.Host, remoteDir) {
+			_ = exec.CommandContext(ctx, "ssh", opts.Host, fmt.Sprintf("mkdir -p %s", ShellPathForDir(remoteDir))).Run()
+		}
 
 		// Pre-flight background transcript sync: pull any remote Claude transcripts into local telemetry
 		syncRemoteTranscripts(ctx, opts.Host)
