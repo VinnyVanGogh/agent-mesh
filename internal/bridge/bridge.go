@@ -541,7 +541,9 @@ func Launch(ctx context.Context, opts LaunchOptions) error {
 		}
 
 		fmt.Printf("\033[1;36m[bridge]\033[0m Executing remotely at %s (reverse bridge active on port %d)...\n\n", remoteDir, bridgePort)
-		return executeRemotely(ctx, opts.Host, remoteDir, execArgs, bridgePort)
+		execErr := executeRemotely(ctx, opts.Host, remoteDir, execArgs, bridgePort)
+		_ = CheckRemoteGitGuard(ctx, opts.Host, remoteDir, localDir)
+		return execErr
 	}
 
 	// Remote unreachable: Fall back to local execution without closing shell
