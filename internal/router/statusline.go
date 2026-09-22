@@ -210,28 +210,14 @@ func fastGitInfo(dir string) (branch, dirty, sync string) {
 
 // RenderStatusline produces the Tokyo Night multi-line statusline in <5ms.
 func RenderStatusline(w io.Writer, r io.Reader) error {
-	// 1. Read input payload if piped (e.g. from Claude Code)
+	// 1. Read input payload if piped (e.g. from Claude Code) with 25ms timeout
 	var payload StatuslinePayload
 	hasPipedInput := false
 
-	if r != nil {
-		// Check if reader is os.Stdin and whether it's a pipe
-		if f, ok := r.(*os.File); ok {
-			fi, err := f.Stat()
-			if err == nil && (fi.Mode()&os.ModeCharDevice) == 0 {
-				data, _ := io.ReadAll(r)
-				if len(data) > 0 {
-					_ = json.Unmarshal(data, &payload)
-					hasPipedInput = true
-				}
-			}
-		} else {
-			data, _ := io.ReadAll(r)
-			if len(data) > 0 {
-				_ = json.Unmarshal(data, &payload)
-				hasPipedInput = true
-			}
-		}
+	data := readPipedInput(r, 25*time.Millisecond)
+	if len(data) > 0 {
+		_ = json.Unmarshal(data, &payload)
+		hasPipedInput = true
 	}
 
 	// 2. Determine directory
@@ -465,4 +451,36 @@ func RenderStatusline(w io.Writer, r io.Reader) error {
 	}
 
 	return nil
+}
+
+func readPipedInput(r io.Reader, timeout time.Duration) []byte {
+	if r == nil {
+		return nil
+	}
+	if f, ok := r.(*os.File); ok {
+		fi, err := f.Stat()
+		if err != nil || (fi.Mode()&os.ModeCharDevice) != 0 {
+			return nil
+		}
+	}
+
+	type result struct {
+		data []byte
+		err  error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		data, err := io.ReadAll(r)
+		ch <- result{data: data, err: err}
+	}()
+
+	select {
+	case res := <-ch:
+		if res.err == nil {
+			return res.data
+		}
+		return nil
+	case <-time.After(timeout):
+		return nil
+	}
 }
