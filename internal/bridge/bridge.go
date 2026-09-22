@@ -469,8 +469,28 @@ func Launch(ctx context.Context, opts LaunchOptions) error {
 		// Pre-flight background transcript sync: pull any remote Claude transcripts into local telemetry
 		syncRemoteTranscripts(ctx, opts.Host)
 
-		fmt.Printf("\033[1;36m[bridge]\033[0m Executing remotely at %s...\n\n", remoteDir)
-		return executeRemotely(ctx, opts.Host, remoteDir, execArgs)
+		// Initialize Reverse Bridge Server for transparent file fetching
+		clientHome := getHomeDir()
+		sessionToken := GenerateSessionToken()
+		bridgePort, shutdownServer, err := StartReverseBridgeServer(clientHome, sessionToken, 4119)
+		if err == nil {
+			defer shutdownServer()
+
+			hostname, _ := os.Hostname()
+			remoteSession := BridgeSession{
+				ClientUser: os.Getenv("USER"),
+				ClientHome: clientHome,
+				ClientHost: hostname,
+				BridgePort: bridgePort,
+				Token:      sessionToken,
+				Active:     true,
+			}
+			deployRemoteSession(ctx, opts.Host, remoteSession)
+			defer cleanupRemoteSession(ctx, opts.Host)
+		}
+
+		fmt.Printf("\033[1;36m[bridge]\033[0m Executing remotely at %s (reverse bridge active on port %d)...\n\n", remoteDir, bridgePort)
+		return executeRemotely(ctx, opts.Host, remoteDir, execArgs, bridgePort)
 	}
 
 	// Remote unreachable: Fall back to local execution without closing shell
@@ -500,7 +520,7 @@ func syncRemoteTranscripts(ctx context.Context, host string) {
 	_ = cmd.Run()
 }
 
-func executeRemotely(ctx context.Context, host, remoteDir string, args []string) error {
+func executeRemotely(ctx context.Context, host, remoteDir string, args []string, reversePort int) error {
 	var quoted []string
 	for _, a := range args {
 		quoted = append(quoted, quoteForShell(a))
@@ -546,13 +566,46 @@ fi`,
 		cmdString,
 	)
 
-	// -t forces pseudo-terminal allocation for interactive tmux and Claude sessions
-	sshCmd := exec.CommandContext(ctx, "ssh", "-t", host, remoteScript)
+	// Build SSH arguments with reverse tunnel forwarding if active
+	sshArgs := []string{"-t"}
+	if reversePort > 0 {
+		sshArgs = append(sshArgs, "-R", fmt.Sprintf("%d:127.0.0.1:%d", reversePort, reversePort))
+	}
+	sshArgs = append(sshArgs, host, remoteScript)
+
+	sshCmd := exec.CommandContext(ctx, "ssh", sshArgs...)
 	sshCmd.Stdin = os.Stdin
 	sshCmd.Stdout = os.Stdout
 	sshCmd.Stderr = os.Stderr
 
 	return sshCmd.Run()
+}
+
+func deployRemoteSession(ctx context.Context, host string, session BridgeSession) {
+	data, err := json.MarshalIndent(session, "", "  ")
+	if err != nil {
+		return
+	}
+	deployScript := fmt.Sprintf(`
+mkdir -p ~/.agent-mesh /tmp/mesh-cache
+cat << 'EOF' > ~/.agent-mesh/bridge-session.json
+%s
+EOF
+`, string(data))
+	cmd := exec.CommandContext(ctx, "ssh", host, "bash -s")
+	cmd.Stdin = strings.NewReader(deployScript)
+	_ = cmd.Run()
+}
+
+func cleanupRemoteSession(ctx context.Context, host string) {
+	cleanupScript := `
+if [ -f ~/.agent-mesh/bridge-session.json ]; then
+    rm -f ~/.agent-mesh/bridge-session.json
+fi
+`
+	cmd := exec.CommandContext(ctx, "ssh", host, "bash -s")
+	cmd.Stdin = strings.NewReader(cleanupScript)
+	_ = cmd.Run()
 }
 
 func executeLocally(ctx context.Context, localDir string, args []string) error {

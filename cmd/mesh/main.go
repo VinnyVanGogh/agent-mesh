@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -607,6 +608,26 @@ func formatBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
+var fetchCmd = &cobra.Command{
+	Use:   "fetch <client-path> [dest]",
+	Short: "Fetch a client file over the reverse bridge tunnel",
+	Args:  cobra.MinimumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		clientPath := args[0]
+		dest := ""
+		if len(args) > 1 {
+			dest = args[1]
+		}
+		ctx := context.Background()
+		cached, err := bridge.FetchClientFile(ctx, clientPath, dest)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Fetch error: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\033[1;32m✔ Fetched client file:\033[0m %s -> \033[1;33m%s\033[0m\n", clientPath, cached)
+	},
+}
+
 var handoffCmd = &cobra.Command{
 	Use:   "handoff",
 	Short: "Synthesize zero-clarification handoff prompt and copy to clipboard",
@@ -813,102 +834,122 @@ var hookPromptCmd = &cobra.Command{
 }
 
 func handleHookPrompt() {
-	pacerState, err := router.LoadPacerState()
-	if err != nil {
-		fmt.Println("{}")
-		return
+	rawInput, err := io.ReadAll(os.Stdin)
+	var promptText string
+	if err == nil && len(rawInput) > 0 {
+		var payload map[string]interface{}
+		if err := json.Unmarshal(rawInput, &payload); err == nil {
+			if p, ok := payload["prompt"].(string); ok {
+				promptText = p
+			}
+		} else {
+			promptText = string(rawInput)
+		}
 	}
 
-	poolPersonal := pacerState.Pools[router.PoolPersonalClaude]
-	pool3P := pacerState.Pools[router.Pool3PClaude]
-	poolWork := pacerState.Pools[router.PoolWorkClaude]
+	var notices []string
 
-	var triggeredPool *router.QuotaPool
-	var warningReason string
+	// 1. Programmatically inspect prompt for client machine paths and auto-fetch them
+	if promptText != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		guidance, _, _ := bridge.ProcessPromptForClientPaths(ctx, promptText)
+		cancel()
+		if guidance != "" {
+			notices = append(notices, guidance)
+		}
+	}
 
-	checkPool := func(pool *router.QuotaPool) bool {
-		if pool == nil {
+	// 2. Quota notice check
+	pacerState, err := router.LoadPacerState()
+	if err == nil {
+		poolPersonal := pacerState.Pools[router.PoolPersonalClaude]
+		pool3P := pacerState.Pools[router.Pool3PClaude]
+		poolWork := pacerState.Pools[router.PoolWorkClaude]
+
+		var triggeredPool *router.QuotaPool
+		var warningReason string
+
+		checkPool := func(pool *router.QuotaPool) bool {
+			if pool == nil {
+				return false
+			}
+			if pool.FiveHour.UsedPct >= 85.0 || (pool.FiveHour.RemainingPct > 0 && pool.FiveHour.RemainingPct <= 15.0) {
+				resetStr := "soon"
+				if !pool.FiveHour.ResetsAt.IsZero() {
+					resetStr = pool.FiveHour.ResetsAt.Format("3:04pm")
+				} else if !pool.LockoutUntil.IsZero() {
+					resetStr = pool.LockoutUntil.Format("3:04pm")
+				}
+				warningReason = fmt.Sprintf("5-hour session quota is at %.0f%% (~%.0f%% left, resets @%s)", pool.FiveHour.UsedPct, pool.FiveHour.RemainingPct, resetStr)
+				return true
+			}
+			if pool.Weekly.UsedPct >= 85.0 || (pool.Weekly.RemainingPct > 0 && pool.Weekly.RemainingPct <= 15.0) {
+				resetStr := "soon"
+				if !pool.Weekly.ResetsAt.IsZero() {
+					resetStr = pool.Weekly.ResetsAt.Format("Mon 3:04pm")
+				}
+				warningReason = fmt.Sprintf("weekly quota is at %.0f%% (only %.0f%% remaining, resets @%s)", pool.Weekly.UsedPct, pool.Weekly.RemainingPct, resetStr)
+				return true
+			}
+			if pool.IsLocked {
+				warningReason = fmt.Sprintf("quota is currently locked (%s)", pool.LockoutReason)
+				return true
+			}
 			return false
 		}
-		if pool.FiveHour.UsedPct >= 85.0 || (pool.FiveHour.RemainingPct > 0 && pool.FiveHour.RemainingPct <= 15.0) {
-			resetStr := "soon"
-			if !pool.FiveHour.ResetsAt.IsZero() {
-				resetStr = pool.FiveHour.ResetsAt.Format("3:04pm")
-			} else if !pool.LockoutUntil.IsZero() {
-				resetStr = pool.LockoutUntil.Format("3:04pm")
+
+		if checkPool(poolPersonal) {
+			triggeredPool = poolPersonal
+		} else if checkPool(pool3P) {
+			triggeredPool = pool3P
+		} else if checkPool(poolWork) {
+			triggeredPool = poolWork
+		}
+
+		if triggeredPool != nil {
+			cwd, _ := os.Getwd()
+			debounceFile := filepath.Join(os.TempDir(), fmt.Sprintf("mesh-prelock-warned-u%d.ts", os.Getuid()))
+			shouldNotify := true
+			if stat, err := os.Stat(debounceFile); err == nil {
+				if time.Since(stat.ModTime()) < 15*time.Minute {
+					shouldNotify = false
+				}
 			}
-			warningReason = fmt.Sprintf("5-hour session quota is at %.0f%% (~%.0f%% left, resets @%s)", pool.FiveHour.UsedPct, pool.FiveHour.RemainingPct, resetStr)
-			return true
-		}
-		if pool.Weekly.UsedPct >= 85.0 || (pool.Weekly.RemainingPct > 0 && pool.Weekly.RemainingPct <= 15.0) {
-			resetStr := "soon"
-			if !pool.Weekly.ResetsAt.IsZero() {
-				resetStr = pool.Weekly.ResetsAt.Format("Mon 3:04pm")
+
+			if shouldNotify {
+				_ = os.WriteFile(debounceFile, []byte(fmt.Sprintf("%d", time.Now().Unix())), 0644)
+				var dbConn *sql.DB
+				if store, err := db.Open(cfg.DBPath); err == nil {
+					dbConn = store.DB()
+					defer store.Close()
+				}
+				_, _ = meshContext.GenerateHandoff(meshContext.HandoffOptions{
+					TargetModel:       "gemini",
+					ImmediateNextStep: fmt.Sprintf("Approaching quota limit: %s. Resume session seamlessly in Gemini.", warningReason),
+					Directory:         cwd,
+					DB:                dbConn,
+				})
+
+				telemetry.SendNotification(
+					"[Agent-Mesh] Quota Limit Warning (15% left)",
+					fmt.Sprintf("%s %s. Handoff staged in clipboard. Switch to Gemini (/model gemini-3.8-flash-high or open agy and paste).", triggeredPool.Name, warningReason),
+				)
 			}
-			warningReason = fmt.Sprintf("weekly quota is at %.0f%% (only %.0f%% remaining, resets @%s)", pool.Weekly.UsedPct, pool.Weekly.RemainingPct, resetStr)
-			return true
+
+			notices = append(notices, fmt.Sprintf("⚠️ [AGENT-MESH QUOTA NOTICE]: %s %s. Agent-Mesh has pre-staged a zero-token context handoff snapshot in your system clipboard and /tmp/ai-handoff.md. Remind the user to prepare to switch to Gemini (/model gemini-3.8-flash-high or open Antigravity 'agy' and paste) before running out of turns.", triggeredPool.Name, warningReason))
 		}
-		if pool.IsLocked {
-			warningReason = fmt.Sprintf("quota is currently locked (%s)", pool.LockoutReason)
-			return true
-		}
-		return false
 	}
 
-	if checkPool(poolPersonal) {
-		triggeredPool = poolPersonal
-	} else if checkPool(pool3P) {
-		triggeredPool = pool3P
-	} else if checkPool(poolWork) {
-		triggeredPool = poolWork
-	}
-
-	if triggeredPool == nil {
-		fmt.Println("{}")
+	if len(notices) > 0 {
+		resp := map[string]string{
+			"additionalContext": strings.Join(notices, "\n\n"),
+		}
+		out, _ := json.Marshal(resp)
+		fmt.Println(string(out))
 		return
 	}
 
-	// Quota is near limit (>= 85% used / <= 15% remaining)
-	cwd, _ := os.Getwd()
-
-	// Debounce notifications and clipboard overwrites to once per 15 mins
-	debounceFile := filepath.Join(os.TempDir(), fmt.Sprintf("mesh-prelock-warned-u%d.ts", os.Getuid()))
-	shouldNotify := true
-	if stat, err := os.Stat(debounceFile); err == nil {
-		if time.Since(stat.ModTime()) < 15*time.Minute {
-			shouldNotify = false
-		}
-	}
-
-	if shouldNotify {
-		_ = os.WriteFile(debounceFile, []byte(fmt.Sprintf("%d", time.Now().Unix())), 0644)
-
-		// 1. Stage zero-token handoff snapshot directly into clipboard and /tmp/ai-handoff.md
-		var dbConn *sql.DB
-		if store, err := db.Open(cfg.DBPath); err == nil {
-			dbConn = store.DB()
-			defer store.Close()
-		}
-		_, _ = meshContext.GenerateHandoff(meshContext.HandoffOptions{
-			TargetModel:       "gemini",
-			ImmediateNextStep: fmt.Sprintf("Approaching quota limit: %s. Resume session seamlessly in Gemini.", warningReason),
-			Directory:         cwd,
-			DB:                dbConn,
-		})
-
-		// 2. Send desktop notification
-		telemetry.SendNotification(
-			"[Agent-Mesh] Quota Limit Warning (15% left)",
-			fmt.Sprintf("%s %s. Handoff staged in clipboard. Switch to Gemini (/model gemini-3.8-flash-high or open agy and paste).", triggeredPool.Name, warningReason),
-		)
-	}
-
-	// Return additionalContext to Claude Code so the model is aware and instructs the user
-	resp := map[string]string{
-		"additionalContext": fmt.Sprintf("⚠️ [AGENT-MESH QUOTA NOTICE]: %s %s. Agent-Mesh has pre-staged a zero-token context handoff snapshot in your system clipboard and /tmp/ai-handoff.md. Remind the user to prepare to switch to Gemini (/model gemini-3.8-flash-high or open Antigravity 'agy' and paste) before running out of turns.", triggeredPool.Name, warningReason),
-	}
-	out, _ := json.Marshal(resp)
-	fmt.Println(string(out))
+	fmt.Println("{}")
 }
 
 func runSmartLaunch(cmd *cobra.Command, args []string) {
@@ -1039,9 +1080,11 @@ func init() {
 	rootCmd.AddCommand(taskCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(hookCmd)
+	rootCmd.AddCommand(fetchCmd)
 
 	bridgeCmd.AddCommand(screenshotCmd)
 	bridgeCmd.AddCommand(scpCmd)
+	bridgeCmd.AddCommand(fetchCmd)
 
 	hookCmd.AddCommand(hookPromptCmd)
 
