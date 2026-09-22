@@ -521,6 +521,9 @@ func executeRemotely(ctx context.Context, host, remoteDir string, args []string)
 	// If tmux is not installed on remote node:
 	//   Directly executes `cd <dir> && <cmd>`
 	remoteScript := fmt.Sprintf(`
+export PATH="$HOME/.local/bin:$HOME/.local/share/claude:$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
+[ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile" >/dev/null 2>&1
+[ "$TERM" = "dumb" ] || [ -z "$TERM" ] && export TERM=xterm-256color
 if command -v tmux >/dev/null 2>&1; then
     if tmux has-session -t %s 2>/dev/null; then
         echo -e "\033[1;36m[bridge]\033[0m Re-attaching to existing remote tmux session: \033[1;32m%s\033[0m"

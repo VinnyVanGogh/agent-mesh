@@ -202,7 +202,7 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 			decision.Target = TargetRemoteClaude
 			decision.Tool = "ssh"
 			decision.Model = "claude-opus-5"
-			decision.Command = fmt.Sprintf("ssh -t %s \"cd %s && claude\"", opts.RemoteHost, bridge.ShellPathForDir(remoteCwd))
+			decision.Command = fmt.Sprintf("ssh -t %s \"export PATH=\\\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:\\$PATH\\\"; cd %s && claude\"", opts.RemoteHost, bridge.ShellPathForDir(remoteCwd))
 			decision.Reason = fmt.Sprintf("Enterprise work repo (%s); remote node %s reachable via SSH (Highest Priority)", workSrc, opts.RemoteHost)
 			return decision, nil
 		}
