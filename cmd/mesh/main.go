@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -15,6 +16,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
+	"github.com/VinnyVanGogh/agent-mesh/internal/checkpoint"
+	"github.com/VinnyVanGogh/agent-mesh/internal/condenser"
 	"github.com/VinnyVanGogh/agent-mesh/internal/config"
 	meshContext "github.com/VinnyVanGogh/agent-mesh/internal/context"
 	"github.com/VinnyVanGogh/agent-mesh/internal/db"
@@ -921,6 +924,190 @@ var whereCmd = &cobra.Command{
 	},
 }
 
+var checkpointCmd = &cobra.Command{
+	Use:   "checkpoint [message]",
+	Short: "Create an ephemeral micro-checkpoint of working tree without moving HEAD",
+	Run: func(cmd *cobra.Command, args []string) {
+		cwd, _ := os.Getwd()
+		msg := ""
+		if len(args) > 0 {
+			msg = strings.Join(args, " ")
+		}
+		sessID, _ := cmd.Flags().GetString("session")
+		jsonFlag, _ := cmd.Flags().GetBool("json")
+
+		cp, err := checkpoint.CreateCheckpoint(cmd.Context(), checkpoint.CreateOptions{
+			WorkDir:   cwd,
+			SessionID: sessID,
+			Message:   msg,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\033[1;31m✖ Checkpoint failed:\033[0m %v\n", err)
+			os.Exit(1)
+		}
+
+		if jsonFlag {
+			enc, _ := json.MarshalIndent(cp, "", "  ")
+			fmt.Println(string(enc))
+			return
+		}
+
+		fmt.Printf("\033[1;32m✔ Micro-checkpoint created in %s:\033[0m \033[1m%s\033[0m\n", cp.Duration.Round(time.Millisecond), cp.ID)
+		fmt.Printf("  • Commit:  %s\n", cp.CommitSHA[:10])
+		fmt.Printf("  • Ref:     %s\n", cp.Ref)
+		if cp.Message != "" {
+			fmt.Printf("  • Message: %s\n", cp.Message)
+		}
+		fmt.Printf("  • Restore: run \033[1;36mmesh undo %s\033[0m or \033[1;36mmesh undo\033[0m anytime.\n", cp.ID)
+	},
+}
+
+var undoCmd = &cobra.Command{
+	Use:   "undo [checkpoint-id]",
+	Short: "Restore working tree to prior micro-checkpoint (safe pre-undo snapshot taken automatically)",
+	Run: func(cmd *cobra.Command, args []string) {
+		cwd, _ := os.Getwd()
+		cpID := ""
+		if len(args) > 0 {
+			cpID = args[0]
+		}
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		keepUntracked, _ := cmd.Flags().GetBool("keep-untracked")
+
+		res, err := checkpoint.Undo(cmd.Context(), checkpoint.UndoOptions{
+			WorkDir:       cwd,
+			CheckpointID:  cpID,
+			DryRun:        dryRun,
+			KeepUntracked: keepUntracked,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\033[1;31m✖ Undo failed:\033[0m %v\n", err)
+			os.Exit(1)
+		}
+
+		if dryRun {
+			fmt.Printf("\033[1;33m[Dry Run] Preview of undo to %s:\033[0m\n", res.RestoredTo.CommitSHA[:10])
+			if len(res.FilesReverted) > 0 {
+				fmt.Printf("  • Reverted files (%d):\n", len(res.FilesReverted))
+				for _, f := range res.FilesReverted {
+					fmt.Printf("      M %s\n", f)
+				}
+			}
+			if len(res.FilesRemoved) > 0 {
+				fmt.Printf("  • Removed untracked files (%d):\n", len(res.FilesRemoved))
+				for _, f := range res.FilesRemoved {
+					fmt.Printf("      D %s\n", f)
+				}
+			}
+			return
+		}
+
+		fmt.Printf("\033[1;32m✔ Working tree rolled back to checkpoint:\033[0m \033[1m%s\033[0m (%s)\n", res.RestoredTo.ID, res.RestoredTo.CommitSHA[:10])
+		if res.SafetyCP != nil {
+			fmt.Printf("  • Safety snapshot saved: %s (run \033[1;36mmesh redo\033[0m to reverse)\n", res.SafetyCP.ID)
+		}
+		if len(res.FilesReverted) > 0 {
+			fmt.Printf("  • Reverted: %d files\n", len(res.FilesReverted))
+		}
+		if len(res.FilesRemoved) > 0 {
+			fmt.Printf("  • Cleaned:  %d untracked files\n", len(res.FilesRemoved))
+		}
+	},
+}
+
+var redoCmd = &cobra.Command{
+	Use:   "redo",
+	Short: "Reverse the previous undo operation using the pre-undo safety snapshot",
+	Run: func(cmd *cobra.Command, args []string) {
+		cwd, _ := os.Getwd()
+		res, err := checkpoint.Redo(cmd.Context(), cwd, "redo")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\033[1;31m✖ Redo failed:\033[0m %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\033[1;32m✔ Working tree restored via redo snapshot!\033[0m\n")
+		if len(res.FilesReverted) > 0 {
+			fmt.Printf("  • Restored: %d files\n", len(res.FilesReverted))
+		}
+	},
+}
+
+var checkpointsListCmd = &cobra.Command{
+	Use:     "checkpoints",
+	Aliases: []string{"cps"},
+	Short:   "List ephemeral micro-checkpoints for current repository",
+	Run: func(cmd *cobra.Command, args []string) {
+		cwd, _ := os.Getwd()
+		cps, err := checkpoint.ListCheckpoints(cmd.Context(), cwd, 20)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing checkpoints: %v\n", err)
+			os.Exit(1)
+		}
+		if len(cps) == 0 {
+			fmt.Println("No checkpoints found. Create one with `mesh checkpoint`.")
+			return
+		}
+		fmt.Printf("\033[1;36m📍 [Agent-Mesh :: Micro-Checkpoints (Time Machine)]\033[0m\n")
+		for _, cp := range cps {
+			fmt.Printf("  • \033[1;32m%s\033[0m (%s) - %s\n", cp.ID, cp.CommitSHA[:10], cp.Message)
+		}
+	},
+}
+
+var condenseCmd = &cobra.Command{
+	Use:   "condense [flags] [-- command...]",
+	Short: "Zero-token error condenser: compress compiler dumps and stack traces (80-95% reduction)",
+	Run: func(cmd *cobra.Command, args []string) {
+		maxLines, _ := cmd.Flags().GetInt("lines")
+		formatStr, _ := cmd.Flags().GetString("format")
+
+		// If arguments provided after --, run command and filter its output
+		if len(args) > 0 {
+			c := exec.Command(args[0], args[1:]...)
+			var combined bytes.Buffer
+			c.Stdout = &combined
+			c.Stderr = &combined
+			err := c.Run()
+			raw := combined.String()
+			res, condenseErr := condenser.Condense(raw, condenser.CondenseOptions{
+				Format:      condenser.Format(formatStr),
+				MaxLines:    maxLines,
+				ShowSavings: true,
+			})
+			if condenseErr == nil && len(res.Condensed) > 0 {
+				fmt.Print(res.Condensed)
+			} else {
+				fmt.Print(raw)
+			}
+			if err != nil {
+				if exitErr, ok := err.(*exec.ExitError); ok {
+					os.Exit(exitErr.ExitCode())
+				}
+				os.Exit(1)
+			}
+			return
+		}
+
+		// Pipe mode: read stdin
+		input, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)
+			os.Exit(1)
+		}
+
+		res, err := condenser.Condense(string(input), condenser.CondenseOptions{
+			Format:      condenser.Format(formatStr),
+			MaxLines:    maxLines,
+			ShowSavings: true,
+		})
+		if err != nil {
+			fmt.Print(string(input))
+			return
+		}
+		fmt.Print(res.Condensed)
+	},
+}
+
 var hookCmd = &cobra.Command{
 	Use:   "hook",
 	Short: "Agent-Mesh lifecycle and prompt hooks for Claude Code and Antigravity",
@@ -1180,6 +1367,11 @@ func init() {
 	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(taskCmd)
 	rootCmd.AddCommand(whereCmd)
+	rootCmd.AddCommand(checkpointCmd)
+	rootCmd.AddCommand(undoCmd)
+	rootCmd.AddCommand(redoCmd)
+	rootCmd.AddCommand(checkpointsListCmd)
+	rootCmd.AddCommand(condenseCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(hookCmd)
 	rootCmd.AddCommand(fetchCmd)
@@ -1208,6 +1400,13 @@ func init() {
 	taskCmd.AddCommand(taskAddCmd)
 	taskListCmd.Flags().BoolP("all", "a", false, "Include done and soft-deleted tasks")
 	whereCmd.Flags().BoolP("json", "j", false, "Output context resumption in JSON format")
+
+	checkpointCmd.Flags().StringP("session", "s", "", "Agent session ID")
+	checkpointCmd.Flags().BoolP("json", "j", false, "Output checkpoint metadata as JSON")
+	undoCmd.Flags().BoolP("dry-run", "n", false, "Preview files to be reverted without changing disk")
+	undoCmd.Flags().BoolP("keep-untracked", "k", false, "Do not delete untracked files created after checkpoint")
+	condenseCmd.Flags().IntP("lines", "l", 80, "Maximum output lines")
+	condenseCmd.Flags().StringP("format", "f", "auto", "Log format: auto, typescript, go, python, generic")
 
 	handoffCmd.Flags().String("to", "gemini", "Target model family (gemini or claude)")
 	handoffCmd.Flags().String("step", "", "Immediate next step description")
