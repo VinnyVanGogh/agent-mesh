@@ -189,13 +189,14 @@ Effortlessly resume, continue, or hand off agent sessions across Claude Code and
   3. Chronological User Directives Trail (filtered high-signal constraints).
   4. Work Accomplished & Recent Commit Log (`git log -n 3 --oneline`).
   5. Immediate Next Step & Open Decision Points.
-- **Session-Addressed Storage & Overwrite Immunity**:
-  - Handoffs are named and stored by session ID: `~/.agent-mesh/handoffs/handoff-<session_id>.md`.
-  - Concurrent sessions never clobber each other. `/tmp/ai-handoff.md` is updated concurrently as a pointer to the latest handoff for instant clipboard access (`pbcopy`).
-- **Structured Manifests (`<session_id>-manifest.json`)**:
+- **Repo Subdirectories & `{id}-{timestamp}.md/json` Naming**:
+  - Handoffs are organized into repo-scoped subdirectories: `~/.agent-mesh/handoffs/<repo-slug>/{id}-{timestamp}.md` and `{id}-{timestamp}.json`.
+  - For example: `~/.agent-mesh/handoffs/agent-mesh/75fd7906-20260923-175959.md` and `.json`.
+  - Multiple sessions across projects never overwrite each other. `/tmp/ai-handoff.md` is updated concurrently as a convenience pointer to the latest handoff for instant clipboard access (`pbcopy`).
+- **Structured JSON Manifests (`{id}-{timestamp}.json`)**:
   - Every handoff produces a compact metadata manifest alongside the markdown file with the session ID, goal, human-readable title, branch, modified files, user turn count, directive count, and triggering event.
 - **Configurable Per-Repo Retention Pruning**:
-  - Automatically prunes older handoffs per repository based on `max_handoffs_per_repo` in `config.toml` (default 3), keeping your disk clean.
+  - Automatically prunes older handoffs within each repository subdirectory based on `max_handoffs_per_repo` in `config.toml` (default 3), keeping each project clean.
 - **Zero-Token Manifest Search**:
   - Agents and humans can query saved handoffs instantly using `mesh handoff list` or `mesh handoff search <query>`. Searching lightweight JSON manifests consumes virtually zero tokens (~50 tokens) compared to loading full transcripts.
 - **Automatic Base Handoffs on Crash / Breaker / Exit**:

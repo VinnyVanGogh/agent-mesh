@@ -27,9 +27,10 @@ type HandoffManifest struct {
 	ModifiedFiles   []string  `json:"modified_files,omitempty"`
 	Trigger         string    `json:"trigger"` // "manual", "auto_daemon", "crash", "exit", "breaker", "quota_warning"
 	HandoffFile     string    `json:"handoff_file"`
+	ManifestFile    string    `json:"manifest_file,omitempty"`
 }
 
-// GetHandoffsDir returns the directory where handoffs and manifests are stored.
+// GetHandoffsDir returns the base directory where handoffs and manifests are stored.
 func GetHandoffsDir(dataDir string) string {
 	if dataDir == "" {
 		home, err := os.UserHomeDir()
@@ -39,6 +40,25 @@ func GetHandoffsDir(dataDir string) string {
 		dataDir = filepath.Join(home, ".agent-mesh")
 	}
 	return filepath.Join(dataDir, "handoffs")
+}
+
+// CleanRepoSlug produces a safe subdirectory name for the repository.
+func CleanRepoSlug(repoName, repoPath string) string {
+	name := repoName
+	if name == "" && repoPath != "" {
+		name = filepath.Base(repoPath)
+	}
+	clean := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			return r
+		}
+		return '_'
+	}, name)
+	clean = strings.Trim(clean, "_-.")
+	if clean == "" {
+		clean = "global"
+	}
+	return clean
 }
 
 // CleanSessionFilename produces a safe file basename from a session ID.
@@ -56,16 +76,20 @@ func CleanSessionFilename(sessionID string) string {
 	return clean
 }
 
-// SaveHandoffWithManifest persists both the markdown handoff and its metadata manifest,
-// copies to /tmp/ai-handoff.md, and prunes older handoffs for the repo beyond maxKeepPerRepo.
+// SaveHandoffWithManifest persists both the markdown handoff and its metadata manifest
+// in a repository-specific subdirectory: handoffs/<repo_slug>/{id}-{timestamp}.md/json,
+// writes /tmp/ai-handoff.md, and prunes older handoffs exceeding maxKeepPerRepo.
 func SaveHandoffWithManifest(dataDir string, manifest HandoffManifest, handoffMarkdown string, maxKeepPerRepo int) (*HandoffManifest, error) {
 	if maxKeepPerRepo <= 0 {
 		maxKeepPerRepo = 3
 	}
 
-	handoffsDir := GetHandoffsDir(dataDir)
-	if err := os.MkdirAll(handoffsDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create handoffs directory: %w", err)
+	baseHandoffsDir := GetHandoffsDir(dataDir)
+	repoSlug := CleanRepoSlug(manifest.RepoName, manifest.RepoPath)
+	repoDir := filepath.Join(baseHandoffsDir, repoSlug)
+
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create repo handoffs directory %s: %w", repoDir, err)
 	}
 
 	safeID := CleanSessionFilename(manifest.SessionID)
@@ -78,20 +102,21 @@ func SaveHandoffWithManifest(dataDir string, manifest HandoffManifest, handoffMa
 		manifest.CreatedAt = time.Now().UTC()
 	}
 
-	handoffFilename := fmt.Sprintf("handoff-%s.md", safeID)
-	manifestFilename := fmt.Sprintf("%s-manifest.json", safeID)
+	timestampStr := manifest.CreatedAt.UTC().Format("20060102-150405")
+	fileBase := fmt.Sprintf("%s-%s", safeID, timestampStr)
 
-	handoffPath := filepath.Join(handoffsDir, handoffFilename)
-	manifestPath := filepath.Join(handoffsDir, manifestFilename)
+	handoffPath := filepath.Join(repoDir, fileBase+".md")
+	manifestPath := filepath.Join(repoDir, fileBase+".json")
 
 	manifest.HandoffFile = handoffPath
+	manifest.ManifestFile = manifestPath
 
-	// 1. Write Markdown file
+	// 1. Write Markdown file: {id}-{timestamp}.md
 	if err := os.WriteFile(handoffPath, []byte(handoffMarkdown), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write handoff file %s: %w", handoffPath, err)
 	}
 
-	// 2. Write Manifest JSON file
+	// 2. Write Manifest JSON file: {id}-{timestamp}.json
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize manifest: %w", err)
@@ -103,21 +128,19 @@ func SaveHandoffWithManifest(dataDir string, manifest HandoffManifest, handoffMa
 	// 3. Write /tmp/ai-handoff.md for quick access
 	_ = os.WriteFile("/tmp/ai-handoff.md", []byte(handoffMarkdown), 0644)
 
-	// 4. Prune older handoffs for this repo
-	if manifest.RepoPath != "" {
-		_, _ = PruneHandoffs(handoffsDir, manifest.RepoPath, maxKeepPerRepo)
-	}
+	// 4. Prune older handoffs in this repository subdirectory
+	_, _ = PruneHandoffs(baseHandoffsDir, manifest.RepoPath, maxKeepPerRepo)
 
 	return &manifest, nil
 }
 
 // PruneHandoffs removes older manifests and markdown files for repoPath if exceeding maxKeep.
-func PruneHandoffs(handoffsDir, repoPath string, maxKeep int) (int, error) {
+func PruneHandoffs(baseHandoffsDir, repoPath string, maxKeep int) (int, error) {
 	if maxKeep <= 0 {
 		maxKeep = 3
 	}
 
-	manifests, err := ListManifests(handoffsDir, repoPath)
+	manifests, err := ListManifests(baseHandoffsDir, repoPath)
 	if err != nil {
 		return 0, err
 	}
@@ -136,15 +159,12 @@ func PruneHandoffs(handoffsDir, repoPath string, maxKeep int) (int, error) {
 
 	for i := 0; i < excess; i++ {
 		m := manifests[i]
-		safeID := CleanSessionFilename(m.SessionID)
-		manifestPath := filepath.Join(handoffsDir, fmt.Sprintf("%s-manifest.json", safeID))
-		handoffPath := m.HandoffFile
-		if handoffPath == "" {
-			handoffPath = filepath.Join(handoffsDir, fmt.Sprintf("handoff-%s.md", safeID))
+		if m.ManifestFile != "" {
+			_ = os.Remove(m.ManifestFile)
 		}
-
-		_ = os.Remove(manifestPath)
-		_ = os.Remove(handoffPath)
+		if m.HandoffFile != "" {
+			_ = os.Remove(m.HandoffFile)
+		}
 		pruned++
 	}
 
@@ -152,43 +172,59 @@ func PruneHandoffs(handoffsDir, repoPath string, maxKeep int) (int, error) {
 }
 
 // ListManifests returns all manifests matching repoFilter (or all if repoFilter is empty),
-// sorted newest first.
-func ListManifests(handoffsDir string, repoFilter string) ([]HandoffManifest, error) {
-	entries, err := os.ReadDir(handoffsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []HandoffManifest{}, nil
-		}
-		return nil, err
+// sorted newest first. Recursively scans repository subdirectories.
+func ListManifests(baseHandoffsDir string, repoFilter string) ([]HandoffManifest, error) {
+	if _, err := os.Stat(baseHandoffsDir); os.IsNotExist(err) {
+		return []HandoffManifest{}, nil
 	}
 
 	var results []HandoffManifest
 	repoFilter = strings.TrimSpace(repoFilter)
+	targetSlug := ""
+	if repoFilter != "" {
+		targetSlug = CleanRepoSlug(filepath.Base(repoFilter), repoFilter)
+	}
 
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), "-manifest.json") {
-			continue
+	_ = filepath.Walk(baseHandoffsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
 		}
 
-		manifestPath := filepath.Join(handoffsDir, entry.Name())
-		data, err := os.ReadFile(manifestPath)
+		// Support both {id}-{timestamp}.json and legacy *-manifest.json
+		if !strings.HasSuffix(info.Name(), ".json") {
+			return nil
+		}
+
+		data, err := os.ReadFile(path)
 		if err != nil {
-			continue
+			return nil
 		}
 
 		var m HandoffManifest
 		if err := json.Unmarshal(data, &m); err != nil {
-			continue
+			return nil
+		}
+
+		if m.ManifestFile == "" {
+			m.ManifestFile = path
+		}
+		if m.HandoffFile == "" {
+			m.HandoffFile = strings.TrimSuffix(path, ".json") + ".md"
 		}
 
 		if repoFilter != "" {
-			if m.RepoPath != repoFilter && m.RepoName != filepath.Base(repoFilter) {
-				continue
+			relDir := filepath.Base(filepath.Dir(path))
+			if relDir != targetSlug &&
+				m.RepoPath != repoFilter &&
+				m.RepoName != filepath.Base(repoFilter) &&
+				CleanRepoSlug(m.RepoName, m.RepoPath) != targetSlug {
+				return nil
 			}
 		}
 
 		results = append(results, m)
-	}
+		return nil
+	})
 
 	// Sort newest first
 	sort.Slice(results, func(i, j int) bool {
@@ -198,10 +234,10 @@ func ListManifests(handoffsDir string, repoFilter string) ([]HandoffManifest, er
 	return results, nil
 }
 
-// SearchManifests searches manifests in handoffsDir by query across title, goal, session_id,
-// and task name, filtered optionally by repoFilter.
-func SearchManifests(handoffsDir, repoFilter, query string) ([]HandoffManifest, error) {
-	manifests, err := ListManifests(handoffsDir, repoFilter)
+// SearchManifests searches manifests in baseHandoffsDir by query across title, goal, session_id,
+// task name, or branch, filtered optionally by repoFilter.
+func SearchManifests(baseHandoffsDir, repoFilter, query string) ([]HandoffManifest, error) {
+	manifests, err := ListManifests(baseHandoffsDir, repoFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -226,37 +262,51 @@ func SearchManifests(handoffsDir, repoFilter, query string) ([]HandoffManifest, 
 	return matched, nil
 }
 
-// LoadManifest reads a specific manifest by sessionID.
-func LoadManifest(handoffsDir, sessionID string) (*HandoffManifest, error) {
-	safeID := CleanSessionFilename(sessionID)
-	manifestPath := filepath.Join(handoffsDir, fmt.Sprintf("%s-manifest.json", safeID))
-	data, err := os.ReadFile(manifestPath)
+// LoadManifest reads a specific manifest by sessionID (prefix match supported).
+func LoadManifest(baseHandoffsDir, sessionID string) (*HandoffManifest, error) {
+	manifests, err := ListManifests(baseHandoffsDir, "")
 	if err != nil {
-		return nil, fmt.Errorf("manifest not found for session %s: %w", sessionID, err)
+		return nil, err
 	}
 
-	var m HandoffManifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("failed to parse manifest: %w", err)
+	cleanID := CleanSessionFilename(sessionID)
+	for _, m := range manifests {
+		if m.SessionID == sessionID || m.SessionID == cleanID || strings.HasPrefix(m.SessionID, cleanID) {
+			return &m, nil
+		}
 	}
-	return &m, nil
+
+	return nil, fmt.Errorf("manifest not found for session %s", sessionID)
 }
 
-// LoadHandoffMarkdown reads the markdown content for a given sessionID.
-func LoadHandoffMarkdown(handoffsDir, sessionID string) (string, error) {
-	safeID := CleanSessionFilename(sessionID)
-	// Try manifest first to get exact file path
-	if m, err := LoadManifest(handoffsDir, sessionID); err == nil && m.HandoffFile != "" {
+// LoadHandoffMarkdown reads the markdown content for a given sessionID (prefix match supported).
+func LoadHandoffMarkdown(baseHandoffsDir, sessionID string) (string, error) {
+	m, err := LoadManifest(baseHandoffsDir, sessionID)
+	if err == nil && m.HandoffFile != "" {
 		if data, err := os.ReadFile(m.HandoffFile); err == nil {
 			return string(data), nil
 		}
 	}
 
-	// Fallback to default name
-	handoffPath := filepath.Join(handoffsDir, fmt.Sprintf("handoff-%s.md", safeID))
-	data, err := os.ReadFile(handoffPath)
-	if err != nil {
-		return "", fmt.Errorf("handoff file not found for session %s: %w", sessionID, err)
+	cleanID := CleanSessionFilename(sessionID)
+	var foundPath string
+	_ = filepath.Walk(baseHandoffsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(info.Name(), ".md") && strings.HasPrefix(info.Name(), cleanID) {
+			foundPath = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+
+	if foundPath != "" {
+		data, err := os.ReadFile(foundPath)
+		if err == nil {
+			return string(data), nil
+		}
 	}
-	return string(data), nil
+
+	return "", fmt.Errorf("handoff file not found for session %s", sessionID)
 }

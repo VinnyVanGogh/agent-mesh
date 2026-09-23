@@ -60,12 +60,21 @@ func TestSaveHandoffWithManifestAndPruning(t *testing.T) {
 		t.Errorf("expected oldest remaining to be session-test-2, got %s", manifests[2].SessionID)
 	}
 
-	// Verify session-test-1 files are deleted
-	if _, err := os.Stat(filepath.Join(handoffsDir, "session-test-1-manifest.json")); !os.IsNotExist(err) {
-		t.Errorf("expected session-test-1-manifest.json to be deleted")
+	// Verify cool-project subdirectory was created
+	repoSubdir := filepath.Join(handoffsDir, "cool-project")
+	if fi, err := os.Stat(repoSubdir); err != nil || !fi.IsDir() {
+		t.Fatalf("expected repo subdirectory %s to exist", repoSubdir)
 	}
-	if _, err := os.Stat(filepath.Join(handoffsDir, "handoff-session-test-1.md")); !os.IsNotExist(err) {
-		t.Errorf("expected handoff-session-test-1.md to be deleted")
+
+	// Verify session-test-1 files are deleted
+	entries, _ := os.ReadDir(repoSubdir)
+	if len(entries) != 6 { // 3 .md + 3 .json = 6 files
+		t.Fatalf("expected 6 files in %s, got %d", repoSubdir, len(entries))
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "session-test-1") {
+			t.Errorf("expected session-test-1 to be pruned, found: %s", entry.Name())
+		}
 	}
 
 	// Search tests
