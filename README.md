@@ -4,47 +4,54 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)]()
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
-[![Pure Go](<https://img.shields.io/badge/CGO-0%20(Pure%20Go)-blueviolet.svg>)]()
+[![Pure Go](https://img.shields.io/badge/CGO-0%20(Pure%20Go)-blueviolet.svg)]()
 [![Statusline](https://img.shields.io/badge/Latency-%3C2ms-success.svg)]()
 
-> **Autonomous AI Agent Ops, Quota Pacing & Cross-AI Context Platform for Claude Code and Google Antigravity / Gemini.**
+> **Autonomous AI Agent Ops, Quota Pacing, Safety Guardrails & Cross-AI Context Platform for Claude Code and Google Antigravity / Gemini.**
 
-Agent-Mesh unifies disparate AI agent tooling into a single, high-performance static Go binary. It provides real-time multi-pool rate limit pacing, zero-clarification context handoffs across models, persistent remote SSH bridging with `tmux`, event-driven background token accounting, and print-ready executive ROI briefing generation ("The Boss Card") rendered in pure Go.
+Agent-Mesh unifies disparate AI agent tooling into a single, high-performance static Go binary. It provides real-time multi-pool rate limit pacing, zero-token context handoffs across models, ephemeral git micro-checkpoints with instant undo, compiler error condensing, loop death-spiral circuit breakers, multi-agent collision detection, per-task dollar budgets, cross-agent wire scratchpads, persistent remote SSH bridging with `tmux`, and print-ready executive ROI briefing generation ("The Boss Card") rendered in pure Go.
 
 ---
 
 ```
-                                 AGENT-MESH ARCHITECTURE
+                                      AGENT-MESH ARCHITECTURE
 
-      ┌────────────────────────┐                   ┌────────────────────────┐
-      │      Claude Code       │                   │   Google Antigravity   │
-      │  (Work & Personal Pro) │                   │    (Gemini CLI / 3P)   │
-      └───────────┬────────────┘                   └───────────┬────────────┘
-                  │ ~/.claude/projects/*.jsonl                 │ ~/.gemini/brain/*.jsonl
-                  ▼                                            ▼
-      ┌─────────────────────────────────────────────────────────────────────┐
-      │                        meshd Background Daemon                      │
-      │  • Event-driven file watcher (fsnotify, <19MB RAM)                  │
-      │  • Account attribution engine (Work vs Personal via machine_role)   │
-      │  • Predictive rate-limit curve analyzer & system notifications      │
-      └──────────────────────────────────┬──────────────────────────────────┘
-                                         │
-                                         ▼
-      ┌─────────────────────────────────────────────────────────────────────┐
-      │                   Local SQLite Engine (mesh.db)                     │
-      │  • Pure Go (modernc.org/sqlite, CGO_ENABLED=0), WAL mode, FTS5     │
-      │  • Telemetry warehouse: 100k+ requests, model pricing, token cache  │
-      │  • Active context state: task tracking, git diffs, session history │
-      └──────┬───────────────────────────┬───────────────────────────┬──────┘
-             │                           │                           │
-             ▼                           ▼                           ▼
-  ┌──────────────────────┐   ┌───────────────────────┐   ┌──────────────────────┐
-  │     Pacer & Router   │   │  Bridge & Persistence │   │ Executive Reporting  │
-  │ • Sub-2ms statusline │   │ • Remote SSH probe    │   │ • Pure Go chromedp   │
-  │ • Tokyo Night theme  │   │ • Persistent tmux     │   │ • 4 high-DPI PDFs    │
-  │ • 4 quota pools      │   │ • Pre-flight rsync    │   │ • "The Boss Card"    │
-  │ • Dynamic waterfall  │   │ • Local-safe fallback │   │ • Value multipliers  │
-  └──────────────────────┘   └───────────────────────┘   └──────────────────────┘
+          ┌────────────────────────┐                             ┌────────────────────────┐
+          │      Claude Code       │                             │   Google Antigravity   │
+          │  (Work & Personal Pro) │                             │    (Gemini CLI / 3P)   │
+          └───────────┬────────────┘                             └───────────┬────────────┘
+                      │ ~/.claude/projects/*.jsonl                           │ ~/.gemini/brain/*.jsonl
+                      ▼                                                      ▼
+          ┌───────────────────────────────────────────────────────────────────────────────┐
+          │                            meshd Background Daemon                            │
+          │  • Event-driven file watcher (fsnotify, <19MB RAM, 0% idle CPU)               │
+          │  • Agent Loop Circuit Breaker (detects 3x tool failures / 5 in 5m; chime)     │
+          │  • Multi-Agent Collision Detector (live active file locks with 15m TTL)       │
+          │  • Task budget auto-spend attribution (tokens -> model pricing -> USD)        │
+          │  • Account attribution engine (Work vs Personal via machine_role)             │
+          │  • Predictive rate-limit curve analyzer & native OS notifications             │
+          └───────────────────────────────────────┬───────────────────────────────────────┘
+                                                  │
+                                                  ▼
+          ┌───────────────────────────────────────────────────────────────────────────────┐
+          │                         Local SQLite Engine (mesh.db)                         │
+          │  • Pure Go (modernc.org/sqlite, CGO_ENABLED=0), WAL mode, FTS5               │
+          │  • Telemetry: 100k+ requests, model pricing catalog, token attribution cache  │
+          │  • Task Governance: dollar & turn limits, spend tracking, active statuses     │
+          │  • Safety State: circuit breakers, active working files, collision tracking   │
+          │  • Inter-Agent Wire: peer broadcast scratchpad with TTL & unread cursors      │
+          └───────┬──────────────────────┬──────────────────────┬──────────────────┬──────┘
+                  │                      │                      │                  │
+                  ▼                      ▼                      ▼                  ▼
+      ┌──────────────────────┐┌──────────────────────┐┌────────────────┐┌──────────────────────┐
+      │  Pacer, Router & UI  ││ Safety & Token Diet  ││ Context Engine ││ Persistence & Bridge │
+      │ • Sub-2ms statusline ││ • Git Time Machine   ││ • Handoff (0-tk││ • Remote SSH probe   │
+      │ • Tokyo Night theme  ││   (undo/redo <5ms)   ││ • User Direct. ││ • Persistent tmux    │
+      │ • 4 quota pools      ││ • Error Condenser    ││   Trail (clean)││ • Pre-flight rsync   │
+      │ • Dynamic waterfall  ││   (80-95% token diet)││ • Multi-turn   ││ • Exec ROI ("Boss    │
+      │ • Session Pickup     ││ • Circuit Breakers   ││   Goal Drift   ││   Card") 4 PDFs via  │
+      │   (mesh where/pickup)││ • File Collision Lock││ • Cross-Tool   ││   chromedp           │
+      └──────────────────────┘└──────────────────────┘└────────────────┘└──────────────────────┘
 ```
 
 <div align="center">
@@ -63,10 +70,14 @@ Agent-Mesh unifies disparate AI agent tooling into a single, high-performance st
 Modern AI software engineers work across multiple state-of-the-art coding agents. This fragmented workflow creates distinct operational headaches:
 
 1. **Unpredictable Rate Limit Lockouts**: 5-hour rolling windows and weekly quotas exhaust without warning, grinding engineering velocity to a halt.
-2. **Context Loss During Model Switching**: When one model hits a ceiling, migrating to another requires manually explaining the repository structure, active branch, modified files, diff status, and immediate next steps.
-3. **Multi-Account & Hardware Split**: Work repositories often reside on corporate VPNs or dedicated hardware, while personal side-projects live locally.
-4. **Corporate MDM Friction**: iCloud Continuity / Universal Clipboard is routinely disabled on corporate-managed laptops for data loss prevention (DLP), making cross-laptop context transfer painful.
-5. **The ROI Justification Gap**: Engineers deliver hundreds of thousands of dollars in software value using AI agents, but executives only see the monthly subscription invoice. Without empirical proof of leverage, subscription upgrades are delayed or denied.
+2. **Context Loss & Friction During Model Switching**: When one model hits a ceiling, migrating to another requires manually explaining the repository structure, active branch, modified files, diff status, and immediate next steps.
+3. **Agent Death Spirals & Burned Tokens**: Autonomous agents frequently get stuck in repetitive error loops—running the exact same failing command or tool 10 times in a row, burning thousands of tokens and exhausting hourly quotas before the developer notices.
+4. **Agent Destructive Edits Without an "Undo" Button**: When an agent hallucinates or makes a broken architectural edit across 15 files, rolling back with standard `git checkout` or `git stash` clobbers uncommitted human work and requires tedious manual recovery.
+5. **Multi-Agent Collision on Shared Repos**: Running Claude Code in one terminal and Google Antigravity in another often leads to both agents modifying the same files concurrently, corrupting state and causing git merge nightmares.
+6. **Token Waste from Massive Compiler Dumps**: Dumping raw 500-line TypeScript build errors, Go panics, or Python tracebacks into agent prompts wastes up to 3,000 tokens per turn and causes model attention dilution.
+7. **Long-Session Goal Drift**: As conversations extend past 10–20 turns, agents forget early user constraints, obsess over Turn 1 prompts, or diverge across multiple conflicting milestones.
+8. **Multi-Account & Hardware Split**: Work repositories often reside on corporate VPNs or dedicated hardware, while personal side-projects live locally.
+9. **The ROI Justification Gap**: Engineers deliver hundreds of thousands of dollars in software value using AI agents, but executives only see the monthly subscription invoice. Without empirical proof of leverage, subscription upgrades are delayed or denied.
 
 Agent-Mesh eliminates these pain points with a single, zero-dependency Go platform.
 
@@ -74,9 +85,122 @@ Agent-Mesh eliminates these pain points with a single, zero-dependency Go platfo
 
 ## Key Features
 
+### ⏱️ Agent Time Machine (Micro-Checkpoints & Instant Undo/Redo)
+
+Give your autonomous agents a safety net with sub-5ms snapshotting:
+
+- **Isolated Git Index**: Creates tree snapshots using a dedicated git index (`.git/mesh_index`) and custom git references (`refs/mesh/checkpoints/<session>/<id>`). It **never moves `HEAD`**, never creates commit clutter on your active branch, and leaves your branch history pristine.
+- **Microsecond Snapshots**: Takes full working tree snapshots in `<5ms`, capturing untracked and modified files before risky agent operations.
+- **One-Command Undo (`mesh undo`)**: Reverts agent mistakes instantly back to the exact working tree state before the agent made changes.
+- **Safe Stashing**: Automatically preserves current uncommitted modifications in a temporary stash before restoring, ensuring no work is ever lost.
+- **Commands**:
+  - `mesh checkpoint [-s <session>]`: Create a micro-checkpoint.
+  - `mesh undo [-n] [-k]`: Undo the latest checkpoint (or dry-run with `-n`, keep tree dirty with `-k`).
+  - `mesh redo`: Redo reverted checkpoint.
+  - `mesh checkpoints`: List session checkpoints.
+
+### 🥗 Zero-Token Error Condenser / Token Diet (`mesh condense`)
+
+Massive compiler dumps and stack traces are the #1 source of token waste in AI workflows. The error condenser reduces dumps by **80% to 95%** before agent ingestion:
+
+- **Language-Aware Reducers**:
+  - **TypeScript / JavaScript**: Groups error cascades (e.g. `TS2304`, `TS2345`), deduplicates missing imports, extracts unique root causes, and limits repeated errors.
+  - **Go**: Strips standard library runtime frames from panic dumps while preserving custom code failure points, function arguments, and panicking goroutines.
+  - **Python**: Collapses third-party site-package frames (`venv`, `site-packages`) and preserves the core application traceback and final exception message.
+  - **Generic**: Deduplicates repeated lines with `[xN repetitions]` markers, filters noisy progress bars, and caps output cleanly.
+- **CLI & Pipe Integration**:
+  - `mesh condense [file] [-l <max-lines>] [-f <format>]`
+  - Pipe directly from builds: `npm run build 2>&1 | mesh condense` or `go test ./... 2>&1 | mesh condense`
+
+### 🛑 Agent Loop & Death-Spiral Circuit Breaker
+
+Prevents runaway agents from burning your entire weekly token budget on repeated failures:
+
+- **Error Signature Hashing**: Computes normalized signatures (`tool:command:error`) of tool calls and command failures from real-time transcript streaming.
+- **Trip Conditions**:
+  - **3 consecutive identical tool/command failures**, OR
+  - **5 failures within a sliding 5-minute window**.
+- **System Alarm**: Fires an immediate macOS audible alert (`Glass` chime) and native system notification when tripped.
+- **Prompt Hook Enforcement**: `mesh hook prompt` detects tripped breakers and injects high-priority warnings into the agent context, preventing further automated execution until acknowledged.
+- **CLI Inspection**:
+  - `mesh breaker list [-a]`: View active or all tripped breakers.
+  - `mesh breaker reset <session-id>`: Reset a tripped breaker after manually fixing the blocker.
+
+### 💥 Multi-Agent Collision Detection & Live File Locks
+
+Safely run Claude Code and Google Antigravity simultaneously on the same repository:
+
+- **Heartbeat Session Registration**: Both agents register their active presence in `mesh.db` with working directory metadata.
+- **Live Working File Tracking**: Tracks touched files with a 15-minute sliding TTL (`agent_working_files`).
+- **Prompt Hook Collision Guard**: When an agent runs a prompt or tool, `mesh hook prompt` inspects git dirty files and cross-checks active peer sessions. If another agent recently edited the same file, it injects a prominent collision warning with the peer session ID and file list.
+
+### 💰 Per-Task Dollar & Turn Budgets
+
+Impose hard financial and operational boundaries on autonomous tasks:
+
+- **Financial Limits**: Set dollar caps (`--budget <usd>`) and turn limits (`--max-turns <n>`) per task.
+- **Automatic Spend Attribution**: The `meshd` telemetry daemon monitors transcript tokens and attributes exact dollar spend (via the built-in model pricing catalog) directly to the active task in SQLite.
+- **Two-Tier Budget Enforcement**:
+  - **80% Budget Warning**: `mesh hook prompt` injects an amber pacing alert into prompt context when spend reaches 80%.
+  - **100% Hard Block**: At 100% budget, `mesh hook prompt` outputs a critical budget exhaustion error to stderr and exits with **code 2**, blocking autonomous loops from continuing without explicit user approval.
+- **CLI Management**:
+  - `mesh task add <name> --budget 1.50 --max-turns 20`: Create budgeted task.
+  - `mesh task budget <id> --usd 2.00 --turns 25`: Adjust budget on an active task.
+  - `mesh task list`: View spend progress bar, dollar amounts, and turn counts.
+  - `mesh task done <id>`: Mark task complete.
+
+### 📻 Cross-Agent Live Scratchpad (`mesh wire`)
+
+Zero-token peer-to-peer event bus for agents collaborating across separate terminals or tools:
+
+- **SQLite-Backed Pub/Sub**: Fast broadcast channel (`wire_messages`) with channel scoping, author attribution, and time-to-live (`ttl`) pruning.
+- **Per-Consumer Read Cursors**: Tracks read progress per consumer session in `wire_cursors`.
+- **Automatic Context Injection**: `mesh hook prompt` queries for unread wire broadcasts in the current repository and injects them seamlessly into the agent's turn prompt:
+  ```markdown
+  [WIRE BROADCAST from claude-worker (5m ago)]: Completed database migrations in internal/db/schema.sql
+  ```
+- **CLI Commands**:
+  - `mesh wire post "Refactored user auth, update API endpoints" [-c <channel>] [-t 3600]`
+  - `mesh wire list [-c <channel>] [-l 10]`
+  - `mesh wire prune`: Clean expired wire messages.
+
+### 🔄 Unified Cross-Agent Continuation & Handoff Engine
+
+Effortlessly resume, continue, or hand off agent sessions across Claude Code and Google Antigravity:
+
+- **Instant Native Continue (`mesh -c` / `mesh continue`)**:
+  - Inspects the current repository and identifies the most recently updated session between Claude Code and Antigravity.
+  - Automatically launches the native resume command (`claude --resume <id>` or `agy -c <id>`) for that tool.
+- **Interactive Multi-Tool Picker (`mesh -r` / `mesh resume`)**:
+  - Displays a clean numbered terminal menu of recent sessions across both Claude and Antigravity with timestamps, message counts, active durations, and conversation snippets.
+  - Select any session by number to resume it immediately.
+- **Zero-Token Handoff Mode (`-H, --handoff`)**:
+  - Combine with continue or resume: `mesh -c -H` or `mesh -r -H`.
+  - Instead of resuming in the original tool, it generates an authoritative cross-agent handoff prompt and copies it to the clipboard (`pbcopy` / `xclip`).
+- **User Directives & Constraints Trail**:
+  - Automatically filters low-signal conversational filler (`"yes"`, `"ok"`, `"continue"`, `"lgtm"`, `"sounds good"`) and strips XML metadata wrappers (`<USER_REQUEST>`, `<ADDITIONAL_METADATA>`).
+  - Synthesizes substantive human guidance into an anchor trail so the target model inherits all explicit instructions and negative constraints.
+- **Extended Multi-Turn Goal Drift Advisory**:
+  - Detects when a resumed session has extensive history (≥ 4 user turns or ≥ 3 directives).
+  - Injects a high-visibility advisory into the handoff prompt warning the destination agent that the conversation has evolved past its initial prompt, preventing it from regressing to the Turn 1 objective.
+- **The 5-Anchor Handoff Formula**:
+  1. Target Agent Framing (`🦴 CAVEMAN` & formatting rules).
+  2. Ground-Truth Git Context (branch, status, clean diffstat).
+  3. Chronological User Directives Trail (filtered high-signal constraints).
+  4. Work Accomplished & Recent Commit Log (`git log -n 3 --oneline`).
+  5. Immediate Next Step & Open Decision Points.
+
+### 📍 Instant Context Pickup (`mesh where` / `mesh pickup`)
+
+Forgot what you were doing in a repository after stepping away?
+
+- Run `mesh where` or `mesh pickup` inside any project folder.
+- Displays the active branch, modified files, unpushed commits, active task spend, and a chronological table of recent Claude and Antigravity sessions with resumption commands.
+- Paired with the global `where-were-we` skill for agent self-grounding.
+
 ### ⚡ Sub-2ms Tokyo Night Statusline
 
-An ultra-low-latency statusline generator designed to integrate into Claude Code (`settings.json`) and Antigravity. Renders recessed Braille and block progress meters displaying:
+An ultra-low-latency statusline generator designed to integrate into Claude Code (`settings.json`), Antigravity shell hooks, and tmux. Renders recessed Braille and block progress meters displaying:
 
 - Current active model & account role (`󰛡 Gemini (Native)` vs `🪪 Claude Max`).
 - Rolling 5-hour session quota consumption and exact reset time.
@@ -94,28 +218,8 @@ Tracks 4 quota pools concurrently:
 
 Inspects the current working directory, git origin, SSH reachability to corporate nodes, and quota headroom to instantly route each command to the optimal model.
 
-### 🔄 Zero-Clarification Context Handoff Engine
-
-Run `mesh handoff` in any repository to synthesize an authoritative continuation prompt containing:
-
-- Target model prompt framing (Gemini or Claude).
-- Current repository name and active git branch.
-- Short file modification status (`git status --short`).
-- Clean unified diff stat (`git diff --stat` & `--cached`).
-- Recent commit history (`git log -n 3 --oneline`).
-- Immediate next step directive.
-
-Automatically copies to the system clipboard (`pbcopy` / `xclip`) and writes `/tmp/ai-handoff.md`. Press `Cmd+V` in the destination AI session to resume execution with zero follow-up clarification needed.
-
-> [!TIP]
-> **Zero Token Waste (Pure Go Engine)**
-> Unlike LLM-based context generation scripts, `mesh handoff` consumes **0 AI tokens** and costs **$0.00** to run. It queries `git` and SQLite directly in `<10ms` using compiled Go.
-> - **Works When 100% Rate-Limited**: Because no LLM API calls are made, handoffs work flawlessly even when your Anthropic or Gemini quota is completely exhausted or you are offline.
-> - **Zero Hallucination**: Emits exact ground-truth git diffs and modified files rather than fuzzy AI summaries.
-> - **Preemptive 5-Hour Warning**: When your quota approaches 85% used (~15% left), `mesh hook prompt` automatically stages this handoff in your clipboard and alerts you before you run out of turns.
-
-
 ### 🌉 Resilient Work Bridge & Remote `tmux` Persistence
+
 Seamlessly bridges local workstations with enterprise hardware (e.g., `company-mbp`):
 
 - **Dynamic Path Translation**: Translates local mirror paths to remote enterprise repo structures.
@@ -163,6 +267,10 @@ git clone https://github.com/VinnyVanGogh/agent-mesh.git
 cd agent-mesh
 go build -o ~/.local/bin/mesh ./cmd/mesh
 go build -o ~/.local/bin/meshd ./cmd/meshd
+
+# On macOS, ad-hoc codesign the binaries:
+codesign -s - -f ~/.local/bin/mesh
+codesign -s - -f ~/.local/bin/meshd
 ```
 
 Verify the installation:
@@ -253,9 +361,7 @@ remote_host = "company-mbp"
 
 ## CLI Command Reference
 
-### Primary Interactive Launcher (`mesh`)
-
-Run `mesh` directly to launch the dynamically routed AI session (with Tokyo Night statusline and remote bridge integration):
+### Primary Interactive Launcher & Resumption (`mesh`)
 
 ```bash
 # Automatically launches optimal AI (remote Claude tmux, local Claude, or Antigravity agy)
@@ -263,10 +369,132 @@ mesh
 
 # Pass prompts or flags directly to the routed AI
 mesh "implement new authentication flow"
-mesh --claude        # Force route to Claude Code
-mesh --gemini        # Force route to Antigravity Gemini (agy)
-mesh --dry-run       # Preview routed target, model, and bridge status without executing
-mesh --status        # Quick display of fleet status & quota table
+
+# Force routing flags
+mesh -C, --claude        # Force route to Claude Code
+mesh -G, --gemini        # Force route to Antigravity Gemini (agy)
+mesh --dry-run           # Preview routed target, model, and bridge status without executing
+mesh --status            # Quick display of fleet status & quota table
+
+# Instant Session Continuation & Picker
+mesh -c, --continue      # Continue latest session for current repository (auto-detects Claude or agy)
+mesh -r, --resume        # Interactive cross-tool session picker (Claude + Antigravity)
+mesh -c -H, --handoff    # Copy cross-agent continuation prompt to clipboard instead of resuming
+mesh -r -H               # Pick a past session and generate a handoff prompt for another agent
+```
+
+### Agent Time Machine (Micro-Checkpoints & Instant Undo)
+
+```bash
+# Snapshot current working tree into isolated git ref (<5ms)
+mesh checkpoint
+
+# Snapshot with custom session label
+mesh checkpoint -s feature-auth
+
+# Undo agent changes back to previous checkpoint
+mesh undo
+
+# Preview what undo would revert without touching the working tree
+mesh undo --dry-run / -n
+
+# Undo working tree changes but keep staged index dirty
+mesh undo -k
+
+# Redo previously reverted checkpoint
+mesh redo
+
+# List available checkpoints for current session/repo
+mesh checkpoints
+```
+
+### Zero-Token Error Condenser / Token Diet
+
+```bash
+# Condense compiler errors or stack traces from a log file
+mesh condense build-error.log
+
+# Pipe directly from build tools (condenses by 80-95% before agent consumption)
+npm run build 2>&1 | mesh condense
+go test ./... 2>&1 | mesh condense
+pytest 2>&1 | mesh condense
+
+# Force format parser and customize max output lines
+mesh condense -f typescript -l 25 ts-errors.log
+mesh condense -f golang go-panic.log
+mesh condense -f python py-traceback.log
+```
+
+### Circuit Breakers & Collision Detection
+
+```bash
+# List all active tripped circuit breakers
+mesh breaker list
+
+# List all circuit breakers (including resolved/historic)
+mesh breaker list -a
+
+# Reset a tripped circuit breaker for a session
+mesh breaker reset <session-id>
+```
+
+### Per-Task Dollar & Turn Budgets
+
+```bash
+# Add a new task with dollar budget and turn limit
+mesh task add "Migrate DB schema" --budget 2.50 --max-turns 30
+
+# Update budget on an existing task
+mesh task budget <task-id> --usd 4.00 --turns 50
+
+# List active tasks with spend meters, token usage, and turn counts
+mesh task list
+
+# List all tasks including completed
+mesh task list --all
+
+# Mark task as completed
+mesh task done <task-id>
+```
+
+### Cross-Agent Live Scratchpad (`mesh wire`)
+
+```bash
+# Post a broadcast message to other agents in the repo
+mesh wire post "Added new migration in internal/db/002_auth.sql"
+
+# Post with custom channel and TTL (in seconds)
+mesh wire post "Reviewing auth controller" -c reviews -t 7200
+
+# List recent broadcast messages
+mesh wire list
+mesh wire list -c reviews -l 20
+
+# Clean expired wire messages from database
+mesh wire prune
+```
+
+### Context Pickup & Handoff
+
+```bash
+# Inspect current repo context, active task, and recent session history
+mesh where
+mesh pickup
+
+# Generate handoff prompt to Gemini and copy to clipboard
+mesh handoff --to gemini
+
+# Generate handoff prompt with specific next step directive
+mesh handoff --to claude --step "Implement modernc.org/sqlite schema migration"
+
+# Push handoff context directly to remote machine and remote clipboard
+mesh handoff --push company-mbp
+
+# Pull handoff context from remote machine into local clipboard
+mesh handoff --pull company-mbp
+
+# Claude / Antigravity prompt hook (monitors quota, breakers, collisions, wire, budgets)
+mesh hook prompt
 ```
 
 ### Pacing & Status
@@ -285,7 +513,7 @@ mesh route
 mesh route --eval
 ```
 
-### Reporting & Executive ROI
+### Reporting & Executive ROI ("The Boss Card")
 
 ```bash
 # Generate Work Justification Memo ("The Boss Card") PDF
@@ -309,25 +537,6 @@ mesh report --pdf --type all
 
 # Specify a custom destination path
 mesh report --pdf --type work -o ~/Documents/Boss-Card-Q1.pdf
-```
-
-### Context Handoff
-
-```bash
-# Generate handoff prompt to Gemini and copy to clipboard
-mesh handoff --to gemini
-
-# Generate handoff prompt with specific next step directive
-mesh handoff --to claude --step "Implement modernc.org/sqlite schema migration"
-
-# Push handoff context directly to remote machine and remote clipboard
-mesh handoff --push company-mbp
-
-# Pull handoff context from remote machine into local clipboard
-mesh handoff --pull company-mbp
-
-# Claude Code hook: evaluates 5h quota, alerts at 85%+ used & stages handoff
-mesh hook prompt
 ```
 
 ### Remote Bridge & Sessions
@@ -354,19 +563,6 @@ mesh sync export -o ~/Desktop/work-telemetry.tar.gz
 
 # Import telemetry bundle into local database (idempotent)
 mesh sync import ~/Desktop/work-telemetry.tar.gz
-```
-
-### Task Tracking
-
-```bash
-# List all active tasks
-mesh task list
-
-# List all tasks including completed
-mesh task list --all
-
-# Add a new active task
-mesh task add "Migrate rate-limit notifier to pure Go"
 ```
 
 ---
@@ -433,15 +629,19 @@ Benchmark: **1.8ms** execution time (compiled pure Go, sub-process safe).
 
 Agent-Mesh uses `modernc.org/sqlite` rather than `mattn/go-sqlite3`. This allows compiling the binary with `CGO_ENABLED=0`, producing 100% statically linked binaries with zero dynamic library dependencies while retaining full SQLite WAL mode, memory concurrency, and FTS5 full-text search.
 
-### 2. Native Chrome DevTools Protocol (`chromedp`)
+### 2. Isolated Git Index for Micro-Checkpoints
+
+`mesh checkpoint` never interferes with your working branch or commit history. By directing git plumbing commands (`git write-tree`, `git commit-tree`, `git update-ref`) through an isolated index environment (`GIT_INDEX_FILE=.git/mesh_index`), Agent-Mesh snapshots unstaged and staged files in `<5ms` under `refs/mesh/checkpoints/` without touching `HEAD`.
+
+### 3. Native Chrome DevTools Protocol (`chromedp`)
 
 Executive PDF generation communicates directly with the local Google Chrome binary (`/Applications/Google Chrome.app`) over WebSockets via Chrome DevTools Protocol. This eliminates the need for Node.js, Bun, Playwright, or Puppeteer runtimes. Reports are rendered in ~1.5 seconds.
 
-### 3. Non-Blocking Tail Ingestion
+### 4. Non-Blocking Tail Ingestion & Event Daemon
 
-The `meshd` daemon maintains an event-driven file watcher (`fsnotify`) with byte-offset cursors stored in `~/.agent-mesh/ingest-cursors.json`. Transcripts are scanned using 4MB line buffers, extracting token metrics and attributing spend with zero noticeable CPU overhead (<0.1% CPU, 19MB RAM).
+The `meshd` daemon maintains an event-driven file watcher (`fsnotify`) with byte-offset cursors stored in `~/.agent-mesh/ingest-cursors.json`. Transcripts are scanned using 4MB line buffers, extracting token metrics, evaluating circuit breakers, tracking working file touches, and attributing spend with zero noticeable CPU overhead (<0.1% CPU, 19MB RAM).
 
-### 4. Idempotent Data Model
+### 5. Idempotent Data Model
 
 Every telemetry record generates a deterministic SHA-256 idempotency key based on its raw transcript payload. Syncing transcripts repeatedly or importing bundles across machines will never duplicate token accounting or financial numbers.
 
@@ -463,7 +663,7 @@ Supported build targets:
 
 ## Privacy & Local-First Manifesto
 
-- **100% Local**: All SQLite databases, telemetry records, cursors, and reports reside on your machine in `~/.agent-mesh/`.
+- **100% Local**: All SQLite databases, telemetry records, cursors, checkpoints, and reports reside on your machine in `~/.agent-mesh/`.
 - **Zero Telemetry Phone-Home**: Agent-Mesh makes zero outbound network requests to third-party telemetry services, tracking servers, or analytics endpoints.
 - **Secure Network Bridging**: Network operations only occur across user-configured SSH keys or Tailscale nodes.
 
