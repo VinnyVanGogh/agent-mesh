@@ -18,6 +18,10 @@ type HandoffOptions struct {
 	ImmediateNextStep string
 	Directory         string
 	DB                *sql.DB
+	SessionID         string
+	Trigger           string // "manual", "auto_daemon", "crash", "exit", "breaker", "quota_warning"
+	DataDir           string
+	MaxKeepPerRepo    int
 }
 
 // HandoffRecord represents the structured metadata saved to handoff.json.
@@ -235,24 +239,68 @@ func GenerateHandoff(opts HandoffOptions) (*HandoffRecord, error) {
 		HandoffPrompt:     promptText,
 	}
 
-	// 1. Serialize to ~/.agent-mesh/handoff.json
-	home, err := os.UserHomeDir()
-	if err == nil {
-		meshDir := filepath.Join(home, ".agent-mesh")
-		_ = os.MkdirAll(meshDir, 0755)
-		jsonPath := filepath.Join(meshDir, "handoff.json")
-		if jsonData, err := json.MarshalIndent(record, "", "  "); err == nil {
-			_ = os.WriteFile(jsonPath, jsonData, 0644)
+	// 1. Resolve Session ID and Agent Type
+	sessionID := opts.SessionID
+	agentType := strings.ToLower(source)
+	if sessionID == "" {
+		if opts.DB != nil {
+			if latest, err := GetLatestSession(opts.Directory, opts.DB); err == nil && latest != nil {
+				sessionID = latest.ID
+				agentType = latest.AgentType
+			}
 		}
 	}
+	if sessionID == "" {
+		sessionID = fmt.Sprintf("session-%d", time.Now().Unix())
+	}
 
-	// 2. Write /tmp/ai-handoff.md
+	trigger := opts.Trigger
+	if trigger == "" {
+		trigger = "manual"
+	}
+	maxKeep := opts.MaxKeepPerRepo
+	if maxKeep <= 0 {
+		maxKeep = 3
+	}
+
+	// 2. Serialize to ~/.agent-mesh/handoff.json and session manifest
+	dataDir := opts.DataDir
+	if dataDir == "" {
+		home, _ := os.UserHomeDir()
+		dataDir = filepath.Join(home, ".agent-mesh")
+	}
+	_ = os.MkdirAll(dataDir, 0755)
+
+	jsonPath := filepath.Join(dataDir, "handoff.json")
+	if jsonData, err := json.MarshalIndent(record, "", "  "); err == nil {
+		_ = os.WriteFile(jsonPath, jsonData, 0644)
+	}
+
+	manifest := HandoffManifest{
+		SessionID:       sessionID,
+		Title:           taskName,
+		Goal:            nextStep,
+		RepoPath:        gitCtx.RepoRoot,
+		RepoName:        gitCtx.RepoName,
+		GitBranch:       gitCtx.Branch,
+		AgentType:       agentType,
+		CreatedAt:       time.Now().UTC(),
+		TotalUserTurns:  1,
+		DirectivesCount: 1,
+		ActiveTaskID:    taskID,
+		ActiveTaskName:  taskName,
+		ModifiedFiles:   gitCtx.ModifiedFiles,
+		Trigger:         trigger,
+	}
+	_, _ = SaveHandoffWithManifest(dataDir, manifest, promptText, maxKeep)
+
+	// 3. Write /tmp/ai-handoff.md
 	handoffMdPath := "/tmp/ai-handoff.md"
 	if err := os.WriteFile(handoffMdPath, []byte(promptText), 0644); err != nil {
 		return nil, fmt.Errorf("failed to write %s: %w", handoffMdPath, err)
 	}
 
-	// 3. Copy to system clipboard using pbcopy on macOS
+	// 4. Copy to system clipboard using pbcopy on macOS
 	_ = CopyToClipboard(promptText)
 
 	return record, nil

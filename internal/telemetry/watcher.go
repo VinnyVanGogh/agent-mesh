@@ -424,7 +424,18 @@ func (w *Watcher) processRecordActivity(record map[string]interface{}, sessionID
 					resText := fmt.Sprintf("%v", itemMap["content"])
 					if isError || strings.Contains(resText, "Error:") || strings.Contains(resText, "exit status") {
 						if w.breaker != nil {
-							_, _, _ = w.breaker.RecordFailure(w.meshDB, sessionID, cwd, agentType, "tool", "", resText)
+							tripped, _, _ := w.breaker.RecordFailure(w.meshDB, sessionID, cwd, agentType, "tool", "", resText)
+							if tripped {
+								maxKeep := 3
+								if w.cfg != nil && w.cfg.MaxHandoffsPerRepo > 0 {
+									maxKeep = w.cfg.MaxHandoffsPerRepo
+								}
+								dataDir := ""
+								if w.cfg != nil {
+									dataDir = w.cfg.DataDir
+								}
+								_, _ = meshContext.AutoGenerateHandoffForSession(sessionID, cwd, "breaker_tripped", w.meshDB, dataDir, maxKeep)
+							}
 						}
 					} else {
 						if w.breaker != nil {
@@ -456,7 +467,20 @@ func (w *Watcher) processRecordActivity(record map[string]interface{}, sessionID
 	if status == "ERROR" {
 		errContent := fmt.Sprintf("%v", record["content"])
 		if w.breaker != nil {
-			_, _, _ = w.breaker.RecordFailure(w.meshDB, sessionID, cwd, "gemini", "step", "", errContent)
+			tripped, _, _ := w.breaker.RecordFailure(w.meshDB, sessionID, cwd, "gemini", "step", "", errContent)
+			maxKeep := 3
+			if w.cfg != nil && w.cfg.MaxHandoffsPerRepo > 0 {
+				maxKeep = w.cfg.MaxHandoffsPerRepo
+			}
+			dataDir := ""
+			if w.cfg != nil {
+				dataDir = w.cfg.DataDir
+			}
+			trigger := "crash"
+			if tripped {
+				trigger = "breaker_tripped"
+			}
+			_, _ = meshContext.AutoGenerateHandoffForSession(sessionID, cwd, trigger, w.meshDB, dataDir, maxKeep)
 		}
 	} else if status == "DONE" && record["tool_calls"] != nil {
 		if w.breaker != nil {

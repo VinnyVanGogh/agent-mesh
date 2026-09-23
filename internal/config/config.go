@@ -25,6 +25,7 @@ type Config struct {
 	MachineRole     string  `json:"machine_role" toml:"machine_role"` // "hybrid" (default), "work", or "personal"
 	GooglePlanTier  string  `json:"google_plan_tier" toml:"google_plan_tier"` // e.g. "Google AI Ultra" or "Ultra"
 	ClaudePlanTier  string  `json:"claude_plan_tier" toml:"claude_plan_tier"` // e.g. "Max 5x" or "Pro"
+	MaxHandoffsPerRepo int  `json:"max_handoffs_per_repo" toml:"max_handoffs_per_repo"`
 }
 
 // DefaultConfig returns the default configuration.
@@ -36,20 +37,21 @@ func DefaultConfig() *Config {
 
 	dataDir := filepath.Join(home, ".agent-mesh")
 	return &Config{
-		DataDir:         dataDir,
-		DBPath:          filepath.Join(dataDir, "mesh.db"),
-		TelemetryDBPath: filepath.Join(home, ".config", "token-telemetry", "telemetry.db"),
-		CompanyName:     "",
-		EngineerName:    "",
-		HourlyRate:      0.0,
-		WorkEmail:       "engineer@company.com",
-		PersonalEmail:   "personal@gmail.com",
-		WorkRepoRoot:    filepath.Join(home, "Documents", "dev", "work"),
-		RemoteHost:      "company-mbp",
-		RemoteRepoRoot:  "~/Documents/dev/work",
-		MachineRole:     "hybrid",
-		GooglePlanTier:  "Google AI Ultra",
-		ClaudePlanTier:  "Pro",
+		DataDir:            dataDir,
+		DBPath:             filepath.Join(dataDir, "mesh.db"),
+		TelemetryDBPath:    filepath.Join(home, ".config", "token-telemetry", "telemetry.db"),
+		CompanyName:        "",
+		EngineerName:       "",
+		HourlyRate:         0.0,
+		WorkEmail:          "engineer@company.com",
+		PersonalEmail:      "personal@gmail.com",
+		WorkRepoRoot:       filepath.Join(home, "Documents", "dev", "work"),
+		RemoteHost:         "company-mbp",
+		RemoteRepoRoot:     "~/Documents/dev/work",
+		MachineRole:        "hybrid",
+		GooglePlanTier:     "Google AI Ultra",
+		ClaudePlanTier:     "Pro",
+		MaxHandoffsPerRepo: 3,
 	}
 }
 

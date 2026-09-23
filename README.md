@@ -189,6 +189,17 @@ Effortlessly resume, continue, or hand off agent sessions across Claude Code and
   3. Chronological User Directives Trail (filtered high-signal constraints).
   4. Work Accomplished & Recent Commit Log (`git log -n 3 --oneline`).
   5. Immediate Next Step & Open Decision Points.
+- **Session-Addressed Storage & Overwrite Immunity**:
+  - Handoffs are named and stored by session ID: `~/.agent-mesh/handoffs/handoff-<session_id>.md`.
+  - Concurrent sessions never clobber each other. `/tmp/ai-handoff.md` is updated concurrently as a pointer to the latest handoff for instant clipboard access (`pbcopy`).
+- **Structured Manifests (`<session_id>-manifest.json`)**:
+  - Every handoff produces a compact metadata manifest alongside the markdown file with the session ID, goal, human-readable title, branch, modified files, user turn count, directive count, and triggering event.
+- **Configurable Per-Repo Retention Pruning**:
+  - Automatically prunes older handoffs per repository based on `max_handoffs_per_repo` in `config.toml` (default 3), keeping your disk clean.
+- **Zero-Token Manifest Search**:
+  - Agents and humans can query saved handoffs instantly using `mesh handoff list` or `mesh handoff search <query>`. Searching lightweight JSON manifests consumes virtually zero tokens (~50 tokens) compared to loading full transcripts.
+- **Automatic Base Handoffs on Crash / Breaker / Exit**:
+  - Because Agent-Mesh handoffs are 100% programmatic (pure Go, 0 LLM tokens, <10ms runtime), the `meshd` background daemon automatically snapshots a base handoff whenever a session crashes, hits an error, trips a circuit breaker, or gets closed (e.g. `Ctrl+C`). You always have a reliable restart point.
 
 ### 📍 Instant Context Pickup (`mesh where` / `mesh pickup`)
 
@@ -355,6 +366,10 @@ machine_role = "hybrid"
 # Work Bridge & Remote Node
 work_repo_root = "~/Documents/dev/company"
 remote_host = "company-mbp"
+
+# Session Handoff Retention
+# Maximum number of recent session handoffs and manifests to keep per repository
+max_handoffs_per_repo = 3
 ```
 
 ---
@@ -481,11 +496,26 @@ mesh wire prune
 mesh where
 mesh pickup
 
-# Generate handoff prompt to Gemini and copy to clipboard
+# Generate handoff prompt to Gemini and copy to clipboard (saves to ~/.agent-mesh/handoffs/)
 mesh handoff --to gemini
 
 # Generate handoff prompt with specific next step directive
 mesh handoff --to claude --step "Implement modernc.org/sqlite schema migration"
+
+# List saved session handoffs and compact metadata manifests for current repository
+mesh handoff list
+mesh handoffs
+
+# List handoffs across all repositories or output JSON
+mesh handoff list --all --limit 20
+mesh handoff list --json
+
+# Zero-token manifest search (search by goal, title, session ID, or branch)
+mesh handoff search "authentication"
+
+# View or copy a specific saved handoff prompt by session ID
+mesh handoff show <session-id>
+mesh handoff copy <session-id>
 
 # Push handoff context directly to remote machine and remote clipboard
 mesh handoff --push company-mbp

@@ -403,10 +403,27 @@ func parseAntigravitySession(brainID, filePath string, modTime time.Time) *Sessi
 	return sess
 }
 
+// SessionHandoffOptions configures session handoff generation and persistence.
+type SessionHandoffOptions struct {
+	Trigger        string // "manual", "auto_daemon", "crash", "exit", "breaker", "quota_warning"
+	DataDir        string
+	MaxKeepPerRepo int
+	SkipClipboard  bool
+}
+
 // GenerateSessionHandoff synthesizes a 5-anchor context handoff prompt from a session
 func GenerateSessionHandoff(sess *SessionInfo, dbConn *sql.DB) (string, error) {
+	prompt, _, err := GenerateSessionHandoffWithOptions(sess, dbConn, SessionHandoffOptions{
+		Trigger: "manual",
+	})
+	return prompt, err
+}
+
+// GenerateSessionHandoffWithOptions synthesizes a 5-anchor context handoff prompt, saves the manifest,
+// and conditionally copies to clipboard.
+func GenerateSessionHandoffWithOptions(sess *SessionInfo, dbConn *sql.DB, opts SessionHandoffOptions) (string, *HandoffManifest, error) {
 	if sess == nil {
-		return "", fmt.Errorf("session is nil")
+		return "", nil, fmt.Errorf("session is nil")
 	}
 
 	dir := sess.RepoPath
@@ -416,8 +433,10 @@ func GenerateSessionHandoff(sess *SessionInfo, dbConn *sql.DB) (string, error) {
 	gitCtx := GatherGitContext(dir)
 
 	taskName := ""
+	taskID := ""
 	if dbConn != nil {
 		if t, err := GetActiveTaskForRepo(dbConn, dir); err == nil && t != nil {
+			taskID = t.ID
 			taskName = t.Name
 		}
 	}
@@ -506,11 +525,169 @@ func GenerateSessionHandoff(sess *SessionInfo, dbConn *sql.DB) (string, error) {
 
 	promptText := sb.String()
 
-	// Write to /tmp/ai-handoff.md
-	_ = os.WriteFile("/tmp/ai-handoff.md", []byte(promptText), 0644)
+	trigger := opts.Trigger
+	if trigger == "" {
+		trigger = "manual"
+	}
+	maxKeep := opts.MaxKeepPerRepo
+	if maxKeep <= 0 {
+		maxKeep = 3
+	}
 
-	// Copy to clipboard
-	_ = CopyToClipboard(promptText)
+	title := taskName
+	if title == "" && len(sess.UserDirectives) > 0 {
+		title = sess.UserDirectives[len(sess.UserDirectives)-1]
+	}
+	if title == "" && sess.RootGoal != "" {
+		title = sess.RootGoal
+	}
+	if title == "" {
+		shortID := sess.ID
+		if len(shortID) > 8 {
+			shortID = shortID[:8]
+		}
+		title = fmt.Sprintf("Session %s", shortID)
+	}
+	if len(title) > 80 {
+		title = title[:80] + "..."
+	}
 
-	return promptText, nil
+	goal := sess.RootGoal
+	if goal == "" {
+		goal = sess.LastUserPrompt
+	}
+	if goal == "" {
+		goal = "Ongoing development task"
+	}
+
+	manifest := HandoffManifest{
+		SessionID:       sess.ID,
+		Title:           title,
+		Goal:            goal,
+		RepoPath:        gitCtx.RepoRoot,
+		RepoName:        gitCtx.RepoName,
+		GitBranch:       gitCtx.Branch,
+		AgentType:       sess.AgentType,
+		CreatedAt:       time.Now().UTC(),
+		TotalUserTurns:  sess.TotalUserTurns,
+		DirectivesCount: len(sess.UserDirectives),
+		ActiveTaskID:    taskID,
+		ActiveTaskName:  taskName,
+		ModifiedFiles:   gitCtx.ModifiedFiles,
+		Trigger:         trigger,
+	}
+
+	savedManifest, _ := SaveHandoffWithManifest(opts.DataDir, manifest, promptText, maxKeep)
+
+	// Copy to clipboard unless skipped
+	if !opts.SkipClipboard {
+		_ = CopyToClipboard(promptText)
+	}
+
+	return promptText, savedManifest, nil
+}
+
+// AutoGenerateHandoffForSession automatically builds and persists a base handoff without AI tokens.
+func AutoGenerateHandoffForSession(sessionID string, repoPath string, trigger string, dbConn *sql.DB, dataDir string, maxKeep int) (*HandoffManifest, error) {
+	if trigger == "" {
+		trigger = "auto_daemon"
+	}
+	var sess *SessionInfo
+	if sessionID != "" {
+		sess = FindSessionByID(sessionID)
+	} else if repoPath != "" {
+		sess, _ = GetLatestSession(repoPath, dbConn)
+	}
+	if sess == nil {
+		sess = &SessionInfo{
+			ID:        sessionID,
+			RepoPath:  repoPath,
+			UpdatedAt: time.Now(),
+			AgentType: "agent",
+		}
+		if sess.ID == "" {
+			sess.ID = fmt.Sprintf("auto-%d", time.Now().Unix())
+		}
+	}
+
+	_, manifest, err := GenerateSessionHandoffWithOptions(sess, dbConn, SessionHandoffOptions{
+		Trigger:        trigger,
+		DataDir:        dataDir,
+		MaxKeepPerRepo: maxKeep,
+		SkipClipboard:  true,
+	})
+	return manifest, err
+}
+
+// FindSessionByID searches local Claude and Antigravity transcripts for a matching session ID.
+func FindSessionByID(sessionID string) *SessionInfo {
+	if sessionID == "" {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+
+	// 1. Claude sessions: ~/.claude/projects/
+	claudeDir := filepath.Join(home, ".claude", "projects")
+	var foundClaude string
+	_ = filepath.Walk(claudeDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() && strings.HasSuffix(info.Name(), ".jsonl") {
+			base := strings.TrimSuffix(info.Name(), ".jsonl")
+			if base == sessionID || strings.HasPrefix(base, sessionID) {
+				foundClaude = path
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	if foundClaude != "" {
+		if fi, err := os.Stat(foundClaude); err == nil {
+			return parseClaudeSession(foundClaude, fi.ModTime())
+		}
+	}
+
+	// 2. Gemini / Antigravity brain sessions: ~/.gemini/antigravity-cli/brain/
+	brainDir := filepath.Join(home, ".gemini", "antigravity-cli", "brain")
+	var foundGemini string
+	_ = filepath.Walk(brainDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() && strings.HasSuffix(info.Name(), ".jsonl") {
+			parentDir := filepath.Dir(path)
+			// check grand-parent or parent for brain ID
+			brainID := filepath.Base(parentDir)
+			if brainID == "logs" || brainID == ".system_generated" {
+				brainID = filepath.Base(filepath.Dir(parentDir))
+			}
+			if brainID == ".system_generated" {
+				brainID = filepath.Base(filepath.Dir(filepath.Dir(parentDir)))
+			}
+			if brainID == sessionID || strings.HasPrefix(brainID, sessionID) {
+				foundGemini = path
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	if foundGemini != "" {
+		if fi, err := os.Stat(foundGemini); err == nil {
+			parentDir := filepath.Dir(foundGemini)
+			brainID := filepath.Base(parentDir)
+			if brainID == "logs" || brainID == ".system_generated" {
+				brainID = filepath.Base(filepath.Dir(parentDir))
+			}
+			if brainID == ".system_generated" {
+				brainID = filepath.Base(filepath.Dir(filepath.Dir(parentDir)))
+			}
+			return parseAntigravitySession(brainID, foundGemini, fi.ModTime())
+		}
+	}
+
+	return nil
 }
