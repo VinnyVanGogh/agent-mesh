@@ -22,6 +22,7 @@ type SessionInfo struct {
 	StartedAt      time.Time `json:"started_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	RootGoal       string    `json:"root_goal"`
+	TotalUserTurns int       `json:"total_user_turns"`
 	UserDirectives []string  `json:"user_directives"`
 	LastUserPrompt string    `json:"last_user_prompt"`
 	LastAssistant  string    `json:"last_assistant"`
@@ -287,6 +288,7 @@ func parseClaudeSession(filePath string, modTime time.Time) *SessionInfo {
 		}
 	}
 
+	sess.TotalUserTurns = len(userPrompts)
 	if len(userPrompts) > 0 {
 		sess.RootGoal = SanitizeSummary(userPrompts[0], 250)
 		sess.LastUserPrompt = SanitizeSummary(userPrompts[len(userPrompts)-1], 300)
@@ -381,6 +383,7 @@ func parseAntigravitySession(brainID, filePath string, modTime time.Time) *Sessi
 
 	sess.RepoPath = repoPath
 
+	sess.TotalUserTurns = len(userPrompts)
 	if len(userPrompts) > 0 {
 		sess.RootGoal = SanitizeSummary(userPrompts[0], 250)
 		sess.LastUserPrompt = SanitizeSummary(userPrompts[len(userPrompts)-1], 300)
@@ -447,6 +450,16 @@ func GenerateSessionHandoff(sess *SessionInfo, dbConn *sql.DB) (string, error) {
 		sb.WriteString(fmt.Sprintf("%s\n\n", sess.RootGoal))
 	} else {
 		sb.WriteString("Continue ongoing development task in repository.\n\n")
+	}
+
+	// Extended session advisory: alert receiving agent to goal drift & multiple pivots
+	if sess.TotalUserTurns >= 4 || len(sess.UserDirectives) >= 3 {
+		sb.WriteString("> [!IMPORTANT]\n")
+		sb.WriteString(fmt.Sprintf("> **Extended Multi-Turn Session Detected (%d user turns, %d key directives)**:\n", sess.TotalUserTurns, len(sess.UserDirectives)))
+		sb.WriteString("> This conversation progressed through multiple iterations. Keep in mind:\n")
+		sb.WriteString("> 1. **Goal Refinement & Clarification**: The initial goal above was likely broadened, corrected, or clarified in later turns.\n")
+		sb.WriteString("> 2. **Multi-Goal Evolution**: The task evolved across multiple milestones or pivots. Treat the **User Directives Trail** below as the definitive chronological record of intent.\n")
+		sb.WriteString("> 3. **Latest Directives Win**: If earlier instructions conflict with the latest turn, prioritize the latest user instructions.\n\n")
 	}
 
 	// 2. User Directives & Constraints Trail
