@@ -63,13 +63,21 @@ func (c *Cursors) Set(filePath string, offset int64) {
 	c.Offsets[filePath] = offset
 }
 
+type handoffTask struct {
+	sessionID string
+	cwd       string
+	lastSeen  time.Time
+}
+
 type Watcher struct {
-	cfg     *config.Config
-	db      *sql.DB
-	meshDB  *sql.DB
-	cursors *Cursors
-	watcher *fsnotify.Watcher
-	breaker *BreakerTracker
+	cfg            *config.Config
+	db             *sql.DB
+	meshDB         *sql.DB
+	cursors        *Cursors
+	watcher        *fsnotify.Watcher
+	breaker        *BreakerTracker
+	handoffMu      sync.Mutex
+	pendingHandoff map[string]handoffTask
 }
 
 func NewWatcher(cfg *config.Config) (*Watcher, error) {
@@ -97,12 +105,13 @@ func NewWatcher(cfg *config.Config) (*Watcher, error) {
 	cursors := LoadCursors(cursorsPath)
 
 	return &Watcher{
-		cfg:     cfg,
-		db:      conn,
-		meshDB:  meshDB,
-		cursors: cursors,
-		watcher: fsw,
-		breaker: NewBreakerTracker(),
+		cfg:            cfg,
+		db:             conn,
+		meshDB:         meshDB,
+		cursors:        cursors,
+		watcher:        fsw,
+		breaker:        NewBreakerTracker(),
+		pendingHandoff: make(map[string]handoffTask),
 	}, nil
 }
 
@@ -125,6 +134,9 @@ func (w *Watcher) Start(ctx context.Context) error {
 	saveTicker := time.NewTicker(30 * time.Second)
 	defer saveTicker.Stop()
 
+	handoffTicker := time.NewTicker(4 * time.Second)
+	defer handoffTicker.Stop()
+
 	pruneTicker := time.NewTicker(5 * time.Minute)
 	defer pruneTicker.Stop()
 
@@ -132,10 +144,14 @@ func (w *Watcher) Start(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			w.cursors.Save()
+			w.flushPendingHandoffs(true)
 			return nil
 
 		case <-saveTicker.C:
 			w.cursors.Save()
+
+		case <-handoffTicker.C:
+			w.flushPendingHandoffs(false)
 
 		case <-pruneTicker.C:
 			if w.meshDB != nil {
@@ -164,6 +180,34 @@ func (w *Watcher) Start(ctx context.Context) error {
 				return nil
 			}
 			log.Printf("[meshd] Watcher error: %v", err)
+		}
+	}
+}
+
+func (w *Watcher) flushPendingHandoffs(force bool) {
+	w.handoffMu.Lock()
+	var toProcess []handoffTask
+	now := time.Now()
+	for id, task := range w.pendingHandoff {
+		if force || now.Sub(task.lastSeen) >= 3*time.Second {
+			toProcess = append(toProcess, task)
+			delete(w.pendingHandoff, id)
+		}
+	}
+	w.handoffMu.Unlock()
+
+	maxKeep := 3
+	if w.cfg != nil && w.cfg.MaxHandoffsPerRepo > 0 {
+		maxKeep = w.cfg.MaxHandoffsPerRepo
+	}
+	dataDir := ""
+	if w.cfg != nil {
+		dataDir = w.cfg.DataDir
+	}
+
+	for _, task := range toProcess {
+		if task.cwd != "" {
+			_, _ = meshContext.AutoGenerateHandoffForSession(task.sessionID, task.cwd, "auto_daemon", w.meshDB, dataDir, maxKeep)
 		}
 	}
 }
@@ -398,7 +442,18 @@ func (w *Watcher) processRecordActivity(record map[string]interface{}, sessionID
 		RepoPath:  cwd,
 	})
 
-	// 2. Claude message content blocks inspection
+	// 2. Queue for background auto-handoff generation as work progresses
+	if cwd != "" {
+		w.handoffMu.Lock()
+		w.pendingHandoff[sessionID] = handoffTask{
+			sessionID: sessionID,
+			cwd:       cwd,
+			lastSeen:  time.Now(),
+		}
+		w.handoffMu.Unlock()
+	}
+
+	// 3. Claude message content blocks inspection
 	if msg, ok := record["message"].(map[string]interface{}); ok {
 		if contentSlice, ok := msg["content"].([]interface{}); ok {
 			for _, item := range contentSlice {

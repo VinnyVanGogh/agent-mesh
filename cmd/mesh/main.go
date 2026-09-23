@@ -1625,6 +1625,19 @@ func handleHookPrompt() {
 			PID:       os.Getppid(),
 		})
 
+		// Asynchronously update base handoff as turn begins
+		go func() {
+			maxKeep := 3
+			if cfg != nil && cfg.MaxHandoffsPerRepo > 0 {
+				maxKeep = cfg.MaxHandoffsPerRepo
+			}
+			dataDir := ""
+			if cfg != nil {
+				dataDir = cfg.DataDir
+			}
+			_, _ = meshContext.AutoGenerateHandoffForSession(sessionID, cwd, "active_session", dbConn, dataDir, maxKeep)
+		}()
+
 		// B. Inspect working tree for multi-agent collision detection
 		gitCtx := meshContext.GatherGitContext(cwd)
 		var dirtyFiles []string
