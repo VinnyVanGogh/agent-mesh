@@ -1,0 +1,434 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/VinnyVanGogh/agent-mesh/internal/checkpoint"
+	"github.com/VinnyVanGogh/agent-mesh/internal/condenser"
+	meshContext "github.com/VinnyVanGogh/agent-mesh/internal/context"
+	"github.com/VinnyVanGogh/agent-mesh/internal/router"
+	"github.com/VinnyVanGogh/agent-mesh/internal/wire"
+)
+
+func toolSuccess(text string) *ToolCallResult {
+	return &ToolCallResult{
+		Content: []ToolContent{
+			{
+				Type: "text",
+				Text: text,
+			},
+		},
+		IsError: false,
+	}
+}
+
+func toolError(msg string) *ToolCallResult {
+	return &ToolCallResult{
+		Content: []ToolContent{
+			{
+				Type: "text",
+				Text: msg,
+			},
+		},
+		IsError: true,
+	}
+}
+
+func (s *Server) getToolsList() []Tool {
+	return []Tool{
+		{
+			Name:        "mesh_checkpoint",
+			Description: "take ephemeral git micro-checkpoint",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"message": {
+						Type:        "string",
+						Description: "Optional label or description for the checkpoint",
+					},
+					"session_id": {
+						Type:        "string",
+						Description: "Optional agent session identifier",
+					},
+				},
+			},
+		},
+		{
+			Name:        "mesh_undo",
+			Description: "restore tree to latest or specific checkpoint",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"checkpoint_id": {
+						Type:        "string",
+						Description: "Target checkpoint ID, commit SHA, or empty for latest",
+					},
+					"dry_run": {
+						Type:        "boolean",
+						Description: "Preview changes without modifying the working tree",
+					},
+					"keep_untracked": {
+						Type:        "boolean",
+						Description: "Do not delete untracked files created after checkpoint",
+					},
+					"clean_ignored": {
+						Type:        "boolean",
+						Description: "Remove ignored files during restoration",
+					},
+				},
+			},
+		},
+		{
+			Name:        "mesh_wire_post",
+			Description: "broadcast a message on Mesh Wire",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"content": {
+						Type:        "string",
+						Description: "Message content to broadcast",
+					},
+					"channel": {
+						Type:        "string",
+						Description: "Channel name, defaults to global",
+					},
+					"ttl_seconds": {
+						Type:        "integer",
+						Description: "Time to live in seconds, defaults to 86400",
+					},
+				},
+				Required: []string{"content"},
+			},
+		},
+		{
+			Name:        "mesh_wire_list",
+			Description: "list recent wire messages",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"channel": {
+						Type:        "string",
+						Description: "Filter messages by channel name",
+					},
+					"limit": {
+						Type:        "integer",
+						Description: "Maximum number of messages to return",
+					},
+				},
+			},
+		},
+		{
+			Name:        "mesh_task_list",
+			Description: "list active tasks and budget spend meters",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"all": {
+						Type:        "boolean",
+						Description: "Include completed and soft-deleted tasks",
+					},
+				},
+			},
+		},
+		{
+			Name:        "mesh_condense",
+			Description: "condense compiler errors / stack traces",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"raw_text": {
+						Type:        "string",
+						Description: "Raw compiler output, stack trace, or log dump",
+					},
+					"format": {
+						Type:        "string",
+						Description: "Target format: auto, typescript, go, python, generic",
+					},
+					"max_lines": {
+						Type:        "integer",
+						Description: "Maximum lines allowed in condensed output",
+					},
+				},
+				Required: []string{"raw_text"},
+			},
+		},
+		{
+			Name:        "mesh_status",
+			Description: "return rate limit quotas, active models, and pacer status",
+			InputSchema: InputSchema{
+				Type:       "object",
+				Properties: map[string]Property{},
+			},
+		},
+	}
+}
+
+func (s *Server) handleCallTool(ctx context.Context, params CallToolParams) *ToolCallResult {
+	switch params.Name {
+	case "mesh_checkpoint":
+		return s.handleCheckpoint(ctx, params.Arguments)
+	case "mesh_undo":
+		return s.handleUndo(ctx, params.Arguments)
+	case "mesh_wire_post":
+		return s.handleWirePost(ctx, params.Arguments)
+	case "mesh_wire_list":
+		return s.handleWireList(ctx, params.Arguments)
+	case "mesh_task_list":
+		return s.handleTaskList(ctx, params.Arguments)
+	case "mesh_condense":
+		return s.handleCondense(ctx, params.Arguments)
+	case "mesh_status":
+		return s.handleStatus(ctx, params.Arguments)
+	default:
+		return toolError(fmt.Sprintf("unknown tool: %s", params.Name))
+	}
+}
+
+func (s *Server) handleCheckpoint(ctx context.Context, rawArgs json.RawMessage) *ToolCallResult {
+	var args struct {
+		Message   string `json:"message"`
+		SessionID string `json:"session_id"`
+	}
+	if len(rawArgs) > 0 {
+		_ = json.Unmarshal(rawArgs, &args)
+	}
+
+	cp, err := checkpoint.CreateCheckpoint(ctx, checkpoint.CreateOptions{
+		WorkDir:   s.getWorkDir(),
+		SessionID: args.SessionID,
+		Message:   args.Message,
+	})
+	if err != nil {
+		return toolError(fmt.Sprintf("checkpoint error: %v", err))
+	}
+
+	data, err := json.MarshalIndent(cp, "", "  ")
+	if err != nil {
+		return toolError(fmt.Sprintf("json marshal error: %v", err))
+	}
+	return toolSuccess(string(data))
+}
+
+func (s *Server) handleUndo(ctx context.Context, rawArgs json.RawMessage) *ToolCallResult {
+	var args struct {
+		CheckpointID  string `json:"checkpoint_id"`
+		DryRun        bool   `json:"dry_run"`
+		KeepUntracked bool   `json:"keep_untracked"`
+		CleanIgnored  bool   `json:"clean_ignored"`
+	}
+	if len(rawArgs) > 0 {
+		_ = json.Unmarshal(rawArgs, &args)
+	}
+
+	res, err := checkpoint.Undo(ctx, checkpoint.UndoOptions{
+		WorkDir:       s.getWorkDir(),
+		CheckpointID:  args.CheckpointID,
+		DryRun:        args.DryRun,
+		KeepUntracked: args.KeepUntracked,
+	})
+	if err != nil {
+		return toolError(fmt.Sprintf("undo error: %v", err))
+	}
+
+	if args.CleanIgnored {
+		if args.DryRun {
+			cmd := exec.CommandContext(ctx, "git", "clean", "-n", "-X", "-d")
+			cmd.Dir = s.getWorkDir()
+			if out, cleanErr := cmd.Output(); cleanErr == nil && len(out) > 0 {
+				res.DiffStat += "\nIgnored files to clean:\n" + string(out)
+			}
+		} else {
+			cmd := exec.CommandContext(ctx, "git", "clean", "-f", "-X", "-d")
+			cmd.Dir = s.getWorkDir()
+			_ = cmd.Run()
+		}
+	}
+
+	data, err := json.MarshalIndent(res, "", "  ")
+	if err != nil {
+		return toolError(fmt.Sprintf("json marshal error: %v", err))
+	}
+	return toolSuccess(string(data))
+}
+
+func (s *Server) handleWirePost(ctx context.Context, rawArgs json.RawMessage) *ToolCallResult {
+	var args struct {
+		Content    string `json:"content"`
+		Channel    string `json:"channel"`
+		TTLSeconds int    `json:"ttl_seconds"`
+	}
+	if len(rawArgs) > 0 {
+		_ = json.Unmarshal(rawArgs, &args)
+	}
+
+	if strings.TrimSpace(args.Content) == "" {
+		return toolError("content is required")
+	}
+
+	channel := args.Channel
+	if channel == "" {
+		channel = "global"
+	}
+	ttl := args.TTLSeconds
+	if ttl <= 0 {
+		ttl = 86400
+	}
+
+	dbConn, err := s.getDB()
+	if err != nil {
+		return toolError(fmt.Sprintf("database error: %v", err))
+	}
+
+	author := os.Getenv("USER")
+	if author == "" {
+		author = "agent"
+	}
+
+	msg, err := wire.Post(dbConn, channel, author, s.getWorkDir(), args.Content, ttl)
+	if err != nil {
+		return toolError(fmt.Sprintf("wire post error: %v", err))
+	}
+
+	data, err := json.MarshalIndent(msg, "", "  ")
+	if err != nil {
+		return toolError(fmt.Sprintf("json marshal error: %v", err))
+	}
+	return toolSuccess(string(data))
+}
+
+func (s *Server) handleWireList(ctx context.Context, rawArgs json.RawMessage) *ToolCallResult {
+	var args struct {
+		Channel string `json:"channel"`
+		Limit   int    `json:"limit"`
+	}
+	if len(rawArgs) > 0 {
+		_ = json.Unmarshal(rawArgs, &args)
+	}
+
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+
+	dbConn, err := s.getDB()
+	if err != nil {
+		return toolError(fmt.Sprintf("database error: %v", err))
+	}
+
+	msgs, err := wire.List(dbConn, args.Channel, limit)
+	if err != nil {
+		return toolError(fmt.Sprintf("wire list error: %v", err))
+	}
+	if msgs == nil {
+		msgs = []wire.Message{}
+	}
+
+	data, err := json.MarshalIndent(msgs, "", "  ")
+	if err != nil {
+		return toolError(fmt.Sprintf("json marshal error: %v", err))
+	}
+	return toolSuccess(string(data))
+}
+
+func (s *Server) handleTaskList(ctx context.Context, rawArgs json.RawMessage) *ToolCallResult {
+	var args struct {
+		All bool `json:"all"`
+	}
+	if len(rawArgs) > 0 {
+		_ = json.Unmarshal(rawArgs, &args)
+	}
+
+	dbConn, err := s.getDB()
+	if err != nil {
+		return toolError(fmt.Sprintf("database error: %v", err))
+	}
+
+	tasks, err := meshContext.ListTasks(dbConn, args.All)
+	if err != nil {
+		return toolError(fmt.Sprintf("task list error: %v", err))
+	}
+	if tasks == nil {
+		tasks = []meshContext.Task{}
+	}
+
+	data, err := json.MarshalIndent(tasks, "", "  ")
+	if err != nil {
+		return toolError(fmt.Sprintf("json marshal error: %v", err))
+	}
+	return toolSuccess(string(data))
+}
+
+func (s *Server) handleCondense(ctx context.Context, rawArgs json.RawMessage) *ToolCallResult {
+	var args struct {
+		RawText  string `json:"raw_text"`
+		Format   string `json:"format"`
+		MaxLines int    `json:"max_lines"`
+	}
+	if len(rawArgs) > 0 {
+		_ = json.Unmarshal(rawArgs, &args)
+	}
+
+	if strings.TrimSpace(args.RawText) == "" {
+		return toolError("raw_text is required")
+	}
+
+	maxLines := args.MaxLines
+	if maxLines <= 0 {
+		maxLines = 100
+	}
+	formatStr := args.Format
+	if formatStr == "" {
+		formatStr = "auto"
+	}
+
+	res, err := condenser.Condense(args.RawText, condenser.CondenseOptions{
+		Format:      condenser.Format(formatStr),
+		MaxLines:    maxLines,
+		ShowSavings: true,
+	})
+	if err != nil {
+		return toolError(fmt.Sprintf("condense error: %v", err))
+	}
+
+	return toolSuccess(res.Condensed)
+}
+
+func (s *Server) handleStatus(ctx context.Context, rawArgs json.RawMessage) *ToolCallResult {
+	pacerState, _ := router.LoadPacerState()
+	workDir := s.getWorkDir()
+
+	routeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	remoteHost := "company-mbp"
+	if s.cfg != nil && s.cfg.RemoteHost != "" {
+		remoteHost = s.cfg.RemoteHost
+	}
+
+	decision, _ := router.Route(routeCtx, workDir, pacerState, router.RouteOptions{
+		CheckSSH:   false,
+		RemoteHost: remoteHost,
+	})
+
+	statusData := map[string]any{
+		"time":              time.Now().Format("03:04 PM MST"),
+		"pacer_state":       pacerState,
+		"recommended_route": decision,
+		"working_directory": workDir,
+	}
+	if s.cfg != nil {
+		statusData["db_path"] = s.cfg.DBPath
+	}
+
+	data, err := json.MarshalIndent(statusData, "", "  ")
+	if err != nil {
+		return toolError(fmt.Sprintf("status marshal error: %v", err))
+	}
+	return toolSuccess(string(data))
+}

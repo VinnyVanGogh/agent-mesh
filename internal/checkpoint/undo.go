@@ -75,17 +75,33 @@ func Undo(ctx context.Context, opts UndoOptions) (*UndoResult, error) {
 		}
 	}
 
+	// 5. Find untracked ignored files and directories if requested
+	var filesIgnoredRemoved []string
+	if opts.CleanIgnored {
+		ignoredOut, _ := runGit(ctx, rootDir, nil, "status", "--porcelain", "--ignored")
+		for _, l := range strings.Split(strings.TrimSpace(ignoredOut), "\n") {
+			if strings.HasPrefix(l, "!! ") {
+				f := strings.TrimSpace(strings.TrimPrefix(l, "!! "))
+				f = strings.Trim(f, "\"")
+				if f != "" {
+					filesIgnoredRemoved = append(filesIgnoredRemoved, f)
+				}
+			}
+		}
+	}
+
 	// If dry run, return preview
 	if opts.DryRun {
 		return &UndoResult{
-			RestoredTo:    targetCP,
-			FilesReverted: filesReverted,
-			FilesRemoved:  filesRemoved,
-			DiffStat:      diffStat,
+			RestoredTo:          targetCP,
+			FilesReverted:       filesReverted,
+			FilesRemoved:        filesRemoved,
+			FilesIgnoredRemoved: filesIgnoredRemoved,
+			DiffStat:            diffStat,
 		}, nil
 	}
 
-	// 5. Create Safety Pre-Undo Checkpoint (unless explicitly disabled)
+	// 6. Create Safety Pre-Undo Checkpoint (unless explicitly disabled)
 	var safetyCP *Checkpoint
 	if !opts.DisableSafetyCP {
 		safetySession := opts.SessionID
@@ -104,12 +120,12 @@ func Undo(ctx context.Context, opts UndoOptions) (*UndoResult, error) {
 		}
 	}
 
-	// 6. Restore index and working tree to target commit
+	// 7. Restore index and working tree to target commit
 	if _, err := runGit(ctx, rootDir, nil, "checkout", targetSHA, "--", "."); err != nil {
 		return nil, fmt.Errorf("failed to restore working tree: %w", err)
 	}
 
-	// 7. Clean newly created untracked files if requested
+	// 8. Clean newly created untracked files if requested
 	if !opts.KeepUntracked {
 		for _, f := range filesRemoved {
 			fullPath := filepath.Join(rootDir, f)
@@ -117,12 +133,21 @@ func Undo(ctx context.Context, opts UndoOptions) (*UndoResult, error) {
 		}
 	}
 
+	// 9. Clean untracked ignored files and directories if requested
+	if opts.CleanIgnored {
+		for _, f := range filesIgnoredRemoved {
+			fullPath := filepath.Join(rootDir, f)
+			_ = os.RemoveAll(fullPath)
+		}
+	}
+
 	return &UndoResult{
-		RestoredTo:    targetCP,
-		SafetyCP:      safetyCP,
-		FilesReverted: filesReverted,
-		FilesRemoved:  filesRemoved,
-		DiffStat:      diffStat,
+		RestoredTo:          targetCP,
+		SafetyCP:            safetyCP,
+		FilesReverted:       filesReverted,
+		FilesRemoved:        filesRemoved,
+		FilesIgnoredRemoved: filesIgnoredRemoved,
+		DiffStat:            diffStat,
 	}, nil
 }
 

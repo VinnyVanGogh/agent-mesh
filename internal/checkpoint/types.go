@@ -33,15 +33,17 @@ type UndoOptions struct {
 	SessionID       string
 	CheckpointID    string // Specific ID or empty for most recent
 	KeepUntracked   bool   // If true, do not delete files created after checkpoint
+	CleanIgnored    bool   // If true, remove untracked ignored files and directories
 	DryRun          bool   // If true, preview diff without modifying disk
 	DisableSafetyCP bool   // If true, do not create pre-undo snapshot (default false = safety enabled)
 }
 
 // UndoResult describes the changes rolled back.
 type UndoResult struct {
-	RestoredTo    Checkpoint `json:"restored_to"`
-	SafetyCP      *Checkpoint `json:"safety_checkpoint,omitempty"`
-	FilesReverted []string   `json:"files_reverted"`
-	FilesRemoved  []string   `json:"files_removed"`
-	DiffStat      string     `json:"diff_stat"`
+	RestoredTo          Checkpoint  `json:"restored_to"`
+	SafetyCP            *Checkpoint `json:"safety_checkpoint,omitempty"`
+	FilesReverted       []string    `json:"files_reverted"`
+	FilesRemoved        []string    `json:"files_removed"`
+	FilesIgnoredRemoved []string    `json:"files_ignored_removed,omitempty"`
+	DiffStat            string      `json:"diff_stat"`
 }

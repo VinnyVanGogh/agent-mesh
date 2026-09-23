@@ -1323,12 +1323,14 @@ var undoCmd = &cobra.Command{
 		}
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		keepUntracked, _ := cmd.Flags().GetBool("keep-untracked")
+		cleanIgnored, _ := cmd.Flags().GetBool("clean-ignored")
 
 		res, err := checkpoint.Undo(cmd.Context(), checkpoint.UndoOptions{
 			WorkDir:       cwd,
 			CheckpointID:  cpID,
 			DryRun:        dryRun,
 			KeepUntracked: keepUntracked,
+			CleanIgnored:  cleanIgnored,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\033[1;31m✖ Undo failed:\033[0m %v\n", err)
@@ -1349,6 +1351,12 @@ var undoCmd = &cobra.Command{
 					fmt.Printf("      D %s\n", f)
 				}
 			}
+			if len(res.FilesIgnoredRemoved) > 0 {
+				fmt.Printf("  • Removed ignored files (%d):\n", len(res.FilesIgnoredRemoved))
+				for _, f := range res.FilesIgnoredRemoved {
+					fmt.Printf("      ! %s\n", f)
+				}
+			}
 			return
 		}
 
@@ -1361,6 +1369,9 @@ var undoCmd = &cobra.Command{
 		}
 		if len(res.FilesRemoved) > 0 {
 			fmt.Printf("  • Cleaned:  %d untracked files\n", len(res.FilesRemoved))
+		}
+		if len(res.FilesIgnoredRemoved) > 0 {
+			fmt.Printf("  • Cleaned:  %d ignored files\n", len(res.FilesIgnoredRemoved))
 		}
 	},
 }
@@ -2355,6 +2366,7 @@ func init() {
 	checkpointCmd.Flags().BoolP("json", "j", false, "Output checkpoint metadata as JSON")
 	undoCmd.Flags().BoolP("dry-run", "n", false, "Preview files to be reverted without changing disk")
 	undoCmd.Flags().BoolP("keep-untracked", "k", false, "Do not delete untracked files created after checkpoint")
+	undoCmd.Flags().Bool("clean-ignored", false, "Remove untracked ignored files and directories")
 	condenseCmd.Flags().IntP("lines", "l", 80, "Maximum output lines")
 	condenseCmd.Flags().StringP("format", "f", "auto", "Log format: auto, typescript, go, python, generic")
 

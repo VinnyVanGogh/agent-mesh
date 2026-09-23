@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,7 +129,10 @@ func (w *Watcher) Start(ctx context.Context) error {
 	_ = w.addRecursiveWatch(claudeProjects)
 	_ = w.addRecursiveWatch(agyBrain)
 
-	log.Printf("[meshd] Watcher active on %s and %s", claudeProjects, agyBrain)
+	slog.Info("Watcher active",
+		slog.String("path", claudeProjects),
+		slog.String("secondary_path", agyBrain),
+	)
 
 	saveTicker := time.NewTicker(30 * time.Second)
 	defer saveTicker.Stop()
@@ -166,11 +169,13 @@ func (w *Watcher) Start(ctx context.Context) error {
 
 			if event.Op&(fsnotify.Write|fsnotify.Create) != 0 {
 				if strings.HasSuffix(event.Name, ".jsonl") {
+					slog.Debug("Detected file event", slog.String("path", event.Name), slog.String("op", event.Op.String()))
 					w.processFile(event.Name)
 				} else {
 					// Check if a new project directory was created
 					if fi, err := os.Stat(event.Name); err == nil && fi.IsDir() {
 						_ = w.watcher.Add(event.Name)
+						slog.Debug("Added directory to watch", slog.String("path", event.Name))
 					}
 				}
 			}
@@ -179,7 +184,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			log.Printf("[meshd] Watcher error: %v", err)
+			slog.Error("Watcher error", slog.Any("error", err))
 		}
 	}
 }
@@ -207,6 +212,7 @@ func (w *Watcher) flushPendingHandoffs(force bool) {
 
 	for _, task := range toProcess {
 		if task.cwd != "" {
+			slog.Debug("Auto-generating handoff for session", slog.String("session_id", task.sessionID), slog.String("path", task.cwd))
 			_, _ = meshContext.AutoGenerateHandoffForSession(task.sessionID, task.cwd, "auto_daemon", w.meshDB, dataDir, maxKeep)
 		}
 	}
@@ -215,10 +221,13 @@ func (w *Watcher) flushPendingHandoffs(force bool) {
 func (w *Watcher) addRecursiveWatch(root string) error {
 	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			slog.Debug("Failed accessing path during walk", slog.String("path", path), slog.Any("error", err))
 			return nil
 		}
 		if info.IsDir() {
-			return w.watcher.Add(path)
+			if err := w.watcher.Add(path); err != nil {
+				slog.Debug("Failed to add watch path", slog.String("path", path), slog.Any("error", err))
+			}
 		}
 		return nil
 	})
@@ -227,20 +236,28 @@ func (w *Watcher) addRecursiveWatch(root string) error {
 func (w *Watcher) processFile(filePath string) {
 	file, err := os.Open(filePath)
 	if err != nil {
+		slog.Warn("Failed to open file", slog.String("path", filePath), slog.Any("error", err))
 		return
 	}
 	defer file.Close()
 
 	lastOffset := w.cursors.Get(filePath)
 	stat, err := file.Stat()
-	if err != nil || stat.Size() <= lastOffset {
+	if err != nil {
+		slog.Warn("Failed to stat file", slog.String("path", filePath), slog.Any("error", err))
+		return
+	}
+	if stat.Size() <= lastOffset {
 		return
 	}
 
 	_, err = file.Seek(lastOffset, io.SeekStart)
 	if err != nil {
+		slog.Warn("Failed to seek file", slog.String("path", filePath), slog.Int64("offset", lastOffset), slog.Any("error", err))
 		return
 	}
+
+	slog.Debug("Processing file from offset", slog.String("path", filePath), slog.Int64("offset", lastOffset))
 
 	reader := bufio.NewReaderSize(file, 64*1024)
 	var newOffset int64 = lastOffset
@@ -255,6 +272,7 @@ func (w *Watcher) processFile(filePath string) {
 					w.ingestLine(line, filePath)
 				}
 				w.cursors.Set(filePath, newOffset)
+				slog.Debug("Updated cursor offset", slog.String("path", filePath), slog.Int64("offset", newOffset))
 				return
 			}
 			line = append(line, chunk...)
@@ -277,6 +295,7 @@ func (w *Watcher) processFile(filePath string) {
 func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 	var record map[string]interface{}
 	if err := json.Unmarshal(line, &record); err != nil {
+		slog.Debug("Failed to unmarshal JSON line", slog.String("path", sourcePath), slog.Any("error", err))
 		return
 	}
 
@@ -296,7 +315,7 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 		}
 	}
 
-	// 3. Model name & family
+	// 3. Model name and family
 	var model string
 	if msg, ok := record["message"].(map[string]interface{}); ok {
 		model, _ = msg["model"].(string)
@@ -388,6 +407,7 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 		string(line),
 	)
 	if err != nil {
+		slog.Debug("Failed to insert request with cost, attempting fallback", slog.String("path", sourcePath), slog.Any("error", err))
 		// Fallback without cost_usd
 		insertWithoutCost := `
 		INSERT OR IGNORE INTO requests (
@@ -396,7 +416,7 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 			session_id, account_email, raw_json
 		) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 		`
-		_, _ = w.db.Exec(insertWithoutCost,
+		if _, fallbackErr := w.db.Exec(insertWithoutCost,
 			idempotencyKey,
 			ts,
 			model,
@@ -409,7 +429,9 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 			sessionID,
 			accountEmail,
 			string(line),
-		)
+		); fallbackErr != nil {
+			slog.Error("Failed to insert request", slog.String("path", sourcePath), slog.Any("error", fallbackErr))
+		}
 	}
 
 	// 6. Record spend to active task in mesh.db
@@ -479,8 +501,12 @@ func (w *Watcher) processRecordActivity(record map[string]interface{}, sessionID
 					resText := fmt.Sprintf("%v", itemMap["content"])
 					if isError || strings.Contains(resText, "Error:") || strings.Contains(resText, "exit status") {
 						if w.breaker != nil {
-							tripped, _, _ := w.breaker.RecordFailure(w.meshDB, sessionID, cwd, agentType, "tool", "", resText)
+							tripped, reason, bErr := w.breaker.RecordFailure(w.meshDB, sessionID, cwd, agentType, "tool", "", resText)
+							if bErr != nil {
+								slog.Error("Failed to record tool failure", slog.String("session_id", sessionID), slog.Any("error", bErr))
+							}
 							if tripped {
+								slog.Warn("Circuit breaker tripped", slog.String("session_id", sessionID), slog.String("agent_type", agentType), slog.String("reason", reason))
 								maxKeep := 3
 								if w.cfg != nil && w.cfg.MaxHandoffsPerRepo > 0 {
 									maxKeep = w.cfg.MaxHandoffsPerRepo
@@ -502,7 +528,7 @@ func (w *Watcher) processRecordActivity(record map[string]interface{}, sessionID
 		}
 	}
 
-	// 3. Antigravity brain step inspection
+	// 4. Antigravity brain step inspection
 	if toolCalls, ok := record["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
 		for _, tc := range toolCalls {
 			tcMap, ok := tc.(map[string]interface{})
@@ -522,7 +548,13 @@ func (w *Watcher) processRecordActivity(record map[string]interface{}, sessionID
 	if status == "ERROR" {
 		errContent := fmt.Sprintf("%v", record["content"])
 		if w.breaker != nil {
-			tripped, _, _ := w.breaker.RecordFailure(w.meshDB, sessionID, cwd, "gemini", "step", "", errContent)
+			tripped, reason, bErr := w.breaker.RecordFailure(w.meshDB, sessionID, cwd, "gemini", "step", "", errContent)
+			if bErr != nil {
+				slog.Error("Failed to record step failure", slog.String("session_id", sessionID), slog.Any("error", bErr))
+			}
+			if tripped {
+				slog.Warn("Circuit breaker tripped", slog.String("session_id", sessionID), slog.String("agent_type", "gemini"), slog.String("reason", reason))
+			}
 			maxKeep := 3
 			if w.cfg != nil && w.cfg.MaxHandoffsPerRepo > 0 {
 				maxKeep = w.cfg.MaxHandoffsPerRepo

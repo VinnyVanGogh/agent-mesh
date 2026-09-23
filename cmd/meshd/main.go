@@ -2,25 +2,38 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/agent-mesh/internal/logging"
 	"github.com/VinnyVanGogh/agent-mesh/internal/telemetry"
 )
 
 func main() {
-	log.Println("[meshd] Starting Agent-Mesh Background Daemon...")
+	logLevel := os.Getenv("MESH_LOG_LEVEL")
+	if logLevel == "" {
+		logLevel = "INFO"
+	}
+	logFormat := os.Getenv("MESH_LOG_FORMAT")
+	if logFormat == "" {
+		logFormat = "text"
+	}
+	logging.SetupLogger(logLevel, logFormat, os.Stderr)
+
+	slog.Info("Starting Agent-Mesh Background Daemon...")
 
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("[meshd] Failed to load config: %v", err)
+		slog.Error("Failed to load config", slog.Any("error", err))
+		os.Exit(1)
 	}
 
 	if err := config.EnsureDataDir(cfg); err != nil {
-		log.Fatalf("[meshd] Failed to ensure data dir: %v", err)
+		slog.Error("Failed to ensure data dir", slog.Any("error", err))
+		os.Exit(1)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -31,25 +44,26 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigChan
-		log.Printf("[meshd] Received signal %v, shutting down...", sig)
+		slog.Warn("Received signal, shutting down...", slog.Any("signal", sig))
 		cancel()
 	}()
 
 	// 1. Start Rate Limit Notifier
 	notifier := telemetry.NewNotifier()
 	go notifier.Start(ctx)
-	log.Println("[meshd] Rate limit monitoring active")
+	slog.Info("Rate limit monitoring active")
 
-	// 2. Start File Watcher & Ingestion Engine
+	// 2. Start File Watcher and Ingestion Engine
 	watcher, err := telemetry.NewWatcher(cfg)
 	if err != nil {
-		log.Fatalf("[meshd] Failed to initialize watcher: %v", err)
+		slog.Error("Failed to initialize watcher", slog.Any("error", err))
+		os.Exit(1)
 	}
 
-	log.Println("[meshd] Background daemon ready and running")
+	slog.Info("Background daemon ready and running")
 	if err := watcher.Start(ctx); err != nil {
-		log.Printf("[meshd] Watcher exited with error: %v", err)
+		slog.Error("Watcher exited with error", slog.Any("error", err))
 	}
 
-	log.Println("[meshd] Daemon shutdown complete.")
+	slog.Info("Daemon shutdown complete.")
 }

@@ -1,5 +1,9 @@
 bin/
 /mesh
+/meshd
 *.pdf
 !docs/samples/*.pdf
 .DS_Store
+docs/DOSSIER.md
+*DOSSIER*.md
+

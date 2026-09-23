@@ -179,3 +179,103 @@ func TestListAndPruneCheckpoints(t *testing.T) {
 		t.Errorf("expected >0 checkpoints pruned")
 	}
 }
+
+func TestUndoCleanIgnored(t *testing.T) {
+	dir := setupTestGitRepo(t)
+	ctx := context.Background()
+
+	// 1. Add .gitignore and commit it
+	gitignorePath := filepath.Join(dir, ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte("*.ignored\nbuild/\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "add", ".gitignore")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add .gitignore failed: %v\nOutput: %s", err, string(out))
+	}
+	cmd = exec.Command("git", "commit", "-m", "add gitignore")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit failed: %v\nOutput: %s", err, string(out))
+	}
+
+	// 2. Create base checkpoint
+	cp, err := CreateCheckpoint(ctx, CreateOptions{
+		WorkDir:   dir,
+		SessionID: "test-clean-ignored",
+		Message:   "checkpoint before creating ignored files",
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckpoint failed: %v", err)
+	}
+
+	// 3. Create untracked ignored file and directory
+	ignoredFile := filepath.Join(dir, "temp.ignored")
+	if err := os.WriteFile(ignoredFile, []byte("temporary ignored content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ignoredDir := filepath.Join(dir, "build")
+	if err := os.MkdirAll(ignoredDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ignoredDirFile := filepath.Join(ignoredDir, "output.bin")
+	if err := os.WriteFile(ignoredDirFile, []byte("binary data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 4. Test Undo with CleanIgnored: false (ignored files must be retained)
+	resRetained, err := Undo(ctx, UndoOptions{
+		WorkDir:       dir,
+		CheckpointID:  cp.ID,
+		CleanIgnored:  false,
+	})
+	if err != nil {
+		t.Fatalf("Undo with CleanIgnored: false failed: %v", err)
+	}
+	if len(resRetained.FilesIgnoredRemoved) != 0 {
+		t.Errorf("expected 0 files in FilesIgnoredRemoved, got %d", len(resRetained.FilesIgnoredRemoved))
+	}
+	if _, err := os.Stat(ignoredFile); os.IsNotExist(err) {
+		t.Errorf("expected ignored file to be retained when CleanIgnored: false")
+	}
+	if _, err := os.Stat(ignoredDirFile); os.IsNotExist(err) {
+		t.Errorf("expected ignored directory file to be retained when CleanIgnored: false")
+	}
+
+	// 5. Test Dry-Run Undo with CleanIgnored: true (preview only, files kept)
+	dryRes, err := Undo(ctx, UndoOptions{
+		WorkDir:      dir,
+		CheckpointID: cp.ID,
+		CleanIgnored: true,
+		DryRun:       true,
+	})
+	if err != nil {
+		t.Fatalf("Undo dry run failed: %v", err)
+	}
+	if len(dryRes.FilesIgnoredRemoved) == 0 {
+		t.Errorf("expected dry-run to identify ignored files to remove")
+	}
+	if _, err := os.Stat(ignoredFile); os.IsNotExist(err) {
+		t.Errorf("expected ignored file to remain after dry run")
+	}
+
+	// 6. Test Actual Undo with CleanIgnored: true (ignored files must be deleted)
+	resDeleted, err := Undo(ctx, UndoOptions{
+		WorkDir:      dir,
+		CheckpointID: cp.ID,
+		CleanIgnored: true,
+	})
+	if err != nil {
+		t.Fatalf("Undo with CleanIgnored: true failed: %v", err)
+	}
+	if len(resDeleted.FilesIgnoredRemoved) == 0 {
+		t.Errorf("expected FilesIgnoredRemoved to list deleted ignored files")
+	}
+	if _, err := os.Stat(ignoredFile); !os.IsNotExist(err) {
+		t.Errorf("expected ignored file to be deleted when CleanIgnored: true")
+	}
+	if _, err := os.Stat(ignoredDir); !os.IsNotExist(err) {
+		t.Errorf("expected ignored directory to be deleted when CleanIgnored: true")
+	}
+}
