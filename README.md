@@ -193,6 +193,18 @@ Effortlessly resume, continue, or hand off agent sessions across Claude Code and
   - Handoffs are organized into repo-scoped subdirectories: `~/.agent-mesh/handoffs/<repo-slug>/{id}-{timestamp}.md` and `{id}-{timestamp}.json`.
   - For example: `~/.agent-mesh/handoffs/agent-mesh/75fd7906-20260923-175959.md` and `.json`.
   - Multiple sessions across projects never overwrite each other. `/tmp/ai-handoff.md` is updated concurrently as a convenience pointer to the latest handoff for instant clipboard access (`pbcopy`).
+- **Atomic `latest.md` & `latest.json` Symlinks**:
+  - Each repo subdirectory maintains atomic relative symlinks `latest.md` and `latest.json` pointing directly to the most recent handoff.
+  - Commands like `mesh handoff show` and `mesh handoff copy` seamlessly resolve the latest handoff when session ID is omitted.
+- **Manual Pinning in Retention Pruning**:
+  - Retention pruning (`max_handoffs_per_repo`, default 3) implements manual pinning. When pruning excess snapshots, automated background turns (`trigger: "auto_daemon"` or `"active_session"`) are evicted first, ensuring intentional human handoffs (`trigger: "manual"`) remain pinned and protected from eviction.
+- **Multi-Branch Awareness & Branch Discovery**:
+  - Default listings show branch context without hiding cross-branch work, explicitly highlighting when a handoff branch differs from the active branch (e.g. `[feat/billing (current: main)]`).
+  - Filter listings by branch using `mesh handoff list -b <branch>` or `mesh handoff search -b <branch>`.
+  - Discover all git branches containing saved handoffs using `mesh handoff branches`.
+- **Proactive Context Pickup Banner**:
+  - When an incoming agent starts a turn, `mesh hook prompt` automatically checks for recent (<4h) handoffs in the current repository from previous sessions.
+  - Injects a high-visibility context pickup alert into prompt context with the previous session ID, age, git branch, goal, and file path so the incoming agent can immediately adopt prior work.
 - **Structured JSON Manifests (`{id}-{timestamp}.json`)**:
   - Every handoff produces a compact metadata manifest alongside the markdown file with the session ID, goal, human-readable title, branch, modified files, user turn count, directive count, and triggering event.
 - **Configurable Per-Repo Retention Pruning**:
@@ -507,12 +519,23 @@ mesh handoff --to claude --step "Implement modernc.org/sqlite schema migration"
 mesh handoff list
 mesh handoffs
 
+# Filter handoffs by git branch
+mesh handoff list -b feat/billing
+
+# Discover all branches in the repository that have saved handoffs
+mesh handoff branches
+
 # List handoffs across all repositories or output JSON
 mesh handoff list --all --limit 20
 mesh handoff list --json
 
 # Zero-token manifest search (search by goal, title, session ID, or branch)
 mesh handoff search "authentication"
+mesh handoff search "stripe" -b feat/billing
+
+# View or copy the latest saved handoff prompt (resolves latest.md)
+mesh handoff show
+mesh handoff copy
 
 # View or copy a specific saved handoff prompt by session ID
 mesh handoff show <session-id>

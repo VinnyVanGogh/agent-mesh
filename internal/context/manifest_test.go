@@ -66,15 +66,14 @@ func TestSaveHandoffWithManifestAndPruning(t *testing.T) {
 		t.Fatalf("expected repo subdirectory %s to exist", repoSubdir)
 	}
 
-	// Verify session-test-1 files are deleted
-	entries, _ := os.ReadDir(repoSubdir)
-	if len(entries) != 6 { // 3 .md + 3 .json = 6 files
-		t.Fatalf("expected 6 files in %s, got %d", repoSubdir, len(entries))
+	// Verify latest.md and latest.json symlinks exist and resolve to session-test-4
+	latestMd := filepath.Join(repoSubdir, "latest.md")
+	latestJson := filepath.Join(repoSubdir, "latest.json")
+	if target, err := os.Readlink(latestMd); err != nil || !strings.HasPrefix(target, "session-test-4") {
+		t.Errorf("expected latest.md to resolve to session-test-4, got %s (err: %v)", target, err)
 	}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "session-test-1") {
-			t.Errorf("expected session-test-1 to be pruned, found: %s", entry.Name())
-		}
+	if target, err := os.Readlink(latestJson); err != nil || !strings.HasPrefix(target, "session-test-4") {
+		t.Errorf("expected latest.json to resolve to session-test-4, got %s (err: %v)", target, err)
 	}
 
 	// Search tests
@@ -93,6 +92,139 @@ func TestSaveHandoffWithManifestAndPruning(t *testing.T) {
 	}
 	if md != "# Handoff session-test-4" {
 		t.Errorf("unexpected loaded markdown: %s", md)
+	}
+}
+
+func TestManualPinningAndSymlinks(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "mesh-pinning-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	repoPath := "/Users/dev/auth-service"
+
+	// 1. User creates a deliberate manual handoff
+	manualManifest := HandoffManifest{
+		SessionID:       "manual-session-important",
+		Title:           "Critical Auth Architecture",
+		Goal:            "Preserve OAuth2 PKCE design",
+		RepoPath:        repoPath,
+		RepoName:        "auth-service",
+		GitBranch:       "feat/oauth",
+		AgentType:       "claude",
+		CreatedAt:       time.Now().UTC().Add(-10 * time.Minute),
+		Trigger:         "manual",
+	}
+	_, err = SaveHandoffWithManifest(tempDir, manualManifest, "# Important Manual Handoff", 3)
+	if err != nil {
+		t.Fatalf("failed to save manual handoff: %v", err)
+	}
+
+	// 2. Automated daemon records 3 background turns
+	for i := 1; i <= 3; i++ {
+		autoManifest := HandoffManifest{
+			SessionID:       "auto-session-" + string(rune('0'+i)),
+			Title:           "Auto turn " + string(rune('0'+i)),
+			Goal:            "Background execution",
+			RepoPath:        repoPath,
+			RepoName:        "auth-service",
+			GitBranch:       "feat/oauth",
+			AgentType:       "gemini",
+			CreatedAt:       time.Now().UTC().Add(time.Duration(i) * time.Minute),
+			Trigger:         "auto_daemon",
+		}
+		_, err := SaveHandoffWithManifest(tempDir, autoManifest, "# Auto Turn", 3)
+		if err != nil {
+			t.Fatalf("failed to save auto turn %d: %v", i, err)
+		}
+	}
+
+	handoffsDir := filepath.Join(tempDir, "handoffs")
+	manifests, err := ListManifests(handoffsDir, repoPath)
+	if err != nil {
+		t.Fatalf("failed to list manifests: %v", err)
+	}
+
+	// Total should be max 3
+	if len(manifests) != 3 {
+		t.Fatalf("expected 3 manifests, got %d", len(manifests))
+	}
+
+	// CRITICAL CHECK: manual-session-important MUST STILL BE PRESENT because auto_daemon was pruned first!
+	foundManual := false
+	for _, m := range manifests {
+		if m.SessionID == "manual-session-important" {
+			foundManual = true
+			break
+		}
+	}
+	if !foundManual {
+		t.Errorf("manual handoff was evicted by auto_daemon snapshots! Manual pinning failed.")
+	}
+}
+
+func TestListBranchesWithHandoffs(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "mesh-branches-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	repoPath := "/Users/dev/multi-branch-repo"
+
+	// 2 handoffs on main
+	_, _ = SaveHandoffWithManifest(tempDir, HandoffManifest{
+		SessionID: "sess-main-1",
+		Goal:      "Main branch stability",
+		RepoPath:  repoPath,
+		RepoName:  "multi-branch-repo",
+		GitBranch: "main",
+		CreatedAt: time.Now().UTC().Add(-20 * time.Minute),
+	}, "# Main 1", 5)
+
+	_, _ = SaveHandoffWithManifest(tempDir, HandoffManifest{
+		SessionID: "sess-main-2",
+		Goal:      "Main release v1.0",
+		RepoPath:  repoPath,
+		RepoName:  "multi-branch-repo",
+		GitBranch: "main",
+		CreatedAt: time.Now().UTC().Add(-10 * time.Minute),
+	}, "# Main 2", 5)
+
+	// 1 handoff on feat/billing
+	_, _ = SaveHandoffWithManifest(tempDir, HandoffManifest{
+		SessionID: "sess-billing-1",
+		Goal:      "Stripe checkout flow",
+		RepoPath:  repoPath,
+		RepoName:  "multi-branch-repo",
+		GitBranch: "feat/billing",
+		CreatedAt: time.Now().UTC().Add(-5 * time.Minute),
+	}, "# Billing 1", 5)
+
+	handoffsDir := filepath.Join(tempDir, "handoffs")
+	summaries, err := ListBranchesWithHandoffs(handoffsDir, repoPath)
+	if err != nil {
+		t.Fatalf("ListBranchesWithHandoffs failed: %v", err)
+	}
+
+	if len(summaries) != 2 {
+		t.Fatalf("expected 2 branch summaries, got %d", len(summaries))
+	}
+
+	// feat/billing was updated most recently (-5m vs -10m)
+	if summaries[0].Branch != "feat/billing" {
+		t.Errorf("expected newest active branch to be feat/billing, got %s", summaries[0].Branch)
+	}
+	if summaries[0].HandoffCount != 1 {
+		t.Errorf("expected 1 handoff for billing, got %d", summaries[0].HandoffCount)
+	}
+
+	if summaries[1].Branch != "main" {
+		t.Errorf("expected second branch to be main, got %s", summaries[1].Branch)
+	}
+	if summaries[1].HandoffCount != 2 {
+		t.Errorf("expected 2 handoffs for main, got %d", summaries[1].HandoffCount)
 	}
 }
 
@@ -138,4 +270,3 @@ func TestAutoGenerateHandoffForSession(t *testing.T) {
 		t.Errorf("missing handoff header in auto-generated markdown")
 	}
 }
-

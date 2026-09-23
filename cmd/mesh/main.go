@@ -717,7 +717,7 @@ var handoffCmd = &cobra.Command{
 	},
 }
 
-func renderManifestsTable(manifests []meshContext.HandoffManifest) {
+func renderManifestsTable(manifests []meshContext.HandoffManifest, currentBranch string) {
 	if len(manifests) == 0 {
 		fmt.Println("  No saved handoffs found.")
 		return
@@ -743,12 +743,16 @@ func renderManifestsTable(manifests []meshContext.HandoffManifest) {
 		if len(title) > 60 {
 			title = title[:60] + "..."
 		}
-		branch := m.GitBranch
-		if branch != "" {
-			branch = fmt.Sprintf("[%s]", branch)
+		branchBadge := ""
+		if m.GitBranch != "" {
+			if currentBranch != "" && m.GitBranch != currentBranch {
+				branchBadge = fmt.Sprintf("\033[1;33m[%s (current: %s)]\033[0m", m.GitBranch, currentBranch)
+			} else {
+				branchBadge = fmt.Sprintf("\033[1;32m[%s]\033[0m", m.GitBranch)
+			}
 		}
 		triggerBadge := fmt.Sprintf("(trigger: %s)", m.Trigger)
-		fmt.Printf("  %d. %s  \033[1;33m%s\033[0m  (%s) %s %s\n", i+1, toolBadge, shortID, ageStr, branch, triggerBadge)
+		fmt.Printf("  %d. %s  \033[1;33m%s\033[0m  (%s) %s %s\n", i+1, toolBadge, shortID, ageStr, branchBadge, triggerBadge)
 		fmt.Printf("     \033[1m%q\033[0m  •  Turns: %d, Directives: %d\n", title, m.TotalUserTurns, m.DirectivesCount)
 		fmt.Printf("     File: \033[0;36m%s\033[0m\n\n", m.HandoffFile)
 	}
@@ -762,6 +766,7 @@ var handoffListCmd = &cobra.Command{
 		all, _ := cmd.Flags().GetBool("all")
 		limit, _ := cmd.Flags().GetInt("limit")
 		jsonFlag, _ := cmd.Flags().GetBool("json")
+		branchFilter, _ := cmd.Flags().GetString("branch")
 
 		cwd, _ := os.Getwd()
 		filter := cwd
@@ -776,6 +781,16 @@ var handoffListCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		if branchFilter != "" {
+			var filtered []meshContext.HandoffManifest
+			for _, m := range manifests {
+				if m.GitBranch == branchFilter {
+					filtered = append(filtered, m)
+				}
+			}
+			manifests = filtered
+		}
+
 		if limit > 0 && len(manifests) > limit {
 			manifests = manifests[:limit]
 		}
@@ -787,12 +802,15 @@ var handoffListCmd = &cobra.Command{
 			return
 		}
 
+		currentBranch := meshContext.GetCurrentGitBranch(cwd)
 		header := fmt.Sprintf("Saved Handoffs in %s", filepath.Base(cwd))
-		if all {
+		if branchFilter != "" {
+			header = fmt.Sprintf("Saved Handoffs in %s (branch: %s)", filepath.Base(cwd), branchFilter)
+		} else if all {
 			header = "All Saved Handoffs"
 		}
 		fmt.Printf("\n\033[1;36m[Agent-Mesh :: %s]\033[0m\n", header)
-		renderManifestsTable(manifests)
+		renderManifestsTable(manifests, currentBranch)
 	},
 }
 
@@ -804,6 +822,7 @@ var handoffSearchCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		all, _ := cmd.Flags().GetBool("all")
 		jsonFlag, _ := cmd.Flags().GetBool("json")
+		branchFilter, _ := cmd.Flags().GetString("branch")
 		query := strings.Join(args, " ")
 
 		cwd, _ := os.Getwd()
@@ -819,6 +838,16 @@ var handoffSearchCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		if branchFilter != "" {
+			var filtered []meshContext.HandoffManifest
+			for _, m := range manifests {
+				if m.GitBranch == branchFilter {
+					filtered = append(filtered, m)
+				}
+			}
+			manifests = filtered
+		}
+
 		if jsonFlag {
 			enc := json.NewEncoder(os.Stdout)
 			enc.SetIndent("", "  ")
@@ -826,8 +855,56 @@ var handoffSearchCmd = &cobra.Command{
 			return
 		}
 
+		currentBranch := meshContext.GetCurrentGitBranch(cwd)
 		fmt.Printf("\n\033[1;36m[Agent-Mesh :: Search Handoffs Matching %q]\033[0m\n", query)
-		renderManifestsTable(manifests)
+		renderManifestsTable(manifests, currentBranch)
+	},
+}
+
+var handoffBranchesCmd = &cobra.Command{
+	Use:     "branches",
+	Aliases: []string{"branch"},
+	Short:   "List branches in this repository that have saved handoffs",
+	Run: func(cmd *cobra.Command, args []string) {
+		cwd, _ := os.Getwd()
+		baseHandoffsDir := meshContext.GetHandoffsDir(cfg.DataDir)
+		summaries, err := meshContext.ListBranchesWithHandoffs(baseHandoffsDir, cwd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing branches: %v\n", err)
+			os.Exit(1)
+		}
+		jsonFlag, _ := cmd.Flags().GetBool("json")
+		if jsonFlag {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(summaries)
+			return
+		}
+		currentBranch := meshContext.GetCurrentGitBranch(cwd)
+		fmt.Printf("\n\033[1;36m[Agent-Mesh :: Branches with Saved Handoffs in %s]\033[0m\n", filepath.Base(cwd))
+		if len(summaries) == 0 {
+			fmt.Println("  No branches with saved handoffs found.")
+			return
+		}
+		for _, s := range summaries {
+			badge := "\033[1;34m"
+			suffix := ""
+			if s.Branch == currentBranch {
+				badge = "\033[1;32m✔ "
+				suffix = " \033[0;32m(current branch)\033[0m"
+			}
+			age := time.Since(s.LatestAt).Round(time.Minute)
+			fmt.Printf("  • %s[%s]\033[0m%s  •  %d handoffs (latest: %v ago)\n", badge, s.Branch, suffix, s.HandoffCount, age)
+			title := s.LatestTitle
+			if title == "" {
+				title = s.LatestGoal
+			}
+			if len(title) > 60 {
+				title = title[:60] + "..."
+			}
+			fmt.Printf("    Latest: \033[1m%q\033[0m\n", title)
+			fmt.Printf("    Filter via: \033[0;33mmesh handoff list -b %s\033[0m\n\n", s.Branch)
+		}
 	},
 }
 
@@ -836,19 +913,21 @@ var handoffShowCmd = &cobra.Command{
 	Short: "Display markdown contents of a saved handoff",
 	Run: func(cmd *cobra.Command, args []string) {
 		handoffsDir := meshContext.GetHandoffsDir(cfg.DataDir)
+		cwd, _ := os.Getwd()
 		sessionID := ""
 		if len(args) > 0 {
 			sessionID = args[0]
-		} else {
-			cwd, _ := os.Getwd()
-			manifests, err := meshContext.ListManifests(handoffsDir, cwd)
-			if err == nil && len(manifests) > 0 {
-				sessionID = manifests[0].SessionID
+		}
+
+		if sessionID == "" || sessionID == "latest" {
+			latestMan, err := meshContext.GetLatestManifest(handoffsDir, cwd)
+			if err == nil && latestMan != nil {
+				sessionID = latestMan.SessionID
 			}
 		}
 
 		if sessionID == "" {
-			fmt.Fprintf(os.Stderr, "No session ID specified and no recent handoff found.\n")
+			fmt.Fprintf(os.Stderr, "No session ID specified and no recent handoff found in %s.\n", filepath.Base(cwd))
 			os.Exit(1)
 		}
 
@@ -866,19 +945,21 @@ var handoffCopyCmd = &cobra.Command{
 	Short: "Copy saved handoff prompt to system clipboard",
 	Run: func(cmd *cobra.Command, args []string) {
 		handoffsDir := meshContext.GetHandoffsDir(cfg.DataDir)
+		cwd, _ := os.Getwd()
 		sessionID := ""
 		if len(args) > 0 {
 			sessionID = args[0]
-		} else {
-			cwd, _ := os.Getwd()
-			manifests, err := meshContext.ListManifests(handoffsDir, cwd)
-			if err == nil && len(manifests) > 0 {
-				sessionID = manifests[0].SessionID
+		}
+
+		if sessionID == "" || sessionID == "latest" {
+			latestMan, err := meshContext.GetLatestManifest(handoffsDir, cwd)
+			if err == nil && latestMan != nil {
+				sessionID = latestMan.SessionID
 			}
 		}
 
 		if sessionID == "" {
-			fmt.Fprintf(os.Stderr, "No session ID specified and no recent handoff found.\n")
+			fmt.Fprintf(os.Stderr, "No session ID specified and no recent handoff found in %s.\n", filepath.Base(cwd))
 			os.Exit(1)
 		}
 
@@ -1694,6 +1775,28 @@ func handleHookPrompt() {
 			}
 			notices = append(notices, fmt.Sprintf("📡 [MESH WIRE :: PEER AGENT BROADCASTS]:\n%s", strings.Join(wireLines, "\n")))
 		}
+
+		// F. Check for previous session handoffs in repo to present proactive pickup banner
+		baseHandoffsDir := meshContext.GetHandoffsDir(cfg.DataDir)
+		if latestMan, err := meshContext.GetLatestManifest(baseHandoffsDir, cwd); err == nil && latestMan != nil {
+			if latestMan.SessionID != sessionID && time.Since(latestMan.CreatedAt) < 4*time.Hour {
+				cleanSess := strings.ReplaceAll(sessionID, "/", "_")
+				pickupDebounce := filepath.Join(os.TempDir(), fmt.Sprintf("mesh-pickup-warned-%s.ts", cleanSess))
+				if _, err := os.Stat(pickupDebounce); os.IsNotExist(err) {
+					_ = os.WriteFile(pickupDebounce, []byte(fmt.Sprintf("%d", time.Now().Unix())), 0644)
+					age := time.Since(latestMan.CreatedAt).Round(time.Minute)
+					branchInfo := latestMan.GitBranch
+					if branchInfo != "" {
+						branchInfo = fmt.Sprintf(" on branch [%s]", branchInfo)
+					}
+					goalInfo := latestMan.Goal
+					if goalInfo == "" {
+						goalInfo = latestMan.Title
+					}
+					notices = append(notices, fmt.Sprintf("📋 [AGENT-MESH PREVIOUS CONTEXT AVAILABLE]: Recent handoff from session %s (%s ago%s) found.\nGoal: %s\nTo inspect or adopt this context, view: %s or run: mesh handoff show %s", latestMan.SessionID, age, branchInfo, goalInfo, latestMan.HandoffFile, latestMan.SessionID))
+				}
+			}
+		}
 	}
 
 	// 1. Programmatically inspect prompt for client machine paths and auto-fetch them
@@ -2176,19 +2279,25 @@ func init() {
 
 	handoffCmd.AddCommand(handoffListCmd)
 	handoffCmd.AddCommand(handoffSearchCmd)
+	handoffCmd.AddCommand(handoffBranchesCmd)
 	handoffCmd.AddCommand(handoffShowCmd)
 	handoffCmd.AddCommand(handoffCopyCmd)
 
 	handoffListCmd.Flags().BoolP("all", "a", false, "Include handoffs from all repositories")
 	handoffListCmd.Flags().IntP("limit", "l", 10, "Maximum handoffs to list")
 	handoffListCmd.Flags().BoolP("json", "j", false, "Output results as JSON")
+	handoffListCmd.Flags().StringP("branch", "b", "", "Filter handoffs by git branch")
 
 	handoffSearchCmd.Flags().BoolP("all", "a", false, "Search across all repositories")
 	handoffSearchCmd.Flags().BoolP("json", "j", false, "Output results as JSON")
+	handoffSearchCmd.Flags().StringP("branch", "b", "", "Filter handoffs by git branch")
+
+	handoffBranchesCmd.Flags().BoolP("json", "j", false, "Output results as JSON")
 
 	handoffsCmd.Flags().BoolP("all", "a", false, "Include handoffs from all repositories")
 	handoffsCmd.Flags().IntP("limit", "l", 10, "Maximum handoffs to list")
 	handoffsCmd.Flags().BoolP("json", "j", false, "Output results as JSON")
+	handoffsCmd.Flags().StringP("branch", "b", "", "Filter handoffs by git branch")
 
 	bridgeCmd.AddCommand(screenshotCmd)
 	bridgeCmd.AddCommand(scpCmd)
