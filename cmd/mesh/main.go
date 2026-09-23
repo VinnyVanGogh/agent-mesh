@@ -25,6 +25,7 @@ import (
 	"github.com/VinnyVanGogh/agent-mesh/internal/router"
 	meshSync "github.com/VinnyVanGogh/agent-mesh/internal/sync"
 	"github.com/VinnyVanGogh/agent-mesh/internal/telemetry"
+	"github.com/VinnyVanGogh/agent-mesh/internal/wire"
 )
 
 var (
@@ -791,8 +792,16 @@ var taskListCmd = &cobra.Command{
 			if t.Status == "done" {
 				statusColor = "\033[0;37m"
 			}
-			fmt.Printf("  • %s[%s]\033[0m \033[1m%s\033[0m (branch: %s, role: %s)\n",
-				statusColor, t.Status, t.Name, t.GitBranch, t.AccountRole)
+			budgetInfo := ""
+			if t.MaxBudgetUSD > 0 || t.MaxTurns > 0 {
+				pct := 0.0
+				if t.MaxBudgetUSD > 0 {
+					pct = (t.SpentUSD / t.MaxBudgetUSD) * 100.0
+				}
+				budgetInfo = fmt.Sprintf(" [budget: $%.2f/$%.2f (%.0f%%), %d/%d turns]", t.SpentUSD, t.MaxBudgetUSD, pct, t.SpentTurns, t.MaxTurns)
+			}
+			fmt.Printf("  • %s[%s]\033[0m \033[1m%s\033[0m (branch: %s, role: %s)%s\n",
+				statusColor, t.Status, t.Name, t.GitBranch, t.AccountRole, budgetInfo)
 		}
 	},
 }
@@ -814,12 +823,65 @@ var taskAddCmd = &cobra.Command{
 		if bridge.IsWorkRepo(cwd) {
 			role = "work"
 		}
-		t, err := meshContext.CreateTask(store.DB(), args[0], cwd, branch, role)
+		budget, _ := cmd.Flags().GetFloat64("budget")
+		maxTurns, _ := cmd.Flags().GetInt("max-turns")
+		t, err := meshContext.CreateTaskWithOptions(store.DB(), meshContext.TaskCreateOptions{
+			Name:         args[0],
+			RepoPath:     cwd,
+			GitBranch:    branch,
+			AccountRole:  role,
+			MaxBudgetUSD: budget,
+			MaxTurns:     maxTurns,
+		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error adding task: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("\033[1;32m✔ Task created:\033[0m %s (id: %s, role: %s)\n", t.Name, t.ID, t.AccountRole)
+		budgetDesc := ""
+		if budget > 0 || maxTurns > 0 {
+			budgetDesc = fmt.Sprintf(" [budget: $%.2f, max turns: %d]", budget, maxTurns)
+		}
+		fmt.Printf("\033[1;32m✔ Task created:\033[0m %s (id: %s, role: %s)%s\n", t.Name, t.ID, t.AccountRole, budgetDesc)
+	},
+}
+
+var taskDoneCmd = &cobra.Command{
+	Use:   "done [id|name]",
+	Short: "Mark a task as completed",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+		if err := meshContext.MarkTaskDone(store.DB(), args[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error updating task: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\033[1;32m✔ Task %q marked as done\033[0m\n", args[0])
+	},
+}
+
+var taskBudgetCmd = &cobra.Command{
+	Use:   "budget [id|name]",
+	Short: "Set or update dollar/turn budget limits for a task",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+		budget, _ := cmd.Flags().GetFloat64("usd")
+		turns, _ := cmd.Flags().GetInt("turns")
+		if err := meshContext.UpdateTaskBudget(store.DB(), args[0], budget, turns); err != nil {
+			fmt.Fprintf(os.Stderr, "Error updating budget: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\033[1;32m✔ Task %q budget updated to $%.2f USD / %d turns\033[0m\n", args[0], budget, turns)
 	},
 }
 
@@ -1108,6 +1170,185 @@ var condenseCmd = &cobra.Command{
 	},
 }
 
+var wireCmd = &cobra.Command{
+	Use:     "wire",
+	Aliases: []string{"broadcast"},
+	Short:   "Cross-agent live scratchpad and broadcast wire",
+}
+
+var wirePostCmd = &cobra.Command{
+	Use:   "post [message]",
+	Short: "Post a message or status update to the mesh wire",
+	Args:  cobra.MinimumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+
+		channel, _ := cmd.Flags().GetString("channel")
+		ttlSec, _ := cmd.Flags().GetInt("ttl")
+		author, _ := cmd.Flags().GetString("author")
+		if author == "" {
+			author = os.Getenv("USER")
+			if author == "" {
+				author = "agent"
+			}
+		}
+
+		cwd, _ := os.Getwd()
+		msgText := strings.Join(args, " ")
+		msg, err := wire.Post(store.DB(), channel, author, cwd, msgText, ttlSec)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error posting to wire: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\033[1;32m✔ Broadcast posted\033[0m [id: %d, channel: %s, ttl: %ds]\n", msg.ID, msg.Channel, msg.TTLSeconds)
+	},
+}
+
+var wireListCmd = &cobra.Command{
+	Use:     "list",
+	Aliases: []string{"read"},
+	Short:   "Read recent messages from the mesh wire",
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+
+		channel, _ := cmd.Flags().GetString("channel")
+		limit, _ := cmd.Flags().GetInt("limit")
+
+		msgs, err := wire.List(store.DB(), channel, limit)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing wire messages: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("\033[1;36m[Mesh Wire Broadcasts]\033[0m")
+		if len(msgs) == 0 {
+			fmt.Println("  No active wire messages.")
+			return
+		}
+		for _, m := range msgs {
+			ts := m.CreatedAt
+			if t, err := time.Parse(time.RFC3339Nano, m.CreatedAt); err == nil {
+				ts = t.Local().Format("15:04:05")
+			} else if t, err := time.Parse(time.RFC3339, m.CreatedAt); err == nil {
+				ts = t.Local().Format("15:04:05")
+			}
+			fmt.Printf("  • \033[1;34m[%s]\033[0m \033[1m<%s>\033[0m (%s): %s\n", m.Channel, m.Author, ts, m.Content)
+		}
+	},
+}
+
+var wirePruneCmd = &cobra.Command{
+	Use:   "prune",
+	Short: "Prune expired messages from the mesh wire",
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+
+		count, err := wire.Prune(store.DB())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error pruning wire: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\033[1;32m✔ Pruned %d expired wire messages\033[0m\n", count)
+	},
+}
+
+var breakerCmd = &cobra.Command{
+	Use:   "breaker",
+	Short: "Inspect and reset agent circuit breakers",
+}
+
+var breakerListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List active or past circuit breakers",
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+
+		all, _ := cmd.Flags().GetBool("all")
+		cwd, _ := os.Getwd()
+		repoFilter := cwd
+		if all {
+			repoFilter = ""
+		}
+
+		cbs, err := telemetry.ListCircuitBreakers(store.DB(), repoFilter, !all)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing breakers: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("\033[1;36m[Agent Circuit Breakers]\033[0m")
+		if len(cbs) == 0 {
+			fmt.Println("  All circuit breakers clear. No tripped agents.")
+			return
+		}
+		for _, b := range cbs {
+			status := "\033[1;32m[CLEAR]\033[0m"
+			if b.IsTripped {
+				status = "\033[1;31m[TRIPPED]\033[0m"
+			}
+			fmt.Printf("  • %s Session: %s (%s) | Trips: %d\n", status, b.SessionID, b.AgentType, b.TripCount)
+			if b.IsTripped {
+				fmt.Printf("    Failing tool: %s | Cmd: %s\n", b.FailingTool, b.FailingCommand)
+				fmt.Printf("    Last error:   %s\n", b.LastError)
+				fmt.Printf("    Reset via:    mesh breaker reset %s\n", b.SessionID)
+			}
+		}
+	},
+}
+
+var breakerResetCmd = &cobra.Command{
+	Use:   "reset [session-id]",
+	Short: "Reset a tripped circuit breaker to allow execution to resume",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+
+		sessionID := args[0]
+		tracker := telemetry.NewBreakerTracker()
+		if err := tracker.ResetCircuitBreaker(store.DB(), sessionID); err != nil {
+			fmt.Fprintf(os.Stderr, "Error resetting breaker: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\033[1;32m✔ Circuit breaker reset for session %s\033[0m\n", sessionID)
+	},
+}
+
+func cleanGitStatusFile(line string) string {
+	line = strings.TrimSpace(line)
+	if len(line) >= 3 {
+		idx := strings.Index(line, " ")
+		if idx != -1 {
+			return strings.TrimSpace(line[idx:])
+		}
+	}
+	return line
+}
+
 var hookCmd = &cobra.Command{
 	Use:   "hook",
 	Short: "Agent-Mesh lifecycle and prompt hooks for Claude Code and Antigravity",
@@ -1124,18 +1365,116 @@ var hookPromptCmd = &cobra.Command{
 func handleHookPrompt() {
 	rawInput, err := io.ReadAll(os.Stdin)
 	var promptText string
+	var sessionID string
+
 	if err == nil && len(rawInput) > 0 {
 		var payload map[string]interface{}
 		if err := json.Unmarshal(rawInput, &payload); err == nil {
 			if p, ok := payload["prompt"].(string); ok {
 				promptText = p
 			}
+			if s, ok := payload["sessionId"].(string); ok && s != "" {
+				sessionID = s
+			} else if s, ok := payload["session_id"].(string); ok && s != "" {
+				sessionID = s
+			}
 		} else {
 			promptText = string(rawInput)
 		}
 	}
 
+	if sessionID == "" {
+		if s := os.Getenv("CLAUDE_SESSION_ID"); s != "" {
+			sessionID = s
+		} else if s := os.Getenv("GEMINI_SESSION_ID"); s != "" {
+			sessionID = s
+		} else if s := os.Getenv("MESH_SESSION_ID"); s != "" {
+			sessionID = s
+		} else {
+			sessionID = fmt.Sprintf("session-pid-%d", os.Getppid())
+		}
+	}
+
+	cwd, _ := os.Getwd()
 	var notices []string
+
+	// Open mesh database
+	var dbConn *sql.DB
+	if cfg != nil && cfg.DBPath != "" {
+		if store, err := db.Open(cfg.DBPath); err == nil {
+			dbConn = store.DB()
+			defer store.Close()
+		}
+	}
+
+	if dbConn != nil {
+		// A. Register / Heartbeat Session
+		branch := meshContext.GetCurrentGitBranch(cwd)
+		_ = telemetry.HeartbeatSession(dbConn, telemetry.AgentSession{
+			ID:        sessionID,
+			AgentType: "claude",
+			RepoPath:  cwd,
+			GitBranch: branch,
+			PID:       os.Getppid(),
+		})
+
+		// B. Inspect working tree for multi-agent collision detection
+		gitCtx := meshContext.GatherGitContext(cwd)
+		var dirtyFiles []string
+		for _, f := range gitCtx.ModifiedFiles {
+			cleanF := cleanGitStatusFile(f)
+			if cleanF != "" {
+				dirtyFiles = append(dirtyFiles, cleanF)
+				_ = telemetry.RecordWorkingFile(dbConn, sessionID, cwd, cleanF, "write", 15*time.Minute)
+			}
+		}
+
+		if len(dirtyFiles) > 0 {
+			collisions, _ := telemetry.CheckCollisions(dbConn, sessionID, cwd, dirtyFiles)
+			if len(collisions) > 0 {
+				var collLines []string
+				for _, c := range collisions {
+					ago := time.Since(c.LastTouchedAt).Round(time.Second)
+					collLines = append(collLines, fmt.Sprintf("  • %s (touched %s ago by agent %s [session: %s, PID: %d])", c.FilePath, ago, c.OtherAgent, c.OtherSessionID, c.OtherPID))
+				}
+				notices = append(notices, fmt.Sprintf("⚠️ [AGENT-MESH MULTI-AGENT COLLISION WARNING]: Another agent session is actively editing overlapping files in this repository:\n%s\nCoordinate with the user or wait for peer completion before editing or committing these files to prevent conflicts.", strings.Join(collLines, "\n")))
+			}
+		}
+
+		// C. Agent Circuit Breaker check
+		cb, _ := telemetry.GetCircuitBreaker(dbConn, sessionID)
+		if cb == nil {
+			cbs, _ := telemetry.ListCircuitBreakers(dbConn, cwd, true)
+			if len(cbs) > 0 {
+				cb = &cbs[0]
+			}
+		}
+		if cb != nil && cb.IsTripped {
+			notices = append(notices, fmt.Sprintf("🚨 [AGENT-MESH CIRCUIT BREAKER ACTIVE]: Execution pause active because an agent loop was detected (%s on %s).\nLast error: %s\nTo reset and proceed, run: mesh breaker reset %s", cb.FailingTool, cb.FailingCommand, cb.LastError, cb.SessionID))
+		}
+
+		// D. Task Budget Evaluation
+		activeTask, _ := meshContext.GetActiveTaskForRepo(dbConn, cwd)
+		if activeTask != nil {
+			eval := meshContext.EvaluateTaskBudget(activeTask)
+			if eval.IsBlocked {
+				fmt.Fprintf(os.Stderr, "❌ [AGENT-MESH TASK BUDGET EXCEEDED]\nTask %q budget limit reached: %s\nSpent: $%.2f / $%.2f (%d / %d turns)\nHalting execution to prevent runaway costs.\nTo increase budget, run: mesh task budget %s --usd <limit>\n", activeTask.Name, eval.Reason, activeTask.SpentUSD, activeTask.MaxBudgetUSD, activeTask.SpentTurns, activeTask.MaxTurns, activeTask.ID)
+				os.Exit(2)
+			} else if eval.IsWarning {
+				notices = append(notices, fmt.Sprintf("⚠️ [AGENT-MESH TASK BUDGET WARNING]: Task %q is at %.1f%% of budget ($%.2f / $%.2f max, %d / %d turns). %s", activeTask.Name, eval.PctBudget, activeTask.SpentUSD, activeTask.MaxBudgetUSD, activeTask.SpentTurns, activeTask.MaxTurns, eval.Reason))
+			}
+		}
+
+		// E. Check unread Mesh Wire broadcasts
+		unreadMsgs, _ := wire.GetUnread(dbConn, sessionID, cwd)
+		if len(unreadMsgs) > 0 {
+			var wireLines []string
+			for _, m := range unreadMsgs {
+				wireLines = append(wireLines, fmt.Sprintf("  • [%s] <%s>: %s", m.Channel, m.Author, m.Content))
+			}
+			notices = append(notices, fmt.Sprintf("📡 [MESH WIRE :: PEER AGENT BROADCASTS]:\n%s", strings.Join(wireLines, "\n")))
+		}
+	}
 
 	// 1. Programmatically inspect prompt for client machine paths and auto-fetch them
 	if promptText != "" {
@@ -1195,7 +1534,6 @@ func handleHookPrompt() {
 		}
 
 		if triggeredPool != nil {
-			cwd, _ := os.Getwd()
 			debounceFile := filepath.Join(os.TempDir(), fmt.Sprintf("mesh-prelock-warned-u%d.ts", os.Getuid()))
 			shouldNotify := true
 			if stat, err := os.Stat(debounceFile); err == nil {
@@ -1206,11 +1544,6 @@ func handleHookPrompt() {
 
 			if shouldNotify {
 				_ = os.WriteFile(debounceFile, []byte(fmt.Sprintf("%d", time.Now().Unix())), 0644)
-				var dbConn *sql.DB
-				if store, err := db.Open(cfg.DBPath); err == nil {
-					dbConn = store.DB()
-					defer store.Close()
-				}
 				_, _ = meshContext.GenerateHandoff(meshContext.HandoffOptions{
 					TargetModel:       "gemini",
 					ImmediateNextStep: fmt.Sprintf("Approaching quota limit: %s. Resume session seamlessly in Gemini.", warningReason),
@@ -1367,6 +1700,8 @@ func init() {
 	rootCmd.AddCommand(syncCmd)
 	rootCmd.AddCommand(taskCmd)
 	rootCmd.AddCommand(whereCmd)
+	rootCmd.AddCommand(wireCmd)
+	rootCmd.AddCommand(breakerCmd)
 	rootCmd.AddCommand(checkpointCmd)
 	rootCmd.AddCommand(undoCmd)
 	rootCmd.AddCommand(redoCmd)
@@ -1396,9 +1731,29 @@ func init() {
 	bridgeCmd.AddCommand(bridgeCheckCmd)
 	bridgeCmd.AddCommand(bridgeLaunchCmd)
 
+	wireCmd.AddCommand(wirePostCmd)
+	wireCmd.AddCommand(wireListCmd)
+	wireCmd.AddCommand(wirePruneCmd)
+	wirePostCmd.Flags().StringP("channel", "c", "global", "Message broadcast channel")
+	wirePostCmd.Flags().IntP("ttl", "t", 86400, "Time-to-live in seconds")
+	wirePostCmd.Flags().StringP("author", "a", "", "Author handle or identifier")
+	wireListCmd.Flags().StringP("channel", "c", "", "Filter by channel")
+	wireListCmd.Flags().BoolP("all", "a", false, "Include messages outside current repo")
+	wireListCmd.Flags().IntP("limit", "l", 20, "Maximum messages to retrieve")
+
+	breakerCmd.AddCommand(breakerListCmd)
+	breakerCmd.AddCommand(breakerResetCmd)
+	breakerListCmd.Flags().BoolP("all", "a", false, "Include cleared circuit breakers")
+
 	taskCmd.AddCommand(taskListCmd)
 	taskCmd.AddCommand(taskAddCmd)
+	taskCmd.AddCommand(taskDoneCmd)
+	taskCmd.AddCommand(taskBudgetCmd)
 	taskListCmd.Flags().BoolP("all", "a", false, "Include done and soft-deleted tasks")
+	taskAddCmd.Flags().Float64("budget", 0.0, "Maximum budget limit in USD")
+	taskAddCmd.Flags().Int("max-turns", 0, "Maximum allowed turns")
+	taskBudgetCmd.Flags().Float64("usd", 0.0, "Budget limit in USD")
+	taskBudgetCmd.Flags().Int("turns", 0, "Maximum allowed turns")
 	whereCmd.Flags().BoolP("json", "j", false, "Output context resumption in JSON format")
 
 	checkpointCmd.Flags().StringP("session", "s", "", "Agent session ID")

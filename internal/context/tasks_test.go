@@ -131,3 +131,77 @@ func TestHandoffGeneration(t *testing.T) {
 		t.Errorf("expected non-empty handoff prompt")
 	}
 }
+
+func TestTaskBudget(t *testing.T) {
+	database := setupTestDB(t)
+
+	// 1. Create Task with Budget
+	task, err := CreateTaskWithOptions(database, TaskCreateOptions{
+		Name:         "Implement Auth Service",
+		RepoPath:     "/path/to/repo",
+		GitBranch:    "feat/auth",
+		AccountRole:  "work",
+		MaxBudgetUSD: 5.00,
+		MaxTurns:     10,
+	})
+	if err != nil {
+		t.Fatalf("CreateTaskWithOptions failed: %v", err)
+	}
+
+	if task.MaxBudgetUSD != 5.00 || task.MaxTurns != 10 {
+		t.Fatalf("unexpected budget fields: $%.2f, %d turns", task.MaxBudgetUSD, task.MaxTurns)
+	}
+
+	// Initial evaluation: neither warning nor blocked
+	eval := EvaluateTaskBudget(task)
+	if eval.IsBlocked || eval.IsWarning {
+		t.Errorf("expected no warning or block initially")
+	}
+
+	// 2. Record spend (within budget: $2.50, 5 turns)
+	err = RecordTaskSpend(database, task.ID, 50000, 2.50, 5)
+	if err != nil {
+		t.Fatalf("RecordTaskSpend failed: %v", err)
+	}
+
+	task, _ = GetTask(database, task.ID)
+	if task.SpentUSD != 2.50 || task.SpentTurns != 5 || task.SpentTokens != 50000 {
+		t.Errorf("unexpected spend tracking: $%.2f, %d turns, %d tokens", task.SpentUSD, task.SpentTurns, task.SpentTokens)
+	}
+
+	eval = EvaluateTaskBudget(task)
+	if eval.IsBlocked || eval.IsWarning {
+		t.Errorf("expected no warning at 50%% spend")
+	}
+
+	// 3. Record spend to reach warning threshold (80%: $4.10 / 8 turns)
+	_ = RecordTaskSpend(database, task.ID, 30000, 1.60, 3)
+	task, _ = GetTask(database, task.ID)
+	eval = EvaluateTaskBudget(task)
+	if !eval.IsWarning {
+		t.Errorf("expected warning at >=80%% spend, got false")
+	}
+	if eval.IsBlocked {
+		t.Errorf("did not expect block at 82%% spend")
+	}
+
+	// 4. Record spend to exceed budget ($5.20 / 11 turns)
+	_ = RecordTaskSpend(database, task.ID, 20000, 1.10, 3)
+	task, _ = GetTask(database, task.ID)
+	eval = EvaluateTaskBudget(task)
+	if !eval.IsBlocked {
+		t.Errorf("expected block at >=100%% spend")
+	}
+
+	// 5. Update Task Budget
+	err = UpdateTaskBudget(database, task.ID, 10.00, 20)
+	if err != nil {
+		t.Fatalf("UpdateTaskBudget failed: %v", err)
+	}
+	task, _ = GetTask(database, task.ID)
+	eval = EvaluateTaskBudget(task)
+	if eval.IsBlocked {
+		t.Errorf("expected unblocked after increasing budget to $10.00")
+	}
+}
+
