@@ -108,6 +108,15 @@ func Transfer(ctx context.Context, opts TransferOptions) (*TransferResult, error
 		} else if !strings.HasPrefix(remoteDest, "/") && !strings.HasPrefix(remoteDest, "~") {
 			remoteDest = "/tmp/" + filepath.Base(localSrc)
 		}
+	} else {
+		// If dest was expanded locally by shell (e.g. /Users/localuser/...), translate local home to ~/
+		home := getHomeDir()
+		if remoteDest == home {
+			remoteDest = "~"
+		} else if strings.HasPrefix(remoteDest, home+string(filepath.Separator)) {
+			rel := strings.TrimPrefix(remoteDest, home+string(filepath.Separator))
+			remoteDest = "~/" + rel
+		}
 	}
 
 	args = append(args, "-p", localSrc, fmt.Sprintf("%s:%s", host, remoteDest))
