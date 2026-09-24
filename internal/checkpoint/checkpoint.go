@@ -72,6 +72,15 @@ func CreateCheckpoint(ctx context.Context, opts CreateOptions) (*Checkpoint, err
 	headSHA, _ := runGit(ctx, rootDir, nil, "rev-parse", "HEAD")
 
 	// 2. Prepare isolated index: <gitDir>/staypoint_index
+	// 2. Check for index.lock to avoid copying a torn index during concurrent operations
+	lockFile := filepath.Join(gitDir, "index.lock")
+	if _, err := os.Stat(lockFile); err == nil {
+		time.Sleep(50 * time.Millisecond)
+		if _, err := os.Stat(lockFile); err == nil {
+			return nil, fmt.Errorf("git index is locked by another process (.git/index.lock exists)")
+		}
+	}
+
 	meshIndex := filepath.Join(gitDir, "staypoint_index")
 	mainIndex := filepath.Join(gitDir, "index")
 
@@ -102,6 +111,19 @@ func CreateCheckpoint(ctx context.Context, opts CreateOptions) (*Checkpoint, err
 	// Clean up staypoint_index
 	_ = os.Remove(meshIndex)
 
+	// Capture baseline ignored files to protect pre-existing configs during undo cleanup
+	ignoredOut, _ := runGit(ctx, rootDir, nil, "status", "--porcelain", "--ignored")
+	var baselineIgnored []string
+	for _, l := range strings.Split(strings.TrimSpace(ignoredOut), "\n") {
+		if strings.HasPrefix(l, "!! ") {
+			f := strings.TrimSpace(strings.TrimPrefix(l, "!! "))
+			f = strings.Trim(f, "\"")
+			if f != "" {
+				baselineIgnored = append(baselineIgnored, f)
+			}
+		}
+	}
+
 	// 5. Generate checkpoint ID
 	sessionID := opts.SessionID
 	if sessionID == "" {
@@ -116,13 +138,17 @@ func CreateCheckpoint(ctx context.Context, opts CreateOptions) (*Checkpoint, err
 	if msg == "" {
 		msg = fmt.Sprintf("Agent micro-checkpoint %s", cpID)
 	}
+	commitMsg := msg
+	if len(baselineIgnored) > 0 {
+		commitMsg = fmt.Sprintf("%s\n\nStaypoint-Baseline-Ignored:\n%s", msg, strings.Join(baselineIgnored, "\n"))
+	}
 
 	// 6. Create commit object
 	commitArgs := []string{"commit-tree", treeSHA}
 	if headSHA != "" {
 		commitArgs = append(commitArgs, "-p", headSHA)
 	}
-	commitArgs = append(commitArgs, "-m", msg)
+	commitArgs = append(commitArgs, "-m", commitMsg)
 
 	commitSHA, err := runGit(ctx, rootDir, nil, commitArgs...)
 	if err != nil {

@@ -19,6 +19,9 @@ type TransferOptions struct {
 	Dest      string
 	Pull      bool
 	Recursive bool
+	CleanName bool
+	RawName   bool
+	AIName    bool
 }
 
 // TransferResult captures transfer outcome and paths.
@@ -100,13 +103,26 @@ func Transfer(ctx context.Context, opts TransferOptions) (*TransferResult, error
 	}
 
 	remoteDest := opts.Dest
+	srcBase := filepath.Base(localSrc)
+
+	finalFilename := srcBase
+	if !isDir && !opts.RawName {
+		cleaned := CleanFileName(srcBase)
+		if opts.AIName || (IsOpaqueImage(srcBase) && os.Getenv("GEMINI_API_KEY") != "") {
+			if aiSlug := SuggestAIName(ctx, localSrc, os.Getenv("GEMINI_API_KEY")); aiSlug != "" {
+				cleaned = aiSlug + strings.ToLower(filepath.Ext(localSrc))
+			}
+		}
+		finalFilename = cleaned
+	}
+
 	if remoteDest == "" {
 		absLocal, _ := filepath.Abs(localSrc)
-		remoteDest = ToRemotePath(absLocal)
-		if strings.HasPrefix(remoteDest, "~/") {
-			// SCP handles ~ on remote side: host:~/Documents/...
-		} else if !strings.HasPrefix(remoteDest, "/") && !strings.HasPrefix(remoteDest, "~") {
-			remoteDest = "/tmp/" + filepath.Base(localSrc)
+		remoteParent := ToRemotePath(filepath.Dir(absLocal))
+		if strings.HasPrefix(remoteParent, "~/") || strings.HasPrefix(remoteParent, "/") {
+			remoteDest = filepath.ToSlash(filepath.Join(remoteParent, finalFilename))
+		} else {
+			remoteDest = "/tmp/" + finalFilename
 		}
 	} else {
 		// If dest was expanded locally by shell (e.g. /Users/localuser/...), translate local home to ~/
@@ -116,6 +132,10 @@ func Transfer(ctx context.Context, opts TransferOptions) (*TransferResult, error
 		} else if strings.HasPrefix(remoteDest, home+string(filepath.Separator)) {
 			rel := strings.TrimPrefix(remoteDest, home+string(filepath.Separator))
 			remoteDest = "~/" + rel
+		}
+
+		if !isDir && isDirectoryDest(remoteDest, filepath.Ext(localSrc) != "") {
+			remoteDest = strings.TrimRight(remoteDest, "/") + "/" + finalFilename
 		}
 	}
 
@@ -135,4 +155,20 @@ func Transfer(ctx context.Context, opts TransferOptions) (*TransferResult, error
 		Action:      "pushed",
 		IsDirectory: isDir,
 	}, nil
+}
+
+func isDirectoryDest(dest string, srcHasExt bool) bool {
+	if strings.HasSuffix(dest, "/") || dest == "~" || dest == "." || dest == ".." {
+		return true
+	}
+	lower := strings.ToLower(dest)
+	if strings.HasSuffix(lower, "/downloads") || strings.HasSuffix(lower, "/documents") ||
+		strings.HasSuffix(lower, "/desktop") || strings.HasSuffix(lower, "/tmp") ||
+		dest == "downloads" || dest == "documents" || dest == "desktop" || dest == "tmp" {
+		return true
+	}
+	if srcHasExt && filepath.Ext(dest) == "" {
+		return true
+	}
+	return false
 }

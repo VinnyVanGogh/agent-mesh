@@ -153,6 +153,9 @@ var scpCmd = &cobra.Command{
 		pull, _ := cmd.Flags().GetBool("pull")
 		recursive, _ := cmd.Flags().GetBool("recursive")
 		host, _ := cmd.Flags().GetString("host")
+		cleanName, _ := cmd.Flags().GetBool("clean-name")
+		rawName, _ := cmd.Flags().GetBool("raw-name")
+		aiName, _ := cmd.Flags().GetBool("ai-name")
 
 		if host == "" && cfg != nil && cfg.RemoteHost != "" {
 			host = cfg.RemoteHost
@@ -171,6 +174,9 @@ var scpCmd = &cobra.Command{
 			Dest:      dst,
 			Pull:      pull,
 			Recursive: recursive,
+			CleanName: cleanName,
+			RawName:   rawName,
+			AIName:    aiName,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\033[1;31m✖ SCP transfer error:\033[0m %v\n", err)
@@ -242,4 +248,7 @@ func init() {
 	scpCmd.Flags().BoolP("pull", "p", false, "Pull file or directory from remote host to local machine")
 	scpCmd.Flags().BoolP("recursive", "r", false, "Copy directories recursively")
 	scpCmd.Flags().String("host", "", "Remote host (defaults to config remote_host)")
+	scpCmd.Flags().Bool("clean-name", true, "Automatically sanitize noisy screenshot and download filenames to clean snake_case")
+	scpCmd.Flags().Bool("raw-name", false, "Preserve raw original filename without sanitization")
+	scpCmd.Flags().Bool("ai-name", false, "Use Gemini Flash vision to label opaque images if GEMINI_API_KEY is available")
 }

@@ -261,6 +261,7 @@ func (w *Watcher) processFile(filePath string) {
 	slog.Debug("Processing file from offset", slog.String("path", filePath), slog.Int64("offset", lastOffset))
 
 	reader := bufio.NewReaderSize(file, 64*1024)
+	const MaxLineSize = 2 * 1024 * 1024
 	var newOffset int64 = lastOffset
 
 	for {
@@ -268,15 +269,27 @@ func (w *Watcher) processFile(filePath string) {
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			// If EOF or error is encountered before finding '\n', this is an incomplete partial line.
-			// Preserve cursor at lineStartOffset so slow writers can complete the line.
-			w.cursors.Set(filePath, lineStartOffset)
-			slog.Debug("Partial line or EOF reached, preserving cursor at lineStartOffset",
-				slog.String("path", filePath),
-				slog.Int64("offset", lineStartOffset))
+			// Unless the line has already exceeded MaxLineSize, preserve cursor at lineStartOffset so slow writers can finish.
+			if int64(len(line)) > MaxLineSize {
+				newOffset = lineStartOffset + int64(len(line))
+				w.cursors.Set(filePath, newOffset)
+				slog.Warn("Discarded oversized unterminated line exceeding 2MB", slog.String("path", filePath))
+			} else {
+				w.cursors.Set(filePath, lineStartOffset)
+				slog.Debug("Partial line or EOF reached, preserving cursor at lineStartOffset",
+					slog.String("path", filePath),
+					slog.Int64("offset", lineStartOffset))
+			}
 			return
 		}
 
 		newOffset = lineStartOffset + int64(len(line))
+		if len(line) > MaxLineSize {
+			slog.Warn("Skipped oversized line exceeding 2MB", slog.String("path", filePath), slog.Int("bytes", len(line)))
+			w.cursors.Set(filePath, newOffset)
+			continue
+		}
+
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			w.cursors.Set(filePath, newOffset)

@@ -75,17 +75,39 @@ func Undo(ctx context.Context, opts UndoOptions) (*UndoResult, error) {
 		}
 	}
 
-	// 5. Find untracked ignored files and directories if requested
+	// 5. Find untracked ignored files and directories if requested, protecting pre-existing files
 	var filesIgnoredRemoved []string
 	if opts.CleanIgnored {
+		baselineSet := make(map[string]bool)
+		commitBody, _ := runGit(ctx, rootDir, nil, "log", "-1", "--format=%B", targetSHA)
+		if idx := strings.Index(commitBody, "Staypoint-Baseline-Ignored:\n"); idx != -1 {
+			lines := strings.Split(commitBody[idx+len("Staypoint-Baseline-Ignored:\n"):], "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					baselineSet[line] = true
+				}
+			}
+		}
+
 		ignoredOut, _ := runGit(ctx, rootDir, nil, "status", "--porcelain", "--ignored")
 		for _, l := range strings.Split(strings.TrimSpace(ignoredOut), "\n") {
 			if strings.HasPrefix(l, "!! ") {
 				f := strings.TrimSpace(strings.TrimPrefix(l, "!! "))
 				f = strings.Trim(f, "\"")
-				if f != "" {
-					filesIgnoredRemoved = append(filesIgnoredRemoved, f)
+				if f == "" {
+					continue
 				}
+				// Never delete files that were already present when the target checkpoint was created
+				if baselineSet[f] {
+					continue
+				}
+				// Protect common environment configuration files
+				baseName := filepath.Base(f)
+				if strings.HasPrefix(baseName, ".env") || strings.HasSuffix(baseName, ".key") || strings.HasSuffix(baseName, ".pem") {
+					continue
+				}
+				filesIgnoredRemoved = append(filesIgnoredRemoved, f)
 			}
 		}
 	}
@@ -120,8 +142,8 @@ func Undo(ctx context.Context, opts UndoOptions) (*UndoResult, error) {
 		}
 	}
 
-	// 7. Restore index and working tree to target commit
-	if _, err := runGit(ctx, rootDir, nil, "checkout", targetSHA, "--", "."); err != nil {
+	// 7. Restore index and working tree to target commit across the entire repository
+	if _, err := runGit(ctx, rootDir, nil, "checkout", targetSHA, "--", ":/"); err != nil {
 		return nil, fmt.Errorf("failed to restore working tree: %w", err)
 	}
 
