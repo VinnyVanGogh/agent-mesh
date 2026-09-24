@@ -6,4 +6,5 @@ bin/
 .DS_Store
 docs/DOSSIER.md
 *DOSSIER*.md
+.plan/
 
