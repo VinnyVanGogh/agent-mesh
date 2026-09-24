@@ -32,8 +32,24 @@ jobs:
       - name: Download Dependencies
         run: go mod download
 
-      - name: Run Tests
+      - name: Go Vet
+        run: go vet ./...
+
+      - name: Run Tests (with race detector)
         run: go test -v -race ./...
+
+      - name: Run govulncheck
+        uses: golang/govulncheck-action@v1
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.25'
+        with:
+          go-version-file: 'go.mod'
+          go-package: ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.25'
+        with:
+          version: v1.64
 
       - name: Build Binaries (staypoint & staypointd)
         run: |

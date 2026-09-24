@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/VinnyVanGogh/staypoint/internal/db"
@@ -127,3 +128,73 @@ func TestCircuitBreakerBurstSpiral(t *testing.T) {
 		t.Errorf("expected 1 active circuit breaker, got %d", len(list))
 	}
 }
+
+func TestCircuitBreakerDistinguishVariedFromIdentical(t *testing.T) {
+	meshDB, cleanup := setupTestMeshDB(t)
+	defer cleanup()
+
+	tracker := NewBreakerTracker()
+	sessionID := "sess-distinguish-1"
+	repoPath := "/Users/dev/project"
+
+	// 1. Send 4 distinct, varied errors.
+	// Consecutive identical threshold is 3, but because each failure has a different tool/command,
+	// none of the first 4 failures must trip the breaker.
+	variedFailures := []struct {
+		tool string
+		cmd  string
+		err  string
+	}{
+		{"git", "git status", "fatal: not a git repo"},
+		{"npm", "npm test", "ERR! missing script: test"},
+		{"curl", "curl localhost:8080", "connection refused"},
+		{"python", "python3 main.py", "ModuleNotFoundError: no module named 'flask'"},
+	}
+
+	for i, f := range variedFailures {
+		tripped, reason, err := tracker.RecordFailure(meshDB, sessionID, repoPath, "claude", f.tool, f.cmd, f.err)
+		if err != nil {
+			t.Fatalf("failure %d encountered unexpected error: %v", i+1, err)
+		}
+		if tripped {
+			t.Fatalf("failure %d (varied error) tripped the breaker unexpectedly: %s", i+1, reason)
+		}
+	}
+
+	// 2. The 5th varied failure hits the rolling 5-minute threshold and MUST trip.
+	tripped, reason, err := tracker.RecordFailure(meshDB, sessionID, repoPath, "claude", "go", "go build ./...", "cannot find package")
+	if err != nil {
+		t.Fatalf("5th failure error: %v", err)
+	}
+	if !tripped {
+		t.Fatalf("expected 5th varied error to trip rolling 5-minute spiral breaker")
+	}
+	if !strings.Contains(reason, "Failure spiral: 5 errors") {
+		t.Errorf("expected reason to cite 'Failure spiral: 5 errors', got: %s", reason)
+	}
+
+	// 3. Reset the breaker and verify consecutive identical failures trip at 3 (not 5).
+	if err := tracker.ResetCircuitBreaker(meshDB, sessionID); err != nil {
+		t.Fatalf("failed to reset breaker: %v", err)
+	}
+
+	// Create a new session for clean testing
+	sess2 := "sess-identical-1"
+	tripped, _, _ = tracker.RecordFailure(meshDB, sess2, repoPath, "claude", "cargo", "cargo build", "error[E0432]")
+	if tripped {
+		t.Fatalf("1st identical failure should not trip")
+	}
+	tripped, _, _ = tracker.RecordFailure(meshDB, sess2, repoPath, "claude", "cargo", "cargo build", "error[E0432]")
+	if tripped {
+		t.Fatalf("2nd identical failure should not trip")
+	}
+	// 3rd identical failure MUST trip immediately
+	tripped, reason2, _ := tracker.RecordFailure(meshDB, sess2, repoPath, "claude", "cargo", "cargo build", "error[E0432]")
+	if !tripped {
+		t.Fatalf("3rd identical failure must trip consecutive failure breaker")
+	}
+	if !strings.Contains(reason2, "Repeating failure loop: 3 consecutive") {
+		t.Errorf("expected reason to cite 'Repeating failure loop: 3 consecutive', got: %s", reason2)
+	}
+}
+

@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -263,32 +264,27 @@ func (w *Watcher) processFile(filePath string) {
 	var newOffset int64 = lastOffset
 
 	for {
-		var line []byte
-		var isPrefix bool
-		for {
-			chunk, prefix, err := reader.ReadLine()
-			if err != nil {
-				if len(line) > 0 {
-					w.ingestLine(line, filePath)
-				}
-				w.cursors.Set(filePath, newOffset)
-				slog.Debug("Updated cursor offset", slog.String("path", filePath), slog.Int64("offset", newOffset))
-				return
-			}
-			line = append(line, chunk...)
-			newOffset += int64(len(chunk))
-			isPrefix = prefix
-			if !isPrefix {
-				newOffset++ // +1 for newline character delimiter
-				break
-			}
+		lineStartOffset := newOffset
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			// If EOF or error is encountered before finding '\n', this is an incomplete partial line.
+			// Preserve cursor at lineStartOffset so slow writers can complete the line.
+			w.cursors.Set(filePath, lineStartOffset)
+			slog.Debug("Partial line or EOF reached, preserving cursor at lineStartOffset",
+				slog.String("path", filePath),
+				slog.Int64("offset", lineStartOffset))
+			return
 		}
 
+		newOffset = lineStartOffset + int64(len(line))
+		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
+			w.cursors.Set(filePath, newOffset)
 			continue
 		}
 
 		w.ingestLine(line, filePath)
+		w.cursors.Set(filePath, newOffset)
 	}
 }
 

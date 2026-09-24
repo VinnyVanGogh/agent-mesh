@@ -13,6 +13,12 @@ import (
 	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 )
 
+var (
+	version = "0.1.0"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	logLevel := os.Getenv("STAYPOINT_LOG_LEVEL")
 	if logLevel == "" {
@@ -34,7 +40,11 @@ func main() {
 	}
 	logging.SetupLogger(logLevel, logFormat, os.Stderr)
 
-	slog.Info("Starting Staypoint Background Daemon...")
+	slog.Info("Starting Staypoint Background Daemon...",
+		slog.String("version", version),
+		slog.String("commit", commit),
+		slog.String("build_date", date),
+	)
 
 	cfg, err := config.LoadConfig()
 	if err != nil {

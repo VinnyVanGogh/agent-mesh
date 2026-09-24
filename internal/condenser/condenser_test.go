@@ -55,13 +55,13 @@ panic: runtime error: invalid memory address or nil pointer dereference
 
 goroutine 1 [running]:
 github.com/VinnyVanGogh/staypoint/internal/auth.Validate(0x0)
-	/Users/vincevasile/dev/agent-mesh/internal/auth/auth.go:42 +0x24
+	/home/user/dev/staypoint/internal/auth/auth.go:42 +0x24
 runtime.panicmem(...)
 	/usr/local/go/src/runtime/panic.go:260
 runtime.sigpanic()
 	/usr/local/go/src/runtime/signal_unix.go:881
 main.main()
-	/Users/vincevasile/dev/agent-mesh/cmd/mesh/main.go:12 +0x30
+	/home/user/dev/staypoint/cmd/staypoint/main.go:12 +0x30
 
 goroutine 2 [chan receive]:
 runtime.gopark(0x104d8c890, 0x1400010c0b8, 0xb, 0x17)
@@ -100,11 +100,11 @@ func TestPythonTracebackCondenser(t *testing.T) {
 Traceback (most recent call last):
   File "main.py", line 15, in <module>
     app.run()
-  File "/Users/vincevasile/.venv/lib/python3.11/site-packages/flask/app.py", line 880, in run
+  File "/home/user/.venv/lib/python3.11/site-packages/flask/app.py", line 880, in run
     return wsgi.server(self)
-  File "/Users/vincevasile/.venv/lib/python3.11/site-packages/werkzeug/serving.py", line 1024, in run_simple
+  File "/home/user/.venv/lib/python3.11/site-packages/werkzeug/serving.py", line 1024, in run_simple
     s.bind(server_address)
-  File "/Users/vincevasile/.venv/lib/python3.11/site-packages/werkzeug/serving.py", line 240, in bind
+  File "/home/user/.venv/lib/python3.11/site-packages/werkzeug/serving.py", line 240, in bind
     super().bind(value)
   File "src/routes.py", line 32, in handle_request
     raise ValueError("Invalid user payload")

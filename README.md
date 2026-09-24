@@ -13,6 +13,19 @@ Staypoint unifies disparate AI agent tooling into a single, high-performance sta
 
 ---
 
+## Project Status & Operational Reality
+
+- **Current Version**: `v0.1.0`.
+- **User Base**: Single-user daily driver built for the author's multi-agent workflow. There are zero external production users.
+- **Platform Support**: macOS (Darwin) and Linux on `arm64` and `amd64`. Windows is not supported due to POSIX process replacement and daemon background supervision requirements.
+- **Key Architectural Limitation**: `staypoint` launches agent sessions using `syscall.Exec` on Unix systems. This replaces the running process image completely so that Claude Code or Antigravity directly owns the terminal TTY, avoiding terminal emulation layers or escape sequence bugs. The tradeoff is that the CLI process terminates upon handoff and cannot supervise the running agent. All session monitoring, failure spiral detection, file collision tracking, and token spend aggregation are decoupled and supervised asynchronously by the background daemon (`staypointd`).
+
+## Build Provenance & Agentic Pipeline
+
+This repository was constructed in September 2026 with heavy autonomous AI agent assistance under an intensive human review, verification, and benchmarking harness. The codebase spans approximately 3,100 lines of Go across the CLI command surface and 6,000 lines across core internal engine packages. It is maintained under strict engineering standards: 100% pure Go (zero CGO), multi-platform CI, race-detector validation, automated fuzz testing, and sub-millisecond execution budgets. The tool supervises autonomous coding agents, and it was itself authored by supervised coding agents.
+
+---
+
 ```
                                       STAYPOINT ARCHITECTURE
 
