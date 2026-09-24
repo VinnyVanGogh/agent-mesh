@@ -16,26 +16,26 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
-	"github.com/VinnyVanGogh/agent-mesh/internal/checkpoint"
-	"github.com/VinnyVanGogh/agent-mesh/internal/condenser"
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
-	meshContext "github.com/VinnyVanGogh/agent-mesh/internal/context"
-	"github.com/VinnyVanGogh/agent-mesh/internal/db"
-	"github.com/VinnyVanGogh/agent-mesh/internal/reporting"
-	"github.com/VinnyVanGogh/agent-mesh/internal/router"
-	meshSync "github.com/VinnyVanGogh/agent-mesh/internal/sync"
-	"github.com/VinnyVanGogh/agent-mesh/internal/telemetry"
-	"github.com/VinnyVanGogh/agent-mesh/internal/wire"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/checkpoint"
+	"github.com/VinnyVanGogh/staypoint/internal/condenser"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
+	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/reporting"
+	"github.com/VinnyVanGogh/staypoint/internal/router"
+	meshSync "github.com/VinnyVanGogh/staypoint/internal/sync"
+	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
+	"github.com/VinnyVanGogh/staypoint/internal/wire"
 )
 
 var (
 	version = "0.1.0"
 	cfg     *config.Config
 	rootCmd = &cobra.Command{
-		Use:     "mesh [command|args...]",
+		Use:     "staypoint [command|args...]",
 		Version: version,
-		Short:   "Agent-Mesh: Autonomous AI Agent Ops, Quota Pacing & Context Platform",
+		Short:   "Staypoint: Autonomous AI Agent Ops, Quota Pacing & Context Platform",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			var err error
 			cfg, err = config.LoadConfig()
@@ -53,9 +53,9 @@ var (
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print the agent-mesh version",
+	Short: "Print the staypoint version",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("mesh version %s\n", version)
+		fmt.Printf("staypoint version %s\n", version)
 	},
 }
 
@@ -63,7 +63,7 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Display real-time quota meters, active task context, and routing recommendations",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("\033[1;36m[Agent-Mesh :: Fleet Status & Pacing Engine]\033[0m")
+		fmt.Println("\033[1;36m[Staypoint :: Fleet Status & Pacing Engine]\033[0m")
 		fmt.Printf("  • Time:                    %s\n", time.Now().Format("03:04 PM MST"))
 
 		pacerState, _ := router.LoadPacerState()
@@ -181,6 +181,16 @@ var routeCmd = &cobra.Command{
 		}
 
 		if evalFlag {
+			fmt.Printf("export STAYPOINT_ROUTE_TARGET=%q\n", decision.Target)
+			fmt.Printf("export STAYPOINT_ROUTE_TOOL=%q\n", decision.Tool)
+			fmt.Printf("export STAYPOINT_ROUTE_MODEL=%q\n", decision.Model)
+			fmt.Printf("export STAYPOINT_ROUTE_COMMAND=%q\n", decision.Command)
+			fmt.Printf("export STAYPOINT_ROUTE_WORKSPACE=%q\n", decision.Workspace)
+			fmt.Printf("export STAYPOINT_ROUTE_ACCOUNT=%q\n", decision.AccountRole)
+			fmt.Printf("export STAYPOINT_ROUTE_EMAIL=%q\n", decision.AccountEmail)
+			fmt.Printf("export STAYPOINT_ROUTE_IS_WORK=%t\n", decision.IsWorkRepo)
+			fmt.Printf("export STAYPOINT_ROUTE_REASON=%q\n", decision.Reason)
+			// Deprecated legacy aliases
 			fmt.Printf("export MESH_ROUTE_TARGET=%q\n", decision.Target)
 			fmt.Printf("export MESH_ROUTE_TOOL=%q\n", decision.Tool)
 			fmt.Printf("export MESH_ROUTE_MODEL=%q\n", decision.Model)
@@ -194,7 +204,7 @@ var routeCmd = &cobra.Command{
 		}
 
 		// Human-readable output
-		fmt.Println("\033[1;36m[Agent-Mesh :: Dynamic Router]\033[0m")
+		fmt.Println("\033[1;36m[Staypoint :: Dynamic Router]\033[0m")
 		fmt.Printf("  • Workspace:          %s\n", decision.Workspace)
 		if decision.IsWorkRepo {
 			fmt.Printf("  • Context Type:       \033[1;32mEnterprise Work Repo\033[0m (%s)\n", decision.WorkRepoSource)
@@ -265,7 +275,7 @@ var reportCmd = &cobra.Command{
 		untilFlag, _ := cmd.Flags().GetString("until")
 
 		if !pdfFlag {
-			fmt.Println("Usage: mesh report --pdf [--type work|personal|gemini|combined|all] [--since <date>] [--until <date>] [--output <path>]")
+			fmt.Println("Usage: staypoint report --pdf [--type work|personal|gemini|combined|all] [--since <date>] [--until <date>] [--output <path>]")
 			fmt.Println("  --type work        Executive Justification Memo (Boss Card)")
 			fmt.Println("  --type personal    Personal Claude Code Value Audit (102k+ turns, $7,500+ value)")
 			fmt.Println("  --type gemini      Antigravity & Gemini Native Report (Flash, Pro, Brain logs, Reviews)")
@@ -289,7 +299,7 @@ var reportCmd = &cobra.Command{
 
 		if strings.ToLower(reportType) == "all" {
 			types := []string{"work", "personal", "gemini", "combined"}
-			fmt.Println("\033[1;36m[Agent-Mesh]\033[0m Generating all 4 executive PDF reports...")
+			fmt.Println("\033[1;36m[Staypoint]\033[0m Generating all 4 executive PDF reports...")
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 
@@ -311,7 +321,7 @@ var reportCmd = &cobra.Command{
 			outFlag = filepath.Join(home, "Desktop", reporting.DefaultReportFilename(reportType, cfg))
 		}
 
-		fmt.Printf("\033[1;36m[Agent-Mesh]\033[0m Rendering \033[1;33m%s\033[0m report via Chrome CDP...\n", reportType)
+		fmt.Printf("\033[1;36m[Staypoint]\033[0m Rendering \033[1;33m%s\033[0m report via Chrome CDP...\n", reportType)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -328,37 +338,37 @@ var reportCmd = &cobra.Command{
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize agent-mesh directories and SQLite storage engine",
+	Short: "Initialize staypoint directories and SQLite storage engine",
 	Run: func(cmd *cobra.Command, args []string) {
 		shellFlag, _ := cmd.Flags().GetBool("shell")
 		if shellFlag {
-			fmt.Print(`# Agent-Mesh Shell Integration
-# Add to ~/.zshrc or ~/.bashrc: eval "$(mesh init --shell)"
+			fmt.Print(`# Staypoint Shell Integration
+# Add to ~/.zshrc or ~/.bashrc: eval "$(staypoint init --shell)"
 
-alias ai-status="mesh status"
-alias ai-memo="mesh report --pdf --type work"
-alias ai-report="mesh report --pdf --type combined"
-alias ai-personal="mesh report --pdf --type personal"
-alias ai-gemini="mesh report --pdf --type gemini"
-alias ai-all="mesh report --pdf --type all"
-alias agy-status="mesh statusline"
-alias ai-shot="mesh screenshot"
-alias ai-snap="mesh screenshot -i"
-alias ai-pull-shot="mesh screenshot --pull"
-alias ai-scp="mesh scp"
+alias ai-status="staypoint status"
+alias ai-memo="staypoint report --pdf --type work"
+alias ai-report="staypoint report --pdf --type combined"
+alias ai-personal="staypoint report --pdf --type personal"
+alias ai-gemini="staypoint report --pdf --type gemini"
+alias ai-all="staypoint report --pdf --type all"
+alias agy-status="staypoint statusline"
+alias ai-shot="staypoint screenshot"
+alias ai-snap="staypoint screenshot -i"
+alias ai-pull-shot="staypoint screenshot --pull"
+alias ai-scp="staypoint scp"
 
 ai() {
-  eval "$(mesh route "$PWD" --eval 2>/dev/null)"
-  local TARGET_MODEL="${MESH_ROUTE_MODEL:-gemini-3.8-flash-high}"
-  local TARGET_CMD="${MESH_ROUTE_COMMAND:-agy}"
+  eval "$(staypoint route "$PWD" --eval 2>/dev/null)"
+  local TARGET_MODEL="${STAYPOINT_ROUTE_MODEL:-${MESH_ROUTE_MODEL:-gemini-3.8-flash-high}}"
+  local TARGET_CMD="${STAYPOINT_ROUTE_COMMAND:-${MESH_ROUTE_COMMAND:-agy}}"
 
-  echo -e "\033[1;36m[Agent-Mesh]\033[0m Target: \033[1;32m$TARGET_MODEL\033[0m ($TARGET_CMD)"
-  echo -e "\033[0;33m[Context]\033[0m $MESH_ROUTE_REASON"
+  echo -e "\033[1;36m[Staypoint]\033[0m Target: \033[1;32m$TARGET_MODEL\033[0m ($TARGET_CMD)"
+  echo -e "\033[0;33m[Context]\033[0m ${STAYPOINT_ROUTE_REASON:-$MESH_ROUTE_REASON}"
 
-  mesh statusline
+  staypoint statusline
 
-  if [[ "$MESH_ROUTE_TARGET" == "remote-claude" ]]; then
-    mesh bridge launch "$PWD" "$@"
+  if [[ "${STAYPOINT_ROUTE_TARGET:-$MESH_ROUTE_TARGET}" == "remote-claude" ]]; then
+    staypoint bridge launch "$PWD" "$@"
   elif [[ "$TARGET_CMD" == "claude" ]]; then
     command claude "$@"
   else
@@ -380,7 +390,7 @@ claude() {
   if [[ "$force" == true ]]; then
     command claude "${clean_args[@]}"
   else
-    mesh "${clean_args[@]}"
+    staypoint "${clean_args[@]}"
   fi
 }
 
@@ -398,7 +408,7 @@ agy() {
   if [[ "$force" == true ]]; then
     command agy "${clean_args[@]}"
   else
-    mesh "${clean_args[@]}"
+    staypoint "${clean_args[@]}"
   fi
 }
 `)
@@ -412,15 +422,15 @@ agy() {
 
 		store, err := db.Open(cfg.DBPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error initializing mesh.db: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error initializing staypoint.db: %v\n", err)
 			os.Exit(1)
 		}
 		defer store.Close()
 
-		fmt.Printf("\033[1;32m✔ Agent-Mesh initialized at: %s\033[0m\n", cfg.DataDir)
+		fmt.Printf("\033[1;32m✔ Staypoint initialized at: %s\033[0m\n", cfg.DataDir)
 		fmt.Printf("✔ SQLite database active with WAL mode: %s\n", cfg.DBPath)
 		fmt.Println("\nTo install shell aliases & auto-router, add this to your ~/.zshrc:")
-		fmt.Println("  \033[1;36meval \"$(mesh init --shell)\"\033[0m")
+		fmt.Println("  \033[1;36meval \"$(staypoint init --shell)\"\033[0m")
 	},
 }
 
@@ -448,7 +458,7 @@ var bridgeCheckCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Bridge check error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("\033[1;36m[Agent-Mesh WorkBridge]\033[0m\n")
+		fmt.Printf("\033[1;36m[Staypoint WorkBridge]\033[0m\n")
 		fmt.Printf("  • Local Path:   %s\n", res.LocalPath)
 		fmt.Printf("  • Is Work Repo: %v\n", res.IsWorkRepo)
 		fmt.Printf("  • Remote Host:  %s\n", res.RemoteHost)
@@ -698,7 +708,7 @@ var handoffCmd = &cobra.Command{
 		fmt.Printf("  • Target Model: \033[1;36m%s\033[0m\n", record.TargetModel)
 		fmt.Printf("  • Project:      %s (branch: %s)\n", record.RepoName, record.GitBranch)
 		fmt.Printf("  • Files:        %d modified\n", len(record.ModifiedFiles))
-		fmt.Printf("  • Manifest:     ~/.agent-mesh/handoffs/<session_id>-manifest.json\n")
+		fmt.Printf("  • Manifest:     ~/.staypoint/handoffs/<session_id>-manifest.json\n")
 		fmt.Printf("  • Prompt saved: /tmp/ai-handoff.md\n")
 
 		// If --push is requested, push to remote host
@@ -809,7 +819,7 @@ var handoffListCmd = &cobra.Command{
 		} else if all {
 			header = "All Saved Handoffs"
 		}
-		fmt.Printf("\n\033[1;36m[Agent-Mesh :: %s]\033[0m\n", header)
+		fmt.Printf("\n\033[1;36m[Staypoint :: %s]\033[0m\n", header)
 		renderManifestsTable(manifests, currentBranch)
 	},
 }
@@ -856,7 +866,7 @@ var handoffSearchCmd = &cobra.Command{
 		}
 
 		currentBranch := meshContext.GetCurrentGitBranch(cwd)
-		fmt.Printf("\n\033[1;36m[Agent-Mesh :: Search Handoffs Matching %q]\033[0m\n", query)
+		fmt.Printf("\n\033[1;36m[Staypoint :: Search Handoffs Matching %q]\033[0m\n", query)
 		renderManifestsTable(manifests, currentBranch)
 	},
 }
@@ -881,7 +891,7 @@ var handoffBranchesCmd = &cobra.Command{
 			return
 		}
 		currentBranch := meshContext.GetCurrentGitBranch(cwd)
-		fmt.Printf("\n\033[1;36m[Agent-Mesh :: Branches with Saved Handoffs in %s]\033[0m\n", filepath.Base(cwd))
+		fmt.Printf("\n\033[1;36m[Staypoint :: Branches with Saved Handoffs in %s]\033[0m\n", filepath.Base(cwd))
 		if len(summaries) == 0 {
 			fmt.Println("  No branches with saved handoffs found.")
 			return
@@ -903,7 +913,7 @@ var handoffBranchesCmd = &cobra.Command{
 				title = title[:60] + "..."
 			}
 			fmt.Printf("    Latest: \033[1m%q\033[0m\n", title)
-			fmt.Printf("    Filter via: \033[0;33mmesh handoff list -b %s\033[0m\n\n", s.Branch)
+			fmt.Printf("    Filter via: \033[0;33mstaypoint handoff list -b %s\033[0m\n\n", s.Branch)
 		}
 	},
 }
@@ -976,7 +986,7 @@ var handoffCopyCmd = &cobra.Command{
 
 var handoffsCmd = &cobra.Command{
 	Use:   "handoffs",
-	Short: "Alias for mesh handoff list",
+	Short: "Alias for staypoint handoff list",
 	Run: func(cmd *cobra.Command, args []string) {
 		handoffListCmd.Run(cmd, args)
 	},
@@ -1030,7 +1040,7 @@ var syncExportCmd = &cobra.Command{
 		fmt.Printf("  • Archive:     %s\n", dest)
 		fmt.Printf("  • Records:     %d\n", count)
 		fmt.Printf("  • Machine:     %s\n", cfg.MachineRole)
-		fmt.Printf("  • To import:   mesh sync import %s\n", dest)
+		fmt.Printf("  • To import:   staypoint sync import %s\n", dest)
 	},
 }
 
@@ -1051,7 +1061,7 @@ var syncImportCmd = &cobra.Command{
 
 var taskCmd = &cobra.Command{
 	Use:   "task",
-	Short: "Manage development tasks and context in mesh.db",
+	Short: "Manage development tasks and context in staypoint.db",
 }
 
 var taskListCmd = &cobra.Command{
@@ -1070,7 +1080,7 @@ var taskListCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Error listing tasks: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("\033[1;36m[Agent-Mesh Tasks]\033[0m")
+		fmt.Println("\033[1;36m[Staypoint Tasks]\033[0m")
 		if len(tasks) == 0 {
 			fmt.Println("  No active tasks found.")
 			return
@@ -1193,7 +1203,10 @@ var whereCmd = &cobra.Command{
 		var handoffRec *meshContext.HandoffRecord
 		home, _ := os.UserHomeDir()
 		if home != "" {
-			handoffFile := filepath.Join(home, ".agent-mesh", "handoff.json")
+			handoffFile := filepath.Join(home, ".staypoint", "handoff.json")
+			if _, err := os.Stat(handoffFile); os.IsNotExist(err) {
+				handoffFile = filepath.Join(home, ".agent-mesh", "handoff.json")
+			}
 			if data, err := os.ReadFile(handoffFile); err == nil {
 				var rec meshContext.HandoffRecord
 				if err := json.Unmarshal(data, &rec); err == nil {
@@ -1237,7 +1250,7 @@ var whereCmd = &cobra.Command{
 			return
 		}
 
-		fmt.Printf("\033[1;36m📍 [Agent-Mesh :: Context Resumption]\033[0m\n")
+		fmt.Printf("\033[1;36m📍 [Staypoint :: Context Resumption]\033[0m\n")
 		fmt.Printf("  • Repository:   \033[1m%s\033[0m (branch: \033[1;33m%s\033[0m)\n", gitCtx.RepoName, gitCtx.Branch)
 		if taskName != "" {
 			if taskID != "" {
@@ -1246,7 +1259,7 @@ var whereCmd = &cobra.Command{
 				fmt.Printf("  • Active Task:  \033[1;32m%s\033[0m\n", taskName)
 			}
 		} else {
-			fmt.Printf("  • Active Task:  (No active task registered in mesh.db)\n")
+			fmt.Printf("  • Active Task:  (No active task registered in staypoint.db)\n")
 		}
 
 		fmt.Printf("  • Next Step:    \033[1;35m%s\033[0m\n", nextStep)
@@ -1308,7 +1321,25 @@ var checkpointCmd = &cobra.Command{
 		if cp.Message != "" {
 			fmt.Printf("  • Message: %s\n", cp.Message)
 		}
-		fmt.Printf("  • Restore: run \033[1;36mmesh undo %s\033[0m or \033[1;36mmesh undo\033[0m anytime.\n", cp.ID)
+		fmt.Printf("  • Restore: run \033[1;36mstaypoint undo %s\033[0m or \033[1;36mstaypoint undo\033[0m anytime.\n", cp.ID)
+	},
+}
+
+var checkpointMigrateCmd = &cobra.Command{
+	Use:   "migrate-legacy-refs",
+	Short: "Migrate legacy git refs from refs/mesh/checkpoints to refs/staypoint/checkpoints",
+	Run: func(cmd *cobra.Command, args []string) {
+		cwd, _ := os.Getwd()
+		count, err := checkpoint.MigrateLegacyRefs(cmd.Context(), cwd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\033[1;31m✖ Migration failed:\033[0m %v\n", err)
+			os.Exit(1)
+		}
+		if count == 0 {
+			fmt.Println("No legacy refs/mesh/checkpoints found to migrate.")
+			return
+		}
+		fmt.Printf("\033[1;32m✔ Migrated %d legacy checkpoint refs to refs/staypoint/checkpoints/\033[0m\n", count)
 	},
 }
 
@@ -1362,7 +1393,7 @@ var undoCmd = &cobra.Command{
 
 		fmt.Printf("\033[1;32m✔ Working tree rolled back to checkpoint:\033[0m \033[1m%s\033[0m (%s)\n", res.RestoredTo.ID, res.RestoredTo.CommitSHA[:10])
 		if res.SafetyCP != nil {
-			fmt.Printf("  • Safety snapshot saved: %s (run \033[1;36mmesh redo\033[0m to reverse)\n", res.SafetyCP.ID)
+			fmt.Printf("  • Safety snapshot saved: %s (run \033[1;36mstaypoint redo\033[0m to reverse)\n", res.SafetyCP.ID)
 		}
 		if len(res.FilesReverted) > 0 {
 			fmt.Printf("  • Reverted: %d files\n", len(res.FilesReverted))
@@ -1405,10 +1436,10 @@ var checkpointsListCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		if len(cps) == 0 {
-			fmt.Println("No checkpoints found. Create one with `mesh checkpoint`.")
+			fmt.Println("No checkpoints found. Create one with `staypoint checkpoint`.")
 			return
 		}
-		fmt.Printf("\033[1;36m📍 [Agent-Mesh :: Micro-Checkpoints (Time Machine)]\033[0m\n")
+		fmt.Printf("\033[1;36m📍 [Staypoint :: Micro-Checkpoints (Time Machine)]\033[0m\n")
 		for _, cp := range cps {
 			fmt.Printf("  • \033[1;32m%s\033[0m (%s) - %s\n", cp.ID, cp.CommitSHA[:10], cp.Message)
 		}
@@ -1477,7 +1508,7 @@ var wireCmd = &cobra.Command{
 
 var wirePostCmd = &cobra.Command{
 	Use:   "post [message]",
-	Short: "Post a message or status update to the mesh wire",
+	Short: "Post a message or status update to the staypoint wire",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		store, err := db.Open(cfg.DBPath)
@@ -1511,7 +1542,7 @@ var wirePostCmd = &cobra.Command{
 var wireListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"read"},
-	Short:   "Read recent messages from the mesh wire",
+	Short:   "Read recent messages from the staypoint wire",
 	Run: func(cmd *cobra.Command, args []string) {
 		store, err := db.Open(cfg.DBPath)
 		if err != nil {
@@ -1529,7 +1560,7 @@ var wireListCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		fmt.Println("\033[1;36m[Mesh Wire Broadcasts]\033[0m")
+		fmt.Println("\033[1;36m[Staypoint Wire Broadcasts]\033[0m")
 		if len(msgs) == 0 {
 			fmt.Println("  No active wire messages.")
 			return
@@ -1548,7 +1579,7 @@ var wireListCmd = &cobra.Command{
 
 var wirePruneCmd = &cobra.Command{
 	Use:   "prune",
-	Short: "Prune expired messages from the mesh wire",
+	Short: "Prune expired messages from the staypoint wire",
 	Run: func(cmd *cobra.Command, args []string) {
 		store, err := db.Open(cfg.DBPath)
 		if err != nil {
@@ -1609,7 +1640,7 @@ var breakerListCmd = &cobra.Command{
 			if b.IsTripped {
 				fmt.Printf("    Failing tool: %s | Cmd: %s\n", b.FailingTool, b.FailingCommand)
 				fmt.Printf("    Last error:   %s\n", b.LastError)
-				fmt.Printf("    Reset via:    mesh breaker reset %s\n", b.SessionID)
+				fmt.Printf("    Reset via:    staypoint breaker reset %s\n", b.SessionID)
 			}
 		}
 	},
@@ -1650,7 +1681,7 @@ func cleanGitStatusFile(line string) string {
 
 var hookCmd = &cobra.Command{
 	Use:   "hook",
-	Short: "Agent-Mesh lifecycle and prompt hooks for Claude Code and Antigravity",
+	Short: "Staypoint lifecycle and prompt hooks for Claude Code and Antigravity",
 }
 
 var hookPromptCmd = &cobra.Command{
@@ -1687,6 +1718,8 @@ func handleHookPrompt() {
 			sessionID = s
 		} else if s := os.Getenv("GEMINI_SESSION_ID"); s != "" {
 			sessionID = s
+		} else if s := os.Getenv("STAYPOINT_SESSION_ID"); s != "" {
+			sessionID = s
 		} else if s := os.Getenv("MESH_SESSION_ID"); s != "" {
 			sessionID = s
 		} else {
@@ -1697,7 +1730,7 @@ func handleHookPrompt() {
 	cwd, _ := os.Getwd()
 	var notices []string
 
-	// Open mesh database
+	// Open staypoint database
 	var dbConn *sql.DB
 	if cfg != nil && cfg.DBPath != "" {
 		if store, err := db.Open(cfg.DBPath); err == nil {
@@ -1749,7 +1782,7 @@ func handleHookPrompt() {
 					ago := time.Since(c.LastTouchedAt).Round(time.Second)
 					collLines = append(collLines, fmt.Sprintf("  • %s (touched %s ago by agent %s [session: %s, PID: %d])", c.FilePath, ago, c.OtherAgent, c.OtherSessionID, c.OtherPID))
 				}
-				notices = append(notices, fmt.Sprintf("⚠️ [AGENT-MESH MULTI-AGENT COLLISION WARNING]: Another agent session is actively editing overlapping files in this repository:\n%s\nCoordinate with the user or wait for peer completion before editing or committing these files to prevent conflicts.", strings.Join(collLines, "\n")))
+				notices = append(notices, fmt.Sprintf("⚠️ [STAYPOINT MULTI-AGENT COLLISION WARNING]: Another agent session is actively editing overlapping files in this repository:\n%s\nCoordinate with the user or wait for peer completion before editing or committing these files to prevent conflicts.", strings.Join(collLines, "\n")))
 			}
 		}
 
@@ -1762,7 +1795,7 @@ func handleHookPrompt() {
 			}
 		}
 		if cb != nil && cb.IsTripped {
-			notices = append(notices, fmt.Sprintf("🚨 [AGENT-MESH CIRCUIT BREAKER ACTIVE]: Execution pause active because an agent loop was detected (%s on %s).\nLast error: %s\nTo reset and proceed, run: mesh breaker reset %s", cb.FailingTool, cb.FailingCommand, cb.LastError, cb.SessionID))
+			notices = append(notices, fmt.Sprintf("🚨 [STAYPOINT CIRCUIT BREAKER ACTIVE]: Execution pause active because an agent loop was detected (%s on %s).\nLast error: %s\nTo reset and proceed, run: staypoint breaker reset %s", cb.FailingTool, cb.FailingCommand, cb.LastError, cb.SessionID))
 		}
 
 		// D. Task Budget Evaluation
@@ -1770,10 +1803,10 @@ func handleHookPrompt() {
 		if activeTask != nil {
 			eval := meshContext.EvaluateTaskBudget(activeTask)
 			if eval.IsBlocked {
-				fmt.Fprintf(os.Stderr, "❌ [AGENT-MESH TASK BUDGET EXCEEDED]\nTask %q budget limit reached: %s\nSpent: $%.2f / $%.2f (%d / %d turns)\nHalting execution to prevent runaway costs.\nTo increase budget, run: mesh task budget %s --usd <limit>\n", activeTask.Name, eval.Reason, activeTask.SpentUSD, activeTask.MaxBudgetUSD, activeTask.SpentTurns, activeTask.MaxTurns, activeTask.ID)
+				fmt.Fprintf(os.Stderr, "❌ [STAYPOINT TASK BUDGET EXCEEDED]\nTask %q budget limit reached: %s\nSpent: $%.2f / $%.2f (%d / %d turns)\nHalting execution to prevent runaway costs.\nTo increase budget, run: staypoint task budget %s --usd <limit>\n", activeTask.Name, eval.Reason, activeTask.SpentUSD, activeTask.MaxBudgetUSD, activeTask.SpentTurns, activeTask.MaxTurns, activeTask.ID)
 				os.Exit(2)
 			} else if eval.IsWarning {
-				notices = append(notices, fmt.Sprintf("⚠️ [AGENT-MESH TASK BUDGET WARNING]: Task %q is at %.1f%% of budget ($%.2f / $%.2f max, %d / %d turns). %s", activeTask.Name, eval.PctBudget, activeTask.SpentUSD, activeTask.MaxBudgetUSD, activeTask.SpentTurns, activeTask.MaxTurns, eval.Reason))
+				notices = append(notices, fmt.Sprintf("⚠️ [STAYPOINT TASK BUDGET WARNING]: Task %q is at %.1f%% of budget ($%.2f / $%.2f max, %d / %d turns). %s", activeTask.Name, eval.PctBudget, activeTask.SpentUSD, activeTask.MaxBudgetUSD, activeTask.SpentTurns, activeTask.MaxTurns, eval.Reason))
 			}
 		}
 
@@ -1784,7 +1817,7 @@ func handleHookPrompt() {
 			for _, m := range unreadMsgs {
 				wireLines = append(wireLines, fmt.Sprintf("  • [%s] <%s>: %s", m.Channel, m.Author, m.Content))
 			}
-			notices = append(notices, fmt.Sprintf("📡 [MESH WIRE :: PEER AGENT BROADCASTS]:\n%s", strings.Join(wireLines, "\n")))
+			notices = append(notices, fmt.Sprintf("📡 [STAYPOINT WIRE :: PEER AGENT BROADCASTS]:\n%s", strings.Join(wireLines, "\n")))
 		}
 
 		// F. Check for previous session handoffs in repo to present proactive pickup banner
@@ -1792,7 +1825,7 @@ func handleHookPrompt() {
 		if latestMan, err := meshContext.GetLatestManifest(baseHandoffsDir, cwd); err == nil && latestMan != nil {
 			if latestMan.SessionID != sessionID && time.Since(latestMan.CreatedAt) < 4*time.Hour {
 				cleanSess := strings.ReplaceAll(sessionID, "/", "_")
-				pickupDebounce := filepath.Join(os.TempDir(), fmt.Sprintf("mesh-pickup-warned-%s.ts", cleanSess))
+				pickupDebounce := filepath.Join(os.TempDir(), fmt.Sprintf("staypoint-pickup-warned-%s.ts", cleanSess))
 				if _, err := os.Stat(pickupDebounce); os.IsNotExist(err) {
 					_ = os.WriteFile(pickupDebounce, []byte(fmt.Sprintf("%d", time.Now().Unix())), 0644)
 					age := time.Since(latestMan.CreatedAt).Round(time.Minute)
@@ -1804,7 +1837,7 @@ func handleHookPrompt() {
 					if goalInfo == "" {
 						goalInfo = latestMan.Title
 					}
-					notices = append(notices, fmt.Sprintf("📋 [AGENT-MESH PREVIOUS CONTEXT AVAILABLE]: Recent handoff from session %s (%s ago%s) found.\nGoal: %s\nTo inspect or adopt this context, view: %s or run: mesh handoff show %s", latestMan.SessionID, age, branchInfo, goalInfo, latestMan.HandoffFile, latestMan.SessionID))
+					notices = append(notices, fmt.Sprintf("📋 [STAYPOINT PREVIOUS CONTEXT AVAILABLE]: Recent handoff from session %s (%s ago%s) found.\nGoal: %s\nTo inspect or adopt this context, view: %s or run: staypoint handoff show %s", latestMan.SessionID, age, branchInfo, goalInfo, latestMan.HandoffFile, latestMan.SessionID))
 				}
 			}
 		}
@@ -1868,7 +1901,7 @@ func handleHookPrompt() {
 		}
 
 		if triggeredPool != nil {
-			debounceFile := filepath.Join(os.TempDir(), fmt.Sprintf("mesh-prelock-warned-u%d.ts", os.Getuid()))
+			debounceFile := filepath.Join(os.TempDir(), fmt.Sprintf("staypoint-prelock-warned-u%d.ts", os.Getuid()))
 			shouldNotify := true
 			if stat, err := os.Stat(debounceFile); err == nil {
 				if time.Since(stat.ModTime()) < 15*time.Minute {
@@ -1886,12 +1919,12 @@ func handleHookPrompt() {
 				})
 
 				telemetry.SendNotification(
-					"[Agent-Mesh] Quota Limit Warning (15% left)",
+					"[Staypoint] Quota Limit Warning (15% left)",
 					fmt.Sprintf("%s %s. Handoff staged in clipboard. Switch to Gemini (/model gemini-3.8-flash-high or open agy and paste).", triggeredPool.Name, warningReason),
 				)
 			}
 
-			notices = append(notices, fmt.Sprintf("⚠️ [AGENT-MESH QUOTA NOTICE]: %s %s. Agent-Mesh has pre-staged a zero-token context handoff snapshot in your system clipboard and /tmp/ai-handoff.md. Remind the user to prepare to switch to Gemini (/model gemini-3.8-flash-high or open Antigravity 'agy' and paste) before running out of turns.", triggeredPool.Name, warningReason))
+			notices = append(notices, fmt.Sprintf("⚠️ [STAYPOINT QUOTA NOTICE]: %s %s. Staypoint has pre-staged a zero-token context handoff snapshot in your system clipboard and /tmp/ai-handoff.md. Remind the user to prepare to switch to Gemini (/model gemini-3.8-flash-high or open Antigravity 'agy' and paste) before running out of turns.", triggeredPool.Name, warningReason))
 		}
 	}
 
@@ -2021,7 +2054,7 @@ func handleResumeFlow(cmd *cobra.Command, args []string, handoffOnly bool) {
 		}
 	} else {
 		repoName := filepath.Base(cwd)
-		fmt.Printf("\n\033[1;36m[Agent-Mesh :: Recent Sessions in %s]\033[0m\n", repoName)
+		fmt.Printf("\n\033[1;36m[Staypoint :: Recent Sessions in %s]\033[0m\n", repoName)
 		for i, s := range sessions {
 			toolBadge := "\033[1;35m🟣 Claude\033[0m"
 			if s.AgentType == "gemini" {
@@ -2201,7 +2234,7 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 	_ = router.RenderStatusline(os.Stdout, nil)
 
 	if dryRun {
-		fmt.Printf("\n\033[1;36m[Agent-Mesh :: Dry Run]\033[0m\n")
+		fmt.Printf("\n\033[1;36m[Staypoint :: Dry Run]\033[0m\n")
 		fmt.Printf("  • Tool:        %s\n", targetTool)
 		fmt.Printf("  • Model:       %s\n", targetModel)
 		fmt.Printf("  • Remote Work: %t\n", isRemoteWork)
@@ -2283,6 +2316,7 @@ func init() {
 	rootCmd.AddCommand(undoCmd)
 	rootCmd.AddCommand(redoCmd)
 	rootCmd.AddCommand(checkpointsListCmd)
+	rootCmd.AddCommand(checkpointMigrateCmd)
 	rootCmd.AddCommand(condenseCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(hookCmd)

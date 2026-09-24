@@ -54,7 +54,7 @@ panic: runtime error: invalid memory address or nil pointer dereference
 [signal SIGSEGV: code=0x2 addr=0x0 pc=0x104b2a8d4]
 
 goroutine 1 [running]:
-github.com/VinnyVanGogh/agent-mesh/internal/auth.Validate(0x0)
+github.com/VinnyVanGogh/staypoint/internal/auth.Validate(0x0)
 	/Users/vincevasile/dev/agent-mesh/internal/auth/auth.go:42 +0x24
 runtime.panicmem(...)
 	/usr/local/go/src/runtime/panic.go:260

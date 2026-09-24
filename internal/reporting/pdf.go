@@ -11,7 +11,7 @@ import (
 
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 )
 
 // Backwards-compatible MemoData struct

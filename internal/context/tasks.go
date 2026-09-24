@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 )
 
 // Task represents an engineering task tracked within SQLite mesh.db.

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 	_ "modernc.org/sqlite"
 )
 

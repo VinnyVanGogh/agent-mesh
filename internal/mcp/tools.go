@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/checkpoint"
-	"github.com/VinnyVanGogh/agent-mesh/internal/condenser"
-	meshContext "github.com/VinnyVanGogh/agent-mesh/internal/context"
-	"github.com/VinnyVanGogh/agent-mesh/internal/router"
-	"github.com/VinnyVanGogh/agent-mesh/internal/wire"
+	"github.com/VinnyVanGogh/staypoint/internal/checkpoint"
+	"github.com/VinnyVanGogh/staypoint/internal/condenser"
+	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/router"
+	"github.com/VinnyVanGogh/staypoint/internal/wire"
 )
 
 func toolSuccess(text string) *ToolCallResult {
@@ -43,7 +43,7 @@ func toolError(msg string) *ToolCallResult {
 func (s *Server) getToolsList() []Tool {
 	return []Tool{
 		{
-			Name:        "mesh_checkpoint",
+			Name:        "staypoint_checkpoint",
 			Description: "take ephemeral git micro-checkpoint",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -60,7 +60,7 @@ func (s *Server) getToolsList() []Tool {
 			},
 		},
 		{
-			Name:        "mesh_undo",
+			Name:        "staypoint_undo",
 			Description: "restore tree to latest or specific checkpoint",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -85,7 +85,7 @@ func (s *Server) getToolsList() []Tool {
 			},
 		},
 		{
-			Name:        "mesh_wire_post",
+			Name:        "staypoint_wire_post",
 			Description: "broadcast a message on Mesh Wire",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -107,7 +107,7 @@ func (s *Server) getToolsList() []Tool {
 			},
 		},
 		{
-			Name:        "mesh_wire_list",
+			Name:        "staypoint_wire_list",
 			Description: "list recent wire messages",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -124,7 +124,7 @@ func (s *Server) getToolsList() []Tool {
 			},
 		},
 		{
-			Name:        "mesh_task_list",
+			Name:        "staypoint_task_list",
 			Description: "list active tasks and budget spend meters",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -137,7 +137,7 @@ func (s *Server) getToolsList() []Tool {
 			},
 		},
 		{
-			Name:        "mesh_condense",
+			Name:        "staypoint_condense",
 			Description: "condense compiler errors / stack traces",
 			InputSchema: InputSchema{
 				Type: "object",
@@ -159,7 +159,7 @@ func (s *Server) getToolsList() []Tool {
 			},
 		},
 		{
-			Name:        "mesh_status",
+			Name:        "staypoint_status",
 			Description: "return rate limit quotas, active models, and pacer status",
 			InputSchema: InputSchema{
 				Type:       "object",
@@ -171,19 +171,19 @@ func (s *Server) getToolsList() []Tool {
 
 func (s *Server) handleCallTool(ctx context.Context, params CallToolParams) *ToolCallResult {
 	switch params.Name {
-	case "mesh_checkpoint":
+	case "staypoint_checkpoint":
 		return s.handleCheckpoint(ctx, params.Arguments)
-	case "mesh_undo":
+	case "staypoint_undo":
 		return s.handleUndo(ctx, params.Arguments)
-	case "mesh_wire_post":
+	case "staypoint_wire_post":
 		return s.handleWirePost(ctx, params.Arguments)
-	case "mesh_wire_list":
+	case "staypoint_wire_list":
 		return s.handleWireList(ctx, params.Arguments)
-	case "mesh_task_list":
+	case "staypoint_task_list":
 		return s.handleTaskList(ctx, params.Arguments)
-	case "mesh_condense":
+	case "staypoint_condense":
 		return s.handleCondense(ctx, params.Arguments)
-	case "mesh_status":
+	case "staypoint_status":
 		return s.handleStatus(ctx, params.Arguments)
 	default:
 		return toolError(fmt.Sprintf("unknown tool: %s", params.Name))

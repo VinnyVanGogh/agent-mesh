@@ -48,7 +48,15 @@ func GetHandoffsDir(dataDir string) string {
 		if err != nil {
 			home = "."
 		}
-		dataDir = filepath.Join(home, ".agent-mesh")
+		newDir := filepath.Join(home, ".staypoint")
+		oldDir := filepath.Join(home, ".agent-mesh")
+		if _, err := os.Stat(newDir); err == nil {
+			dataDir = newDir
+		} else if _, err := os.Stat(oldDir); err == nil {
+			dataDir = oldDir
+		} else {
+			dataDir = newDir
+		}
 	}
 	return filepath.Join(dataDir, "handoffs")
 }

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
 	_ "modernc.org/sqlite"
 )
 

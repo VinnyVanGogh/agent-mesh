@@ -2,6 +2,7 @@ package router
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -23,15 +24,18 @@ func BenchmarkRenderStatusline(b *testing.B) {
 // TestBenchmarkStatuslineProcessLatency measures total end-to-end CLI execution time
 // including process fork/exec, Go runtime startup, and stdout write.
 func TestBenchmarkStatuslineProcessLatency(t *testing.T) {
-	meshBin := "../../bin/mesh"
+	staypointBin := "../../bin/staypoint"
+	if _, err := os.Stat(staypointBin); os.IsNotExist(err) {
+		staypointBin = "../../bin/mesh"
+	}
 	iterations := 20
 	var samples []time.Duration
 
 	for i := 0; i < iterations; i++ {
 		start := time.Now()
-		cmd := exec.Command(meshBin, "statusline")
+		cmd := exec.Command(staypointBin, "statusline")
 		if err := cmd.Run(); err != nil {
-			t.Fatalf("failed to run mesh statusline: %v", err)
+			t.Fatalf("failed to run staypoint statusline: %v", err)
 		}
 		samples = append(samples, time.Since(start))
 	}

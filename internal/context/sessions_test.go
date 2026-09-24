@@ -95,7 +95,7 @@ func TestGenerateSessionHandoff(t *testing.T) {
 	}
 
 	// Verify the 5 anchors
-	if !strings.Contains(handoff, "AGENT-MESH CONTEXT HANDOFF") {
+	if !strings.Contains(handoff, "STAYPOINT CONTEXT HANDOFF") {
 		t.Errorf("missing header")
 	}
 	if !strings.Contains(handoff, "Primary Goal") || !strings.Contains(handoff, "Create a high-speed circuit breaker") {

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 )
 
 type mockFileInfo struct {

@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 )
 
 // TunnelOptions configures dev server port forwarding over SSH.

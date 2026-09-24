@@ -71,18 +71,18 @@ func CreateCheckpoint(ctx context.Context, opts CreateOptions) (*Checkpoint, err
 	// 1. Get HEAD commit if available
 	headSHA, _ := runGit(ctx, rootDir, nil, "rev-parse", "HEAD")
 
-	// 2. Prepare isolated index: <gitDir>/mesh_index
-	meshIndex := filepath.Join(gitDir, "mesh_index")
+	// 2. Prepare isolated index: <gitDir>/staypoint_index
+	meshIndex := filepath.Join(gitDir, "staypoint_index")
 	mainIndex := filepath.Join(gitDir, "index")
 
-	// Copy main index to mesh_index if it exists to preserve tracked file cache
+	// Copy main index to staypoint_index if it exists to preserve tracked file cache
 	if _, err := os.Stat(mainIndex); err == nil {
 		copyFile(mainIndex, meshIndex)
 	}
 
 	indexEnv := []string{fmt.Sprintf("GIT_INDEX_FILE=%s", meshIndex)}
 
-	// 3. Stage all modifications (including untracked by default) into mesh_index
+	// 3. Stage all modifications (including untracked by default) into staypoint_index
 	addArgs := []string{"add", "-A"}
 	if opts.ExcludeUntracked {
 		addArgs = []string{"add", "-u"}
@@ -92,14 +92,14 @@ func CreateCheckpoint(ctx context.Context, opts CreateOptions) (*Checkpoint, err
 		return nil, fmt.Errorf("failed to stage into isolated index: %w", err)
 	}
 
-	// 4. Write tree object from mesh_index
+	// 4. Write tree object from staypoint_index
 	treeSHA, err := runGit(ctx, rootDir, indexEnv, "write-tree")
 	if err != nil {
 		_ = os.Remove(meshIndex)
 		return nil, fmt.Errorf("failed to write git tree: %w", err)
 	}
 
-	// Clean up mesh_index
+	// Clean up staypoint_index
 	_ = os.Remove(meshIndex)
 
 	// 5. Generate checkpoint ID
@@ -130,9 +130,9 @@ func CreateCheckpoint(ctx context.Context, opts CreateOptions) (*Checkpoint, err
 	}
 
 	// 7. Update custom refs
-	sessionRef := fmt.Sprintf("refs/mesh/checkpoints/%s/%s", sessionID, cpID)
-	sessionLatestRef := fmt.Sprintf("refs/mesh/checkpoints/%s/latest", sessionID)
-	globalLatestRef := "refs/mesh/checkpoints/latest"
+	sessionRef := fmt.Sprintf("refs/staypoint/checkpoints/%s/%s", sessionID, cpID)
+	sessionLatestRef := fmt.Sprintf("refs/staypoint/checkpoints/%s/latest", sessionID)
+	globalLatestRef := "refs/staypoint/checkpoints/latest"
 
 	_, _ = runGit(ctx, rootDir, nil, "update-ref", sessionRef, commitSHA)
 	_, _ = runGit(ctx, rootDir, nil, "update-ref", sessionLatestRef, commitSHA)
@@ -174,7 +174,7 @@ func ListCheckpoints(ctx context.Context, workDir string, limit int) ([]Checkpoi
 		return nil, err
 	}
 
-	out, err := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname) %(objectname) %(contents:subject) %(creatordate:iso8601)", "refs/mesh/checkpoints/")
+	out, err := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname) %(objectname) %(contents:subject) %(creatordate:iso8601)", "refs/staypoint/checkpoints/")
 	if err != nil {
 		return nil, fmt.Errorf("failed to list checkpoint refs: %w", err)
 	}
@@ -232,7 +232,7 @@ func GetLatestCheckpoint(ctx context.Context, workDir string) (*Checkpoint, erro
 		return nil, err
 	}
 
-	commitSHA, err := runGit(ctx, rootDir, nil, "rev-parse", "refs/mesh/checkpoints/latest")
+	commitSHA, err := runGit(ctx, rootDir, nil, "rev-parse", "refs/staypoint/checkpoints/latest")
 	if err != nil {
 		return nil, fmt.Errorf("no checkpoints found in repository")
 	}
@@ -244,7 +244,7 @@ func GetLatestCheckpoint(ctx context.Context, workDir string) (*Checkpoint, erro
 		ID:        "latest",
 		CommitSHA: commitSHA,
 		Message:   msg,
-		Ref:       "refs/mesh/checkpoints/latest",
+		Ref:       "refs/staypoint/checkpoints/latest",
 	}, nil
 }
 
@@ -259,10 +259,10 @@ func DiffCheckpoint(ctx context.Context, workDir, checkpointID string) (string, 
 	if !strings.HasPrefix(targetRef, "refs/") && len(targetRef) != 40 {
 		// Try resolving ID or latest
 		if targetRef == "" || targetRef == "latest" {
-			targetRef = "refs/mesh/checkpoints/latest"
+			targetRef = "refs/staypoint/checkpoints/latest"
 		} else {
 			// Find matching ref
-			refs, _ := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname)", fmt.Sprintf("refs/mesh/checkpoints/*/%s", targetRef))
+			refs, _ := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname)", fmt.Sprintf("refs/staypoint/checkpoints/*/%s", targetRef))
 			if len(strings.TrimSpace(refs)) > 0 {
 				targetRef = strings.TrimSpace(refs)
 			}
@@ -316,4 +316,33 @@ func copyFile(src, dst string) {
 	defer out.Close()
 
 	_, _ = io.Copy(out, in)
+}
+
+// MigrateLegacyRefs detects legacy refs under refs/mesh/checkpoints and copies them to refs/staypoint/checkpoints.
+func MigrateLegacyRefs(ctx context.Context, workDir string) (int, error) {
+	rootDir, _, err := getGitPaths(ctx, workDir)
+	if err != nil {
+		return 0, err
+	}
+
+	out, err := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname) %(objectname)", "refs/mesh/checkpoints/")
+	if err != nil || len(strings.TrimSpace(out)) == 0 {
+		return 0, nil
+	}
+
+	migrated := 0
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for _, line := range lines {
+		parts := strings.Fields(line)
+		if len(parts) != 2 {
+			continue
+		}
+		oldRef := parts[0]
+		sha := parts[1]
+		newRef := strings.Replace(oldRef, "refs/mesh/checkpoints", "refs/staypoint/checkpoints", 1)
+		if _, err := runGit(ctx, rootDir, nil, "update-ref", newRef, sha); err == nil {
+			migrated++
+		}
+	}
+	return migrated, nil
 }

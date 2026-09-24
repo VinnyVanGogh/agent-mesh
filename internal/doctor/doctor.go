@@ -16,12 +16,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 	_ "modernc.org/sqlite"
 )
 
-// CurrentVersion is the default local version of agent-mesh.
+// CurrentVersion is the default local version of staypoint.
 var CurrentVersion = "0.1.0"
 
 // Status represents the health status of a check.
@@ -326,7 +326,7 @@ func (d *FleetDoctor) Run(ctx context.Context) (*Report, error) {
 
 	runAll := !d.opts.ClaudeOnly && !d.opts.GeminiOnly && !d.opts.RemoteOnly
 
-	// Section 1: Agent-Mesh Infrastructure
+	// Section 1: Staypoint Infrastructure
 	if runAll {
 		report.Sections = append(report.Sections, d.checkInfrastructure(ctx))
 	}
@@ -368,11 +368,11 @@ func (d *FleetDoctor) Run(ctx context.Context) (*Report, error) {
 	return report, nil
 }
 
-// checkInfrastructure runs Section a) Agent-Mesh Infrastructure diagnostics.
+// checkInfrastructure runs Section a) Staypoint Infrastructure diagnostics.
 func (d *FleetDoctor) checkInfrastructure(ctx context.Context) SectionResult {
 	sec := SectionResult{
 		ID:     "infrastructure",
-		Name:   "Agent-Mesh Infrastructure",
+		Name:   "Staypoint Infrastructure",
 		Status: StatusOK,
 		Checks: make([]CheckResult, 0),
 	}
@@ -954,7 +954,7 @@ func aggregateStatus(checks []CheckResult) Status {
 func (d *FleetDoctor) FormatReport(report *Report) string {
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("%s%s[Agent-Mesh :: Fleet Doctor Engine]%s\n", ColorBold, ColorCyan, ColorReset))
+	b.WriteString(fmt.Sprintf("%s%s[Staypoint :: Fleet Doctor Engine]%s\n", ColorBold, ColorCyan, ColorReset))
 	b.WriteString(fmt.Sprintf("  • Target Remote Node:  %s%s%s\n", ColorPurple, report.RemoteHost, ColorReset))
 	if report.Fast {
 		b.WriteString(fmt.Sprintf("  • Execution Mode:      %s⚡ Fast (Remote network checks skipped)%s\n", ColorYellow, ColorReset))

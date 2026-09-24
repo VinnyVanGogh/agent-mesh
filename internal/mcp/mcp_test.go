@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	meshContext "github.com/VinnyVanGogh/agent-mesh/internal/context"
-	"github.com/VinnyVanGogh/agent-mesh/internal/db"
+	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
 )
 
 func setupTestGitRepo(t *testing.T) string {
@@ -112,8 +112,8 @@ func TestInitialize(t *testing.T) {
 	if initRes.ProtocolVersion != "2024-11-05" {
 		t.Errorf("expected protocol version 2024-11-05, got: %s", initRes.ProtocolVersion)
 	}
-	if initRes.ServerInfo.Name != "agent-mesh" {
-		t.Errorf("expected server name agent-mesh, got: %s", initRes.ServerInfo.Name)
+	if initRes.ServerInfo.Name != "staypoint" {
+		t.Errorf("expected server name staypoint, got: %s", initRes.ServerInfo.Name)
 	}
 	if initRes.ServerInfo.Version != "0.1.0" {
 		t.Errorf("expected server version 0.1.0, got: %s", initRes.ServerInfo.Version)
@@ -199,13 +199,13 @@ func TestToolsList(t *testing.T) {
 	}
 
 	expectedTools := map[string][]string{
-		"mesh_checkpoint": {"message", "session_id"},
-		"mesh_undo":       {"checkpoint_id", "dry_run", "keep_untracked", "clean_ignored"},
-		"mesh_wire_post":  {"content", "channel", "ttl_seconds"},
-		"mesh_wire_list":  {"channel", "limit"},
-		"mesh_task_list":  {"all"},
-		"mesh_condense":   {"raw_text", "format", "max_lines"},
-		"mesh_status":     {},
+		"staypoint_checkpoint": {"message", "session_id"},
+		"staypoint_undo":       {"checkpoint_id", "dry_run", "keep_untracked", "clean_ignored"},
+		"staypoint_wire_post":  {"content", "channel", "ttl_seconds"},
+		"staypoint_wire_list":  {"channel", "limit"},
+		"staypoint_task_list":  {"all"},
+		"staypoint_condense":   {"raw_text", "format", "max_lines"},
+		"staypoint_status":     {},
 	}
 
 	foundTools := make(map[string]Tool)
@@ -257,13 +257,13 @@ func TestToolCallCheckpointAndUndo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 2. Call mesh_checkpoint
+	// 2. Call staypoint_checkpoint
 	cpArgs, _ := json.Marshal(map[string]any{
 		"message":    "test micro-checkpoint",
 		"session_id": "test-session-123",
 	})
 	params, _ := json.Marshal(CallToolParams{
-		Name:      "mesh_checkpoint",
+		Name:      "staypoint_checkpoint",
 		Arguments: cpArgs,
 	})
 
@@ -286,13 +286,13 @@ func TestToolCallCheckpointAndUndo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 4. Test mesh_undo dry-run
+	// 4. Test staypoint_undo dry-run
 	undoDryArgs, _ := json.Marshal(map[string]any{
 		"dry_run":       true,
 		"clean_ignored": false,
 	})
 	undoDryParams, _ := json.Marshal(CallToolParams{
-		Name:      "mesh_undo",
+		Name:      "staypoint_undo",
 		Arguments: undoDryArgs,
 	})
 	undoDryResp := sendRequest(t, s, Request{
@@ -309,14 +309,14 @@ func TestToolCallCheckpointAndUndo(t *testing.T) {
 		t.Errorf("expected files_reverted in dry run output: %s", undoDryRes.Content[0].Text)
 	}
 
-	// 5. Test mesh_undo actual restore
+	// 5. Test staypoint_undo actual restore
 	undoArgs, _ := json.Marshal(map[string]any{
 		"dry_run":        false,
 		"keep_untracked": true,
 		"clean_ignored":  true,
 	})
 	undoParams, _ := json.Marshal(CallToolParams{
-		Name:      "mesh_undo",
+		Name:      "staypoint_undo",
 		Arguments: undoArgs,
 	})
 	undoResp := sendRequest(t, s, Request{
@@ -348,7 +348,7 @@ func TestToolCallWirePostAndList(t *testing.T) {
 		"ttl_seconds": 3600,
 	})
 	params, _ := json.Marshal(CallToolParams{
-		Name:      "mesh_wire_post",
+		Name:      "staypoint_wire_post",
 		Arguments: postArgs,
 	})
 	resp := sendRequest(t, s, Request{
@@ -370,7 +370,7 @@ func TestToolCallWirePostAndList(t *testing.T) {
 		"content": "   ",
 	})
 	emptyParams, _ := json.Marshal(CallToolParams{
-		Name:      "mesh_wire_post",
+		Name:      "staypoint_wire_post",
 		Arguments: emptyPostArgs,
 	})
 	emptyResp := sendRequest(t, s, Request{
@@ -390,7 +390,7 @@ func TestToolCallWirePostAndList(t *testing.T) {
 		"limit":   10,
 	})
 	listParams, _ := json.Marshal(CallToolParams{
-		Name:      "mesh_wire_list",
+		Name:      "staypoint_wire_list",
 		Arguments: listArgs,
 	})
 	listResp := sendRequest(t, s, Request{
@@ -423,7 +423,7 @@ func TestToolCallTaskList(t *testing.T) {
 		"all": true,
 	})
 	params, _ := json.Marshal(CallToolParams{
-		Name:      "mesh_task_list",
+		Name:      "staypoint_task_list",
 		Arguments: args,
 	})
 
@@ -456,7 +456,7 @@ main.go:16:2: cannot use 42 as string
 		"max_lines": 50,
 	})
 	params, _ := json.Marshal(CallToolParams{
-		Name:      "mesh_condense",
+		Name:      "staypoint_condense",
 		Arguments: args,
 	})
 
@@ -479,7 +479,7 @@ main.go:16:2: cannot use 42 as string
 		"raw_text": "",
 	})
 	missingParams, _ := json.Marshal(CallToolParams{
-		Name:      "mesh_condense",
+		Name:      "staypoint_condense",
 		Arguments: missingArgs,
 	})
 	missingResp := sendRequest(t, s, Request{
@@ -500,7 +500,7 @@ func TestToolCallStatus(t *testing.T) {
 	defer s.Close()
 
 	params, _ := json.Marshal(CallToolParams{
-		Name:      "mesh_status",
+		Name:      "staypoint_status",
 		Arguments: json.RawMessage(`{}`),
 	})
 
@@ -525,7 +525,7 @@ func TestUnknownToolAndMethod(t *testing.T) {
 
 	// Unknown tool
 	params, _ := json.Marshal(CallToolParams{
-		Name:      "mesh_unknown_tool",
+		Name:      "staypoint_unknown_tool",
 		Arguments: json.RawMessage(`{}`),
 	})
 	resp := sendRequest(t, s, Request{
@@ -538,7 +538,7 @@ func TestUnknownToolAndMethod(t *testing.T) {
 	if !res.IsError {
 		t.Errorf("expected isError=true for unknown tool")
 	}
-	if !strings.Contains(res.Content[0].Text, "unknown tool: mesh_unknown_tool") {
+	if !strings.Contains(res.Content[0].Text, "unknown tool: staypoint_unknown_tool") {
 		t.Errorf("unexpected error message: %s", res.Content[0].Text)
 	}
 

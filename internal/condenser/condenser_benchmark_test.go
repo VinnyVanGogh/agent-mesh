@@ -40,7 +40,7 @@ func BenchmarkCondenserReduction(b *testing.B) {
 				sb.WriteString("panic: runtime error: invalid memory address or nil pointer dereference\n")
 				sb.WriteString("[signal SIGSEGV: code=0x2 addr=0x0 pc=0x104b2a8d4]\n\n")
 				sb.WriteString("goroutine 1 [running]:\n")
-				sb.WriteString("github.com/VinnyVanGogh/agent-mesh/internal/db.Query(0x0)\n")
+				sb.WriteString("github.com/VinnyVanGogh/staypoint/internal/db.Query(0x0)\n")
 				sb.WriteString("\t/Users/tester/dev/agent-mesh/internal/db/db.go:42 +0x24\n")
 				sb.WriteString("runtime.panicmem(...)\n")
 				sb.WriteString("\t/usr/local/go/src/runtime/panic.go:260\n")

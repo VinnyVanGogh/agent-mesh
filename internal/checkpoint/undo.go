@@ -28,10 +28,10 @@ func Undo(ctx context.Context, opts UndoOptions) (*UndoResult, error) {
 	// 1. Resolve target checkpoint
 	targetRef := opts.CheckpointID
 	if targetRef == "" || targetRef == "latest" {
-		targetRef = "refs/mesh/checkpoints/latest"
+		targetRef = "refs/staypoint/checkpoints/latest"
 	} else if !strings.HasPrefix(targetRef, "refs/") && len(targetRef) != 40 {
 		// Look up by ID
-		matchingRefs, err := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname) %(objectname)", fmt.Sprintf("refs/mesh/checkpoints/*/%s", targetRef))
+		matchingRefs, err := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname) %(objectname)", fmt.Sprintf("refs/staypoint/checkpoints/*/%s", targetRef))
 		if err == nil && len(strings.TrimSpace(matchingRefs)) > 0 {
 			lines := strings.Split(strings.TrimSpace(matchingRefs), "\n")
 			targetRef = strings.Fields(lines[0])[0]
@@ -116,7 +116,7 @@ func Undo(ctx context.Context, opts UndoOptions) (*UndoResult, error) {
 		safetyCP, _ = CreateCheckpoint(ctx, safetyOpts)
 		if safetyCP != nil {
 			// Update special pre-undo ref
-			_, _ = runGit(ctx, rootDir, nil, "update-ref", "refs/mesh/checkpoints/pre-undo", safetyCP.CommitSHA)
+			_, _ = runGit(ctx, rootDir, nil, "update-ref", "refs/staypoint/checkpoints/pre-undo", safetyCP.CommitSHA)
 		}
 	}
 
@@ -156,7 +156,7 @@ func Redo(ctx context.Context, workDir, sessionID string) (*UndoResult, error) {
 	return Undo(ctx, UndoOptions{
 		WorkDir:         workDir,
 		SessionID:       sessionID,
-		CheckpointID:    "refs/mesh/checkpoints/pre-undo",
+		CheckpointID:    "refs/staypoint/checkpoints/pre-undo",
 		DisableSafetyCP: true,
 	})
 }

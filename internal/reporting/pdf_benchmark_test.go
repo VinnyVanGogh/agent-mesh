@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 )
 
 // BenchmarkPDFGeneration benchmarks generating an executive summary PDF via headless Chrome

@@ -12,16 +12,16 @@ import (
 var testBinaryPath string
 
 func TestMain(m *testing.M) {
-	tmpDir, err := os.MkdirTemp("", "mesh-e2e-bin-*")
+	tmpDir, err := os.MkdirTemp("", "staypoint-e2e-bin-*")
 	if err != nil {
 		panic(err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	testBinaryPath = filepath.Join(tmpDir, "mesh")
+	testBinaryPath = filepath.Join(tmpDir, "staypoint")
 	buildCmd := exec.Command("go", "build", "-o", testBinaryPath, ".")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
-		panic("failed to build mesh binary: " + string(out))
+		panic("failed to build staypoint binary: " + string(out))
 	}
 
 	code := m.Run()
@@ -43,7 +43,7 @@ func setupE2ETestRepo(t *testing.T) (repoDir, homeDir string) {
 	}
 
 	gitRun("init")
-	gitRun("config", "user.email", "e2e@agentmesh.dev")
+	gitRun("config", "user.email", "e2e@staypoint.dev")
 	gitRun("config", "user.name", "E2E Agent")
 
 	initialFile := filepath.Join(repoDir, "README.md")
@@ -56,7 +56,7 @@ func setupE2ETestRepo(t *testing.T) (repoDir, homeDir string) {
 	return repoDir, homeDir
 }
 
-func execMesh(t *testing.T, dir, home string, stdin string, args ...string) (string, error) {
+func execStaypoint(t *testing.T, dir, home string, stdin string, args ...string) (string, error) {
 	t.Helper()
 	cmd := exec.Command(testBinaryPath, args...)
 	cmd.Dir = dir
@@ -70,12 +70,12 @@ func execMesh(t *testing.T, dir, home string, stdin string, args ...string) (str
 
 func TestE2E_Version(t *testing.T) {
 	repoDir, homeDir := setupE2ETestRepo(t)
-	out, err := execMesh(t, repoDir, homeDir, "", "version")
+	out, err := execStaypoint(t, repoDir, homeDir, "", "version")
 	if err != nil {
-		t.Fatalf("mesh version failed: %v, out: %s", err, out)
+		t.Fatalf("staypoint version failed: %v, out: %s", err, out)
 	}
-	if !strings.Contains(out, "mesh version") {
-		t.Errorf("expected output to contain 'mesh version', got: %s", out)
+	if !strings.Contains(out, "staypoint version") {
+		t.Errorf("expected output to contain 'staypoint version', got: %s", out)
 	}
 }
 
@@ -84,9 +84,9 @@ func TestE2E_Checkpoint(t *testing.T) {
 	testFile := filepath.Join(repoDir, "README.md")
 	_ = os.WriteFile(testFile, []byte("# E2E Test Repo\nModified for checkpoint test\n"), 0644)
 
-	out, err := execMesh(t, repoDir, homeDir, "", "checkpoint", "e2e snapshot")
+	out, err := execStaypoint(t, repoDir, homeDir, "", "checkpoint", "e2e snapshot")
 	if err != nil {
-		t.Fatalf("mesh checkpoint failed: %v, out: %s", err, out)
+		t.Fatalf("staypoint checkpoint failed: %v, out: %s", err, out)
 	}
 	if !strings.Contains(out, "Micro-checkpoint created in") {
 		t.Errorf("expected output to contain 'Micro-checkpoint created in', got: %s", out)
@@ -107,7 +107,7 @@ func TestE2E_UndoDryRunAndCleanIgnored(t *testing.T) {
 	_ = gitCmd.Run()
 
 	// Create base checkpoint
-	cpOut, err := execMesh(t, repoDir, homeDir, "", "checkpoint", "baseline")
+	cpOut, err := execStaypoint(t, repoDir, homeDir, "", "checkpoint", "baseline")
 	if err != nil {
 		t.Fatalf("checkpoint failed: %v, out: %s", err, cpOut)
 	}
@@ -121,7 +121,7 @@ func TestE2E_UndoDryRunAndCleanIgnored(t *testing.T) {
 	_ = os.WriteFile(ignored, []byte("ignored content"), 0644)
 
 	// Run undo --dry-run
-	dryOut, err := execMesh(t, repoDir, homeDir, "", "undo", "--dry-run", "--clean-ignored")
+	dryOut, err := execStaypoint(t, repoDir, homeDir, "", "undo", "--dry-run", "--clean-ignored")
 	if err != nil {
 		t.Fatalf("undo --dry-run failed: %v, out: %s", err, dryOut)
 	}
@@ -147,7 +147,7 @@ func TestE2E_UndoDryRunAndCleanIgnored(t *testing.T) {
 	}
 
 	// Run actual undo with --clean-ignored
-	undoOut, err := execMesh(t, repoDir, homeDir, "", "undo", "--clean-ignored")
+	undoOut, err := execStaypoint(t, repoDir, homeDir, "", "undo", "--clean-ignored")
 	if err != nil {
 		t.Fatalf("undo failed: %v, out: %s", err, undoOut)
 	}
@@ -167,7 +167,7 @@ func TestE2E_UndoDryRunAndCleanIgnored(t *testing.T) {
 func TestE2E_Condense(t *testing.T) {
 	repoDir, homeDir := setupE2ETestRepo(t)
 	inputLog := "main.go:10: undefined: Foo\nmain.go:12: cannot use bar as type string\n"
-	out, err := execMesh(t, repoDir, homeDir, inputLog, "condense")
+	out, err := execStaypoint(t, repoDir, homeDir, inputLog, "condense")
 	if err != nil {
 		t.Fatalf("condense failed: %v, out: %s", err, out)
 	}
@@ -180,7 +180,7 @@ func TestE2E_Wire(t *testing.T) {
 	repoDir, homeDir := setupE2ETestRepo(t)
 
 	// Post message
-	postOut, err := execMesh(t, repoDir, homeDir, "", "wire", "post", "E2E broadcast test message")
+	postOut, err := execStaypoint(t, repoDir, homeDir, "", "wire", "post", "E2E broadcast test message")
 	if err != nil {
 		t.Fatalf("wire post failed: %v, out: %s", err, postOut)
 	}
@@ -189,12 +189,12 @@ func TestE2E_Wire(t *testing.T) {
 	}
 
 	// List messages
-	listOut, err := execMesh(t, repoDir, homeDir, "", "wire", "list")
+	listOut, err := execStaypoint(t, repoDir, homeDir, "", "wire", "list")
 	if err != nil {
 		t.Fatalf("wire list failed: %v, out: %s", err, listOut)
 	}
-	if !strings.Contains(listOut, "[Mesh Wire Broadcasts]") {
-		t.Errorf("expected '[Mesh Wire Broadcasts]', got: %s", listOut)
+	if !strings.Contains(listOut, "[Staypoint Wire Broadcasts]") {
+		t.Errorf("expected '[Staypoint Wire Broadcasts]', got: %s", listOut)
 	}
 	if !strings.Contains(listOut, "E2E broadcast test message") {
 		t.Errorf("expected message in list output, got: %s", listOut)
@@ -205,7 +205,7 @@ func TestE2E_Task(t *testing.T) {
 	repoDir, homeDir := setupE2ETestRepo(t)
 
 	// Add task
-	addOut, err := execMesh(t, repoDir, homeDir, "", "task", "add", "E2E Sample Task")
+	addOut, err := execStaypoint(t, repoDir, homeDir, "", "task", "add", "E2E Sample Task")
 	if err != nil {
 		t.Fatalf("task add failed: %v, out: %s", err, addOut)
 	}
@@ -214,12 +214,12 @@ func TestE2E_Task(t *testing.T) {
 	}
 
 	// List tasks
-	listOut, err := execMesh(t, repoDir, homeDir, "", "task", "list")
+	listOut, err := execStaypoint(t, repoDir, homeDir, "", "task", "list")
 	if err != nil {
 		t.Fatalf("task list failed: %v, out: %s", err, listOut)
 	}
-	if !strings.Contains(listOut, "[Agent-Mesh Tasks]") {
-		t.Errorf("expected '[Agent-Mesh Tasks]', got: %s", listOut)
+	if !strings.Contains(listOut, "[Staypoint Tasks]") {
+		t.Errorf("expected '[Staypoint Tasks]', got: %s", listOut)
 	}
 	if !strings.Contains(listOut, "E2E Sample Task") {
 		t.Errorf("expected task name in list output, got: %s", listOut)
@@ -229,7 +229,7 @@ func TestE2E_Task(t *testing.T) {
 func TestE2E_HandoffList(t *testing.T) {
 	repoDir, homeDir := setupE2ETestRepo(t)
 
-	out, err := execMesh(t, repoDir, homeDir, "", "handoff", "list")
+	out, err := execStaypoint(t, repoDir, homeDir, "", "handoff", "list")
 	if err != nil {
 		t.Fatalf("handoff list failed: %v, out: %s", err, out)
 	}
@@ -246,7 +246,7 @@ func TestRootCmd_SetArgs(t *testing.T) {
 	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("rootCmd.Execute failed: %v", err)
 	}
-	if !strings.Contains(buf.String(), "Agent-Mesh") {
-		t.Errorf("expected help output to mention Agent-Mesh, got: %s", buf.String())
+	if !strings.Contains(buf.String(), "Staypoint") {
+		t.Errorf("expected help output to mention Staypoint, got: %s", buf.String())
 	}
 }

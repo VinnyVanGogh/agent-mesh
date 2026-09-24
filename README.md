@@ -1,20 +1,20 @@
-# Agent-Mesh (`mesh`)
+# Staypoint (`staypoint`)
 
 [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)]()
-[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-lightgrey.svg)]()
 [![Pure Go](https://img.shields.io/badge/CGO-0%20(Pure%20Go)-blueviolet.svg)]()
 [![Statusline](https://img.shields.io/badge/Latency-%3C2ms-success.svg)]()
 
 > **Autonomous AI Agent Ops, Quota Pacing, Safety Guardrails & Cross-AI Context Platform for Claude Code and Google Antigravity / Gemini.**
 
-Agent-Mesh unifies disparate AI agent tooling into a single, high-performance static Go binary. It provides real-time multi-pool rate limit pacing, zero-token context handoffs across models, ephemeral git micro-checkpoints with instant undo, compiler error condensing, loop death-spiral circuit breakers, multi-agent collision detection, per-task dollar budgets, cross-agent wire scratchpads, persistent remote SSH bridging with `tmux`, and print-ready executive ROI briefing generation ("The Boss Card") rendered in pure Go.
+Staypoint unifies disparate AI agent tooling into a single, high-performance static Go binary. It provides real-time multi-pool rate limit pacing, zero-token context handoffs across models, ephemeral git micro-checkpoints with instant undo, compiler error condensing, loop death-spiral circuit breakers, multi-agent collision detection, per-task dollar budgets, cross-agent wire scratchpads, persistent remote SSH bridging with `tmux`, and print-ready executive ROI briefing generation ("The Boss Card") rendered in pure Go.
 
 ---
 
 ```
-                                      AGENT-MESH ARCHITECTURE
+                                      STAYPOINT ARCHITECTURE
 
           ┌────────────────────────┐                             ┌────────────────────────┐
           │      Claude Code       │                             │   Google Antigravity   │
@@ -23,7 +23,7 @@ Agent-Mesh unifies disparate AI agent tooling into a single, high-performance st
                       │ ~/.claude/projects/*.jsonl                           │ ~/.gemini/brain/*.jsonl
                       ▼                                                      ▼
           ┌───────────────────────────────────────────────────────────────────────────────┐
-          │                            meshd Background Daemon                            │
+          │                          staypointd Background Daemon                         │
           │  • Event-driven file watcher (fsnotify, <19MB RAM, 0% idle CPU)               │
           │  • Agent Loop Circuit Breaker (detects 3x tool failures / 5 in 5m; chime)     │
           │  • Multi-Agent Collision Detector (live active file locks with 15m TTL)       │
@@ -34,7 +34,7 @@ Agent-Mesh unifies disparate AI agent tooling into a single, high-performance st
                                                   │
                                                   ▼
           ┌───────────────────────────────────────────────────────────────────────────────┐
-          │                         Local SQLite Engine (mesh.db)                         │
+          │                       Local SQLite Engine (staypoint.db)                      │
           │  • Pure Go (modernc.org/sqlite, CGO_ENABLED=0), WAL mode, FTS5               │
           │  • Telemetry: 100k+ requests, model pricing catalog, token attribution cache  │
           │  • Task Governance: dollar & turn limits, spend tracking, active statuses     │
@@ -50,7 +50,7 @@ Agent-Mesh unifies disparate AI agent tooling into a single, high-performance st
       │ • 4 quota pools      ││ • Error Condenser    ││   Trail (clean)││ • Pre-flight rsync   │
       │ • Dynamic waterfall  ││   (80-95% token diet)││ • Multi-turn   ││ • Exec ROI ("Boss    │
       │ • Session Pickup     ││ • Circuit Breakers   ││   Goal Drift   ││   Card") 4 PDFs via  │
-      │   (mesh where/pickup)││ • File Collision Lock││ • Cross-Tool   ││   chromedp           │
+      │   (where/pickup)     ││ • File Collision Lock││ • Cross-Tool   ││   chromedp           │
       └──────────────────────┘└──────────────────────┘└────────────────┘└──────────────────────┘
 ```
 
@@ -65,21 +65,21 @@ Agent-Mesh unifies disparate AI agent tooling into a single, high-performance st
 
 ---
 
-## The Problem Agent-Mesh Solves
+## The Problem Staypoint Solves
 
 Modern AI software engineers work across multiple state-of-the-art coding agents. This fragmented workflow creates distinct operational headaches:
 
 1. **Unpredictable Rate Limit Lockouts**: 5-hour rolling windows and weekly quotas exhaust without warning, grinding engineering velocity to a halt.
 2. **Context Loss & Friction During Model Switching**: When one model hits a ceiling, migrating to another requires manually explaining the repository structure, active branch, modified files, diff status, and immediate next steps.
-3. **Agent Death Spirals & Burned Tokens**: Autonomous agents frequently get stuck in repetitive error loops—running the exact same failing command or tool 10 times in a row, burning thousands of tokens and exhausting hourly quotas before the developer notices.
+3. **Agent Death Spirals & Burned Tokens**: Autonomous agents frequently get stuck in repetitive error loops, running the exact same failing command or tool 10 times in a row, burning thousands of tokens and exhausting hourly quotas before the developer notices.
 4. **Agent Destructive Edits Without an "Undo" Button**: When an agent hallucinates or makes a broken architectural edit across 15 files, rolling back with standard `git checkout` or `git stash` clobbers uncommitted human work and requires tedious manual recovery.
 5. **Multi-Agent Collision on Shared Repos**: Running Claude Code in one terminal and Google Antigravity in another often leads to both agents modifying the same files concurrently, corrupting state and causing git merge nightmares.
 6. **Token Waste from Massive Compiler Dumps**: Dumping raw 500-line TypeScript build errors, Go panics, or Python tracebacks into agent prompts wastes up to 3,000 tokens per turn and causes model attention dilution.
-7. **Long-Session Goal Drift**: As conversations extend past 10–20 turns, agents forget early user constraints, obsess over Turn 1 prompts, or diverge across multiple conflicting milestones.
+7. **Long-Session Goal Drift**: As conversations extend past 10 to 20 turns, agents forget early user constraints, obsess over Turn 1 prompts, or diverge across multiple conflicting milestones.
 8. **Multi-Account & Hardware Split**: Work repositories often reside on corporate VPNs or dedicated hardware, while personal side-projects live locally.
 9. **The ROI Justification Gap**: Engineers deliver hundreds of thousands of dollars in software value using AI agents, but executives only see the monthly subscription invoice. Without empirical proof of leverage, subscription upgrades are delayed or denied.
 
-Agent-Mesh eliminates these pain points with a single, zero-dependency Go platform.
+Staypoint eliminates these pain points with a single, zero-dependency Go platform.
 
 ---
 
@@ -89,17 +89,17 @@ Agent-Mesh eliminates these pain points with a single, zero-dependency Go platfo
 
 Give your autonomous agents a safety net with sub-5ms snapshotting:
 
-- **Isolated Git Index**: Creates tree snapshots using a dedicated git index (`.git/mesh_index`) and custom git references (`refs/mesh/checkpoints/<session>/<id>`). It **never moves `HEAD`**, never creates commit clutter on your active branch, and leaves your branch history pristine.
+- **Isolated Git Index**: Creates tree snapshots using a dedicated git index (`.git/staypoint_index`) and custom git references (`refs/staypoint/checkpoints/<session>/<id>`). It **never moves `HEAD`**, never creates commit clutter on your active branch, and leaves your branch history pristine.
 - **Microsecond Snapshots**: Takes full working tree snapshots in `<5ms`, capturing untracked and modified files before risky agent operations.
-- **One-Command Undo (`mesh undo`)**: Reverts agent mistakes instantly back to the exact working tree state before the agent made changes.
+- **One-Command Undo (`staypoint undo`)**: Reverts agent mistakes instantly back to the exact working tree state before the agent made changes.
 - **Safe Stashing**: Automatically preserves current uncommitted modifications in a temporary stash before restoring, ensuring no work is ever lost.
 - **Commands**:
-  - `mesh checkpoint [-s <session>]`: Create a micro-checkpoint.
-  - `mesh undo [-n] [-k]`: Undo the latest checkpoint (or dry-run with `-n`, keep tree dirty with `-k`).
-  - `mesh redo`: Redo reverted checkpoint.
-  - `mesh checkpoints`: List session checkpoints.
+  - `staypoint checkpoint [-s <session>]`: Create a micro-checkpoint.
+  - `staypoint undo [-n] [-k]`: Undo the latest checkpoint (or dry-run with `-n`, keep tree dirty with `-k`).
+  - `staypoint redo`: Redo reverted checkpoint.
+  - `staypoint checkpoints`: List session checkpoints.
 
-### 🥗 Zero-Token Error Condenser / Token Diet (`mesh condense`)
+### 🥗 Zero-Token Error Condenser / Token Diet (`staypoint condense`)
 
 Massive compiler dumps and stack traces are the #1 source of token waste in AI workflows. The error condenser reduces dumps by **80% to 95%** before agent ingestion:
 
@@ -109,8 +109,8 @@ Massive compiler dumps and stack traces are the #1 source of token waste in AI w
   - **Python**: Collapses third-party site-package frames (`venv`, `site-packages`) and preserves the core application traceback and final exception message.
   - **Generic**: Deduplicates repeated lines with `[xN repetitions]` markers, filters noisy progress bars, and caps output cleanly.
 - **CLI & Pipe Integration**:
-  - `mesh condense [file] [-l <max-lines>] [-f <format>]`
-  - Pipe directly from builds: `npm run build 2>&1 | mesh condense` or `go test ./... 2>&1 | mesh condense`
+  - `staypoint condense [file] [-l <max-lines>] [-f <format>]`
+  - Pipe directly from builds: `npm run build 2>&1 | staypoint condense` or `go test ./... 2>&1 | staypoint condense`
 
 ### 🛑 Agent Loop & Death-Spiral Circuit Breaker
 
@@ -121,61 +121,61 @@ Prevents runaway agents from burning your entire weekly token budget on repeated
   - **3 consecutive identical tool/command failures**, OR
   - **5 failures within a sliding 5-minute window**.
 - **System Alarm**: Fires an immediate macOS audible alert (`Glass` chime) and native system notification when tripped.
-- **Prompt Hook Enforcement**: `mesh hook prompt` detects tripped breakers and injects high-priority warnings into the agent context, preventing further automated execution until acknowledged.
+- **Prompt Hook Enforcement**: `staypoint hook prompt` detects tripped breakers and injects high-priority warnings into the agent context, preventing further automated execution until acknowledged.
 - **CLI Inspection**:
-  - `mesh breaker list [-a]`: View active or all tripped breakers.
-  - `mesh breaker reset <session-id>`: Reset a tripped breaker after manually fixing the blocker.
+  - `staypoint breaker list [-a]`: View active or all tripped breakers.
+  - `staypoint breaker reset <session-id>`: Reset a tripped breaker after manually fixing the blocker.
 
 ### 💥 Multi-Agent Collision Detection & Live File Locks
 
 Safely run Claude Code and Google Antigravity simultaneously on the same repository:
 
-- **Heartbeat Session Registration**: Both agents register their active presence in `mesh.db` with working directory metadata.
+- **Heartbeat Session Registration**: Both agents register their active presence in `staypoint.db` with working directory metadata.
 - **Live Working File Tracking**: Tracks touched files with a 15-minute sliding TTL (`agent_working_files`).
-- **Prompt Hook Collision Guard**: When an agent runs a prompt or tool, `mesh hook prompt` inspects git dirty files and cross-checks active peer sessions. If another agent recently edited the same file, it injects a prominent collision warning with the peer session ID and file list.
+- **Prompt Hook Collision Guard**: When an agent runs a prompt or tool, `staypoint hook prompt` inspects git dirty files and cross-checks active peer sessions. If another agent recently edited the same file, it injects a prominent collision warning with the peer session ID and file list.
 
 ### 💰 Per-Task Dollar & Turn Budgets
 
 Impose hard financial and operational boundaries on autonomous tasks:
 
 - **Financial Limits**: Set dollar caps (`--budget <usd>`) and turn limits (`--max-turns <n>`) per task.
-- **Automatic Spend Attribution**: The `meshd` telemetry daemon monitors transcript tokens and attributes exact dollar spend (via the built-in model pricing catalog) directly to the active task in SQLite.
+- **Automatic Spend Attribution**: The `staypointd` telemetry daemon monitors transcript tokens and attributes exact dollar spend (via the built-in model pricing catalog) directly to the active task in SQLite.
 - **Two-Tier Budget Enforcement**:
-  - **80% Budget Warning**: `mesh hook prompt` injects an amber pacing alert into prompt context when spend reaches 80%.
-  - **100% Hard Block**: At 100% budget, `mesh hook prompt` outputs a critical budget exhaustion error to stderr and exits with **code 2**, blocking autonomous loops from continuing without explicit user approval.
+  - **80% Budget Warning**: `staypoint hook prompt` injects an amber pacing alert into prompt context when spend reaches 80%.
+  - **100% Hard Block**: At 100% budget, `staypoint hook prompt` outputs a critical budget exhaustion error to stderr and exits with **code 2**, blocking autonomous loops from continuing without explicit user approval.
 - **CLI Management**:
-  - `mesh task add <name> --budget 1.50 --max-turns 20`: Create budgeted task.
-  - `mesh task budget <id> --usd 2.00 --turns 25`: Adjust budget on an active task.
-  - `mesh task list`: View spend progress bar, dollar amounts, and turn counts.
-  - `mesh task done <id>`: Mark task complete.
+  - `staypoint task add <name> --budget 1.50 --max-turns 20`: Create budgeted task.
+  - `staypoint task budget <id> --usd 2.00 --turns 25`: Adjust budget on an active task.
+  - `staypoint task list`: View spend progress bar, dollar amounts, and turn counts.
+  - `staypoint task done <id>`: Mark task complete.
 
-### 📻 Cross-Agent Live Scratchpad (`mesh wire`)
+### 📻 Cross-Agent Live Scratchpad (`staypoint wire`)
 
 Zero-token peer-to-peer event bus for agents collaborating across separate terminals or tools:
 
 - **SQLite-Backed Pub/Sub**: Fast broadcast channel (`wire_messages`) with channel scoping, author attribution, and time-to-live (`ttl`) pruning.
 - **Per-Consumer Read Cursors**: Tracks read progress per consumer session in `wire_cursors`.
-- **Automatic Context Injection**: `mesh hook prompt` queries for unread wire broadcasts in the current repository and injects them seamlessly into the agent's turn prompt:
+- **Automatic Context Injection**: `staypoint hook prompt` queries for unread wire broadcasts in the current repository and injects them seamlessly into the agent's turn prompt:
   ```markdown
   [WIRE BROADCAST from claude-worker (5m ago)]: Completed database migrations in internal/db/schema.sql
   ```
 - **CLI Commands**:
-  - `mesh wire post "Refactored user auth, update API endpoints" [-c <channel>] [-t 3600]`
-  - `mesh wire list [-c <channel>] [-l 10]`
-  - `mesh wire prune`: Clean expired wire messages.
+  - `staypoint wire post "Refactored user auth, update API endpoints" [-c <channel>] [-t 3600]`
+  - `staypoint wire list [-c <channel>] [-l 10]`
+  - `staypoint wire prune`: Clean expired wire messages.
 
 ### 🔄 Unified Cross-Agent Continuation & Handoff Engine
 
 Effortlessly resume, continue, or hand off agent sessions across Claude Code and Google Antigravity:
 
-- **Instant Native Continue (`mesh -c` / `mesh continue`)**:
+- **Instant Native Continue (`staypoint -c` / `staypoint continue`)**:
   - Inspects the current repository and identifies the most recently updated session between Claude Code and Antigravity.
   - Automatically launches the native resume command (`claude --resume <id>` or `agy -c <id>`) for that tool.
-- **Interactive Multi-Tool Picker (`mesh -r` / `mesh resume`)**:
+- **Interactive Multi-Tool Picker (`staypoint -r` / `staypoint resume`)**:
   - Displays a clean numbered terminal menu of recent sessions across both Claude and Antigravity with timestamps, message counts, active durations, and conversation snippets.
   - Select any session by number to resume it immediately.
 - **Zero-Token Handoff Mode (`-H, --handoff`)**:
-  - Combine with continue or resume: `mesh -c -H` or `mesh -r -H`.
+  - Combine with continue or resume: `staypoint -c -H` or `staypoint -r -H`.
   - Instead of resuming in the original tool, it generates an authoritative cross-agent handoff prompt and copies it to the clipboard (`pbcopy` / `xclip`).
 - **User Directives & Constraints Trail**:
   - Automatically filters low-signal conversational filler (`"yes"`, `"ok"`, `"continue"`, `"lgtm"`, `"sounds good"`) and strips XML metadata wrappers (`<USER_REQUEST>`, `<ADDITIONAL_METADATA>`).
@@ -190,35 +190,35 @@ Effortlessly resume, continue, or hand off agent sessions across Claude Code and
   4. Work Accomplished & Recent Commit Log (`git log -n 3 --oneline`).
   5. Immediate Next Step & Open Decision Points.
 - **Repo Subdirectories & `{id}-{timestamp}.md/json` Naming**:
-  - Handoffs are organized into repo-scoped subdirectories: `~/.agent-mesh/handoffs/<repo-slug>/{id}-{timestamp}.md` and `{id}-{timestamp}.json`.
-  - For example: `~/.agent-mesh/handoffs/agent-mesh/75fd7906-20260923-175959.md` and `.json`.
+  - Handoffs are organized into repo-scoped subdirectories: `~/.staypoint/handoffs/<repo-slug>/{id}-{timestamp}.md` and `{id}-{timestamp}.json`.
+  - For example: `~/.staypoint/handoffs/staypoint/75fd7906-20260923-175959.md` and `.json`.
   - Multiple sessions across projects never overwrite each other. `/tmp/ai-handoff.md` is updated concurrently as a convenience pointer to the latest handoff for instant clipboard access (`pbcopy`).
 - **Atomic `latest.md` & `latest.json` Symlinks**:
   - Each repo subdirectory maintains atomic relative symlinks `latest.md` and `latest.json` pointing directly to the most recent handoff.
-  - Commands like `mesh handoff show` and `mesh handoff copy` seamlessly resolve the latest handoff when session ID is omitted.
+  - Commands like `staypoint handoff show` and `staypoint handoff copy` seamlessly resolve the latest handoff when session ID is omitted.
 - **Manual Pinning in Retention Pruning**:
   - Retention pruning (`max_handoffs_per_repo`, default 3) implements manual pinning. When pruning excess snapshots, automated background turns (`trigger: "auto_daemon"` or `"active_session"`) are evicted first, ensuring intentional human handoffs (`trigger: "manual"`) remain pinned and protected from eviction.
 - **Multi-Branch Awareness & Branch Discovery**:
   - Default listings show branch context without hiding cross-branch work, explicitly highlighting when a handoff branch differs from the active branch (e.g. `[feat/billing (current: main)]`).
-  - Filter listings by branch using `mesh handoff list -b <branch>` or `mesh handoff search -b <branch>`.
-  - Discover all git branches containing saved handoffs using `mesh handoff branches`.
+  - Filter listings by branch using `staypoint handoff list -b <branch>` or `staypoint handoff search -b <branch>`.
+  - Discover all git branches containing saved handoffs using `staypoint handoff branches`.
 - **Proactive Context Pickup Banner**:
-  - When an incoming agent starts a turn, `mesh hook prompt` automatically checks for recent (<4h) handoffs in the current repository from previous sessions.
+  - When an incoming agent starts a turn, `staypoint hook prompt` automatically checks for recent (<4h) handoffs in the current repository from previous sessions.
   - Injects a high-visibility context pickup alert into prompt context with the previous session ID, age, git branch, goal, and file path so the incoming agent can immediately adopt prior work.
 - **Structured JSON Manifests (`{id}-{timestamp}.json`)**:
   - Every handoff produces a compact metadata manifest alongside the markdown file with the session ID, goal, human-readable title, branch, modified files, user turn count, directive count, and triggering event.
 - **Configurable Per-Repo Retention Pruning**:
   - Automatically prunes older handoffs within each repository subdirectory based on `max_handoffs_per_repo` in `config.toml` (default 3), keeping each project clean.
 - **Zero-Token Manifest Search**:
-  - Agents and humans can query saved handoffs instantly using `mesh handoff list` or `mesh handoff search <query>`. Searching lightweight JSON manifests consumes virtually zero tokens (~50 tokens) compared to loading full transcripts.
+  - Agents and humans can query saved handoffs instantly using `staypoint handoff list` or `staypoint handoff search <query>`. Searching lightweight JSON manifests consumes virtually zero tokens (~50 tokens) compared to loading full transcripts.
 - **Automatic Base Handoffs on Crash / Breaker / Exit**:
-  - Because Agent-Mesh handoffs are 100% programmatic (pure Go, 0 LLM tokens, <10ms runtime), the `meshd` background daemon automatically snapshots a base handoff whenever a session crashes, hits an error, trips a circuit breaker, or gets closed (e.g. `Ctrl+C`). You always have a reliable restart point.
+  - Because Staypoint handoffs are 100% programmatic (pure Go, 0 LLM tokens, <10ms runtime), the `staypointd` background daemon automatically snapshots a base handoff whenever a session crashes, hits an error, trips a circuit breaker, or gets closed (e.g. `Ctrl+C`). You always have a reliable restart point.
 
-### 📍 Instant Context Pickup (`mesh where` / `mesh pickup`)
+### 📍 Instant Context Pickup (`staypoint where` / `staypoint pickup`)
 
 Forgot what you were doing in a repository after stepping away?
 
-- Run `mesh where` or `mesh pickup` inside any project folder.
+- Run `staypoint where` or `staypoint pickup` inside any project folder.
 - Displays the active branch, modified files, unpushed commits, active task spend, and a chronological table of recent Claude and Antigravity sessions with resumption commands.
 - Paired with the global `where-were-we` skill for agent self-grounding.
 
@@ -248,7 +248,7 @@ Seamlessly bridges local workstations with enterprise hardware (e.g., `company-m
 
 - **Dynamic Path Translation**: Translates local mirror paths to remote enterprise repo structures.
 - **2-Second Latency Probe**: Tests SSH reachability with a fast timeout and latency benchmark.
-- **Persistent `tmux` Execution**: Automatically creates or attaches to named remote `tmux` sessions (`mesh-<repo>`). Dropping an SSH connection never kills running builds or agent tasks.
+- **Persistent `tmux` Execution**: Automatically creates or attaches to named remote `tmux` sessions (`staypoint-<repo>`). Dropping an SSH connection never kills running builds or agent tasks.
 - **Pre-Flight Transcript Sync**: Runs non-blocking `rsync` pulling remote agent transcripts into local telemetry before launching.
 - **Zero-Close Shell Fallback**: If the remote host is offline, falls back to local execution without closing the terminal window.
 
@@ -267,9 +267,9 @@ Pure Go PDF rendering engine powered by Chrome DevTools Protocol (`chromedp`). E
 Engineered for developers who use separate hardware for work and personal engineering:
 
 - **`machine_role = "work" | "personal" | "hybrid"`**: Enforces 100% account attribution on dedicated laptops without guessing folder paths.
-- **Network Sync (`mesh sync pull <remote>`)**: Syncs transcripts across machines over SSH or Tailscale.
-- **Air-Gapped Export/Import (`mesh sync export` & `mesh sync import`)**: Packages telemetry into compressed `.tar.gz` bundles. Move telemetry across corporate firewalls via AirDrop, Slack, or secure thumbdrives with idempotent SQLite merging.
-- **Networked Handoff (`mesh handoff --push` & `--pull`)**: Bypasses corporate MDM blocks on macOS Universal Clipboard by transferring handoff context directly over SSH.
+- **Network Sync (`staypoint sync pull <remote>`)**: Syncs transcripts across machines over SSH or Tailscale.
+- **Air-Gapped Export/Import (`staypoint sync export` & `staypoint sync import`)**: Packages telemetry into compressed `.tar.gz` bundles. Move telemetry across corporate firewalls via AirDrop, Slack, or secure thumbdrives with idempotent SQLite merging.
+- **Networked Handoff (`staypoint handoff --push` & `--pull`)**: Bypasses corporate MDM blocks on macOS Universal Clipboard by transferring handoff context directly over SSH.
 
 ---
 
@@ -281,58 +281,58 @@ Engineered for developers who use separate hardware for work and personal engine
 
 ```bash
 brew tap VinnyVanGogh/tap
-brew install mesh
+brew install staypoint
 ```
 
 #### From Source (Go 1.23+)
 
 ```bash
-git clone https://github.com/VinnyVanGogh/agent-mesh.git
-cd agent-mesh
-go build -o ~/.local/bin/mesh ./cmd/mesh
-go build -o ~/.local/bin/meshd ./cmd/meshd
+git clone https://github.com/VinnyVanGogh/staypoint.git
+cd staypoint
+go build -o ~/.local/bin/staypoint ./cmd/staypoint
+go build -o ~/.local/bin/staypointd ./cmd/staypointd
 
 # On macOS, ad-hoc codesign the binaries:
-codesign -s - -f ~/.local/bin/mesh
-codesign -s - -f ~/.local/bin/meshd
+codesign -s - -f ~/.local/bin/staypoint
+codesign -s - -f ~/.local/bin/staypointd
 ```
 
 Verify the installation:
 
 ```bash
-mesh version
-# mesh version 0.1.0
+staypoint version
+# staypoint version 0.1.0
 ```
 
 #### macOS Background Daemon Setup
 
-Install `meshd` as a user LaunchAgent:
+Install `staypointd` as a user LaunchAgent:
 
 ```bash
-cat << 'EOF' > ~/Library/LaunchAgents/com.agentmesh.daemon.plist
+cat << 'EOF' > ~/Library/LaunchAgents/com.staypoint.daemon.plist
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.agentmesh.daemon</string>
+    <string>com.staypoint.daemon</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/opt/homebrew/bin/meshd</string>
+        <string>/opt/homebrew/bin/staypointd</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/meshd.log</string>
+    <string>/tmp/staypointd.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/meshd.err</string>
+    <string>/tmp/staypointd.err</string>
 </dict>
 </plist>
 EOF
 
-launchctl load ~/Library/LaunchAgents/com.agentmesh.daemon.plist
+launchctl load ~/Library/LaunchAgents/com.staypoint.daemon.plist
 ```
 
 ### 2. Shell Integration
@@ -340,7 +340,7 @@ launchctl load ~/Library/LaunchAgents/com.agentmesh.daemon.plist
 Add the shell evaluation hook to your `~/.zshrc` or `~/.bashrc`:
 
 ```bash
-eval "$(mesh init --shell)"
+eval "$(staypoint init --shell)"
 ```
 
 This registers the `ai` command wrapper, auto-routing evaluations, fast statusline rendering, and terminal-safe execution.
@@ -349,11 +349,11 @@ This registers the `ai` command wrapper, auto-routing evaluations, fast statusli
 
 ## Configuration
 
-Configuration is located at `~/.agent-mesh/config.toml` (or `~/.agent-mesh/config.json`):
+Configuration is located at `~/.staypoint/config.toml` (or `~/.staypoint/config.json`):
 
 ```toml
 # ==============================================================================
-# AGENT-MESH CONFIGURATION
+# STAYPOINT CONFIGURATION
 # ==============================================================================
 
 # Executive Reporting Metadata
@@ -389,264 +389,264 @@ max_handoffs_per_repo = 3
 
 ## CLI Command Reference
 
-### Primary Interactive Launcher & Resumption (`mesh`)
+### Primary Interactive Launcher & Resumption (`staypoint`)
 
 ```bash
 # Automatically launches optimal AI (remote Claude tmux, local Claude, or Antigravity agy)
-mesh
+staypoint
 
 # Pass prompts or flags directly to the routed AI
-mesh "implement new authentication flow"
+staypoint "implement new authentication flow"
 
 # Force routing flags
-mesh -C, --claude        # Force route to Claude Code
-mesh -G, --gemini        # Force route to Antigravity Gemini (agy)
-mesh --dry-run           # Preview routed target, model, and bridge status without executing
-mesh --status            # Quick display of fleet status & quota table
+staypoint -C, --claude        # Force route to Claude Code
+staypoint -G, --gemini        # Force route to Antigravity Gemini (agy)
+staypoint --dry-run           # Preview routed target, model, and bridge status without executing
+staypoint --status            # Quick display of fleet status & quota table
 
 # Instant Session Continuation & Picker
-mesh -c, --continue      # Continue latest session for current repository (auto-detects Claude or agy)
-mesh -r, --resume        # Interactive cross-tool session picker (Claude + Antigravity)
-mesh -c -H, --handoff    # Copy cross-agent continuation prompt to clipboard instead of resuming
-mesh -r -H               # Pick a past session and generate a handoff prompt for another agent
+staypoint -c, --continue      # Continue latest session for current repository (auto-detects Claude or agy)
+staypoint -r, --resume        # Interactive cross-tool session picker (Claude + Antigravity)
+staypoint -c -H, --handoff    # Copy cross-agent continuation prompt to clipboard instead of resuming
+staypoint -r -H               # Pick a past session and generate a handoff prompt for another agent
 ```
 
 ### Agent Time Machine (Micro-Checkpoints & Instant Undo)
 
 ```bash
 # Snapshot current working tree into isolated git ref (<5ms)
-mesh checkpoint
+staypoint checkpoint
 
 # Snapshot with custom session label
-mesh checkpoint -s feature-auth
+staypoint checkpoint -s feature-auth
 
 # Undo agent changes back to previous checkpoint
-mesh undo
+staypoint undo
 
 # Preview what undo would revert without touching the working tree
-mesh undo --dry-run / -n
+staypoint undo --dry-run / -n
 
 # Undo working tree changes but keep staged index dirty
-mesh undo -k
+staypoint undo -k
 
 # Redo previously reverted checkpoint
-mesh redo
+staypoint redo
 
 # List available checkpoints for current session/repo
-mesh checkpoints
+staypoint checkpoints
 ```
 
 ### Zero-Token Error Condenser / Token Diet
 
 ```bash
 # Condense compiler errors or stack traces from a log file
-mesh condense build-error.log
+staypoint condense build-error.log
 
 # Pipe directly from build tools (condenses by 80-95% before agent consumption)
-npm run build 2>&1 | mesh condense
-go test ./... 2>&1 | mesh condense
-pytest 2>&1 | mesh condense
+npm run build 2>&1 | staypoint condense
+go test ./... 2>&1 | staypoint condense
+pytest 2>&1 | staypoint condense
 
 # Force format parser and customize max output lines
-mesh condense -f typescript -l 25 ts-errors.log
-mesh condense -f golang go-panic.log
-mesh condense -f python py-traceback.log
+staypoint condense -f typescript -l 25 ts-errors.log
+staypoint condense -f golang go-panic.log
+staypoint condense -f python py-traceback.log
 ```
 
 ### Circuit Breakers & Collision Detection
 
 ```bash
 # List all active tripped circuit breakers
-mesh breaker list
+staypoint breaker list
 
 # List all circuit breakers (including resolved/historic)
-mesh breaker list -a
+staypoint breaker list -a
 
 # Reset a tripped circuit breaker for a session
-mesh breaker reset <session-id>
+staypoint breaker reset <session-id>
 ```
 
 ### Per-Task Dollar & Turn Budgets
 
 ```bash
 # Add a new task with dollar budget and turn limit
-mesh task add "Migrate DB schema" --budget 2.50 --max-turns 30
+staypoint task add "Migrate DB schema" --budget 2.50 --max-turns 30
 
 # Update budget on an existing task
-mesh task budget <task-id> --usd 4.00 --turns 50
+staypoint task budget <task-id> --usd 4.00 --turns 50
 
 # List active tasks with spend meters, token usage, and turn counts
-mesh task list
+staypoint task list
 
 # List all tasks including completed
-mesh task list --all
+staypoint task list --all
 
 # Mark task as completed
-mesh task done <task-id>
+staypoint task done <task-id>
 ```
 
-### Cross-Agent Live Scratchpad (`mesh wire`)
+### Cross-Agent Live Scratchpad (`staypoint wire`)
 
 ```bash
 # Post a broadcast message to other agents in the repo
-mesh wire post "Added new migration in internal/db/002_auth.sql"
+staypoint wire post "Added new migration in internal/db/002_auth.sql"
 
 # Post with custom channel and TTL (in seconds)
-mesh wire post "Reviewing auth controller" -c reviews -t 7200
+staypoint wire post "Reviewing auth controller" -c reviews -t 7200
 
 # List recent broadcast messages
-mesh wire list
-mesh wire list -c reviews -l 20
+staypoint wire list
+staypoint wire list -c reviews -l 20
 
 # Clean expired wire messages from database
-mesh wire prune
+staypoint wire prune
 ```
 
 ### Context Pickup & Handoff
 
 ```bash
 # Inspect current repo context, active task, and recent session history
-mesh where
-mesh pickup
+staypoint where
+staypoint pickup
 
-# Generate handoff prompt to Gemini and copy to clipboard (saves to ~/.agent-mesh/handoffs/)
-mesh handoff --to gemini
+# Generate handoff prompt to Gemini and copy to clipboard (saves to ~/.staypoint/handoffs/)
+staypoint handoff --to gemini
 
 # Generate handoff prompt with specific next step directive
-mesh handoff --to claude --step "Implement modernc.org/sqlite schema migration"
+staypoint handoff --to claude --step "Implement modernc.org/sqlite schema migration"
 
 # List saved session handoffs and compact metadata manifests for current repository
-mesh handoff list
-mesh handoffs
+staypoint handoff list
+staypoint handoffs
 
 # Filter handoffs by git branch
-mesh handoff list -b feat/billing
+staypoint handoff list -b feat/billing
 
 # Discover all branches in the repository that have saved handoffs
-mesh handoff branches
+staypoint handoff branches
 
 # List handoffs across all repositories or output JSON
-mesh handoff list --all --limit 20
-mesh handoff list --json
+staypoint handoff list --all --limit 20
+staypoint handoff list --json
 
 # Zero-token manifest search (search by goal, title, session ID, or branch)
-mesh handoff search "authentication"
-mesh handoff search "stripe" -b feat/billing
+staypoint handoff search "authentication"
+staypoint handoff search "stripe" -b feat/billing
 
 # View or copy the latest saved handoff prompt (resolves latest.md)
-mesh handoff show
-mesh handoff copy
+staypoint handoff show
+staypoint handoff copy
 
 # View or copy a specific saved handoff prompt by session ID
-mesh handoff show <session-id>
-mesh handoff copy <session-id>
+staypoint handoff show <session-id>
+staypoint handoff copy <session-id>
 
 # Push handoff context directly to remote machine and remote clipboard
-mesh handoff --push company-mbp
+staypoint handoff --push company-mbp
 
 # Pull handoff context from remote machine into local clipboard
-mesh handoff --pull company-mbp
+staypoint handoff --pull company-mbp
 
 # Claude / Antigravity prompt hook (monitors quota, breakers, collisions, wire, budgets)
-mesh hook prompt
+staypoint hook prompt
 ```
 
 ### Pacing & Status
 
 ```bash
 # Display live fleet status, quota gauges, active tasks, and routing advice
-mesh status
+staypoint status
 
 # Render instantaneous statusline (<2ms) for prompt integration
-mesh statusline
+staypoint statusline
 
 # Get routing recommendation for current directory (human-readable)
-mesh route
+staypoint route
 
 # Output shell-evaluable routing recommendation
-mesh route --eval
+staypoint route --eval
 ```
 
 ### Reporting & Executive ROI ("The Boss Card")
 
 ```bash
 # Generate Work Justification Memo ("The Boss Card") PDF
-mesh report --pdf --type work
+staypoint report --pdf --type work
 
 # Filter by date range (supports exact dates or relative ranges like 7d, 30d)
-mesh report --pdf --type work --since 2026-08-01 --until 2026-09-01
-mesh report --pdf --type combined --since 30d
+staypoint report --pdf --type work --since 2026-08-01 --until 2026-09-01
+staypoint report --pdf --type combined --since 30d
 
 # Generate Personal Claude Code Value Audit PDF
-mesh report --pdf --type personal
+staypoint report --pdf --type personal
 
 # Generate Antigravity & Gemini Native Report PDF
-mesh report --pdf --type gemini
+staypoint report --pdf --type gemini
 
 # Generate Combined Multi-AI Fleet Executive Report PDF
-mesh report --pdf --type combined
+staypoint report --pdf --type combined
 
 # Batch generate all 4 executive PDF reports to ~/Desktop
-mesh report --pdf --type all
+staypoint report --pdf --type all
 
 # Specify a custom destination path
-mesh report --pdf --type work -o ~/Documents/Boss-Card-Q1.pdf
+staypoint report --pdf --type work -o ~/Documents/Boss-Card-Q1.pdf
 ```
 
 ### Remote Bridge & Sessions
 
 ```bash
 # Check remote SSH connectivity, latency, and path translation
-mesh bridge check ~/Documents/dev/company/partner-center-api
+staypoint bridge check ~/Documents/dev/company/partner-center-api
 
 # Launch interactive Claude session in persistent remote tmux
-mesh bridge launch ~/Documents/dev/company/partner-center-api
+staypoint bridge launch ~/Documents/dev/company/partner-center-api
 
 # Execute remote build command inside remote tmux session
-mesh bridge launch ~/Documents/dev/company/partner-center-api go test ./...
+staypoint bridge launch ~/Documents/dev/company/partner-center-api go test ./...
 ```
 
 ### Multi-Machine Synchronization
 
 ```bash
 # Pull transcripts from remote host over SSH/Tailscale & ingest into local DB
-mesh sync pull company-mbp
+staypoint sync pull company-mbp
 
 # Export local telemetry database into portable compressed bundle
-mesh sync export -o ~/Desktop/work-telemetry.tar.gz
+staypoint sync export -o ~/Desktop/work-telemetry.tar.gz
 
 # Import telemetry bundle into local database (idempotent)
-mesh sync import ~/Desktop/work-telemetry.tar.gz
+staypoint sync import ~/Desktop/work-telemetry.tar.gz
 ```
 
 ---
 
 ## Statusline Integration
 
-Agent-Mesh renders a 5-line recessed Tokyo Night terminal widget in `<2ms` with zero CPU overhead. It dynamically detects whether you are active in Claude Code or Antigravity and switches badges, account indicators, and runway advice in real time.
+Staypoint renders a 5-line recessed Tokyo Night terminal widget in `<2ms` with zero CPU overhead. It dynamically detects whether you are active in Claude Code or Antigravity and switches badges, account indicators, and runway advice in real time.
 
 ### 1. Claude Code Integration
 
-Point `~/.claude/settings.json` statusline command to `mesh statusline`:
+Point `~/.claude/settings.json` statusline command to `staypoint statusline`:
 
 ```json
 {
   "statusline": {
-    "command": "mesh statusline"
+    "command": "staypoint statusline"
   }
 }
 ```
 
 ### 2. Google Antigravity / Gemini CLI Integration
 
-When using Antigravity (`agy`), `mesh statusline` is automatically displayed before agent execution via the shell integration:
+When using Antigravity (`agy`), `staypoint statusline` is automatically displayed before agent execution via the shell integration:
 
 ```bash
 # In ~/.zshrc or ~/.bashrc:
-eval "$(mesh init --shell)"
+eval "$(staypoint init --shell)"
 
 # Or alias directly for standalone agy usage:
-alias agy="mesh statusline && agy"
+alias agy="staypoint statusline && agy"
 ```
 
 The statusline dynamically displays:
@@ -659,15 +659,15 @@ The statusline dynamically displays:
 Display live agent fleet pacing directly in your tmux status bar. Add to `~/.tmux.conf`:
 
 ```tmux
-set -g status-right "#(mesh statusline)"
+set -g status-right "#(staypoint statusline)"
 set -g status-interval 10
 ```
 
 ### Visual Output (Tokyo Night Palette)
 
 ```
-󰛡 Gemini (Native) │ 🪪 personal@gmail.com │ ⚡ mesh:active
-📁 agent-mesh │ 🐙 main │ 🦴 CAVEMAN
+󰛡 Gemini (Native) │ 🪪 personal@gmail.com │ ⚡ staypoint:active
+📁 staypoint │ 🐙 main │ 🦴 CAVEMAN
 ▏███████████████░░░░░▕ session:75% ~25% left @4:12pm
 ▏████████████████░░░░▕ weekly:81% ~19% left @tue 8:11pm
 plan: route ▸ gemini-3.8-flash-high (agy) · fallback: claude-sonnet-4-6 · runway: 16 turns
@@ -681,11 +681,11 @@ Benchmark: **1.8ms** execution time (compiled pure Go, sub-process safe).
 
 ### 1. Pure Go SQLite (Zero CGO)
 
-Agent-Mesh uses `modernc.org/sqlite` rather than `mattn/go-sqlite3`. This allows compiling the binary with `CGO_ENABLED=0`, producing 100% statically linked binaries with zero dynamic library dependencies while retaining full SQLite WAL mode, memory concurrency, and FTS5 full-text search.
+Staypoint uses `modernc.org/sqlite` rather than `mattn/go-sqlite3`. This allows compiling the binary with `CGO_ENABLED=0`, producing 100% statically linked binaries with zero dynamic library dependencies while retaining full SQLite WAL mode, memory concurrency, and FTS5 full-text search.
 
 ### 2. Isolated Git Index for Micro-Checkpoints
 
-`mesh checkpoint` never interferes with your working branch or commit history. By directing git plumbing commands (`git write-tree`, `git commit-tree`, `git update-ref`) through an isolated index environment (`GIT_INDEX_FILE=.git/mesh_index`), Agent-Mesh snapshots unstaged and staged files in `<5ms` under `refs/mesh/checkpoints/` without touching `HEAD`.
+`staypoint checkpoint` never interferes with your working branch or commit history. By directing git plumbing commands (`git write-tree`, `git commit-tree`, `git update-ref`) through an isolated index environment (`GIT_INDEX_FILE=.git/staypoint_index`), Staypoint snapshots unstaged and staged files in `<5ms` under `refs/staypoint/checkpoints/` without touching `HEAD`.
 
 ### 3. Native Chrome DevTools Protocol (`chromedp`)
 
@@ -693,7 +693,7 @@ Executive PDF generation communicates directly with the local Google Chrome bina
 
 ### 4. Non-Blocking Tail Ingestion & Event Daemon
 
-The `meshd` daemon maintains an event-driven file watcher (`fsnotify`) with byte-offset cursors stored in `~/.agent-mesh/ingest-cursors.json`. Transcripts are scanned using 4MB line buffers, extracting token metrics, evaluating circuit breakers, tracking working file touches, and attributing spend with zero noticeable CPU overhead (<0.1% CPU, 19MB RAM).
+The `staypointd` daemon maintains an event-driven file watcher (`fsnotify`) with byte-offset cursors stored in `~/.staypoint/ingest-cursors.json`. Transcripts are scanned using 4MB line buffers, extracting token metrics, evaluating circuit breakers, tracking working file touches, and attributing spend with zero noticeable CPU overhead (<0.1% CPU, 19MB RAM).
 
 ### 5. Idempotent Data Model
 
@@ -701,9 +701,9 @@ Every telemetry record generates a deterministic SHA-256 idempotency key based o
 
 ---
 
-## Cross-Compilation & CI/CD
+## Platform Support & Cross-Compilation
 
-Agent-Mesh includes full multi-platform release configurations via `.goreleaser.yaml` and automated GitHub Actions (`.github/workflows/ci.yml`):
+Staypoint officially supports macOS (Darwin) and Linux across ARM64 and AMD64 architectures. Release binaries are cross-compiled via `.goreleaser.yaml` and automated GitHub Actions (`.github/workflows/ci.yml`):
 
 Supported build targets:
 
@@ -711,14 +711,13 @@ Supported build targets:
 - `darwin/amd64` (Intel Mac)
 - `linux/amd64` (Standard Linux)
 - `linux/arm64` (ARM Linux / Raspberry Pi / Graviton)
-- `windows/amd64` (Windows x64)
 
 ---
 
 ## Privacy & Local-First Manifesto
 
-- **100% Local**: All SQLite databases, telemetry records, cursors, checkpoints, and reports reside on your machine in `~/.agent-mesh/`.
-- **Zero Telemetry Phone-Home**: Agent-Mesh makes zero outbound network requests to third-party telemetry services, tracking servers, or analytics endpoints.
+- **100% Local**: All SQLite databases, telemetry records, cursors, checkpoints, and reports reside on your machine in `~/.staypoint/`.
+- **Zero Telemetry Phone-Home**: Staypoint makes zero outbound network requests to third-party telemetry services, tracking servers, or analytics endpoints.
 - **Secure Network Bridging**: Network operations only occur across user-configured SSH keys or Tailscale nodes.
 
 ---
@@ -728,3 +727,4 @@ Supported build targets:
 Copyright © 2026 Vince Vasile.
 
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+

@@ -35,10 +35,10 @@ jobs:
       - name: Run Tests
         run: go test -v -race ./...
 
-      - name: Build Binaries (mesh & meshd)
+      - name: Build Binaries (staypoint & staypointd)
         run: |
-          go build -v -o bin/mesh ./cmd/mesh
-          go build -v -o bin/meshd ./cmd/meshd
+          go build -v -o bin/staypoint ./cmd/staypoint
+          go build -v -o bin/staypointd ./cmd/staypointd
 
   release:
     name: Release Binaries

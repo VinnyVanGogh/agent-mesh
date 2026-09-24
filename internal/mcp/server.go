@@ -11,8 +11,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
-	"github.com/VinnyVanGogh/agent-mesh/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
 )
 
 // Server implements a pure Go Model Context Protocol stdio server.
@@ -169,7 +169,7 @@ func (s *Server) HandleMessage(ctx context.Context, msg []byte) ([]byte, error) 
 				Tools: map[string]any{},
 			},
 			ServerInfo: ServerInfo{
-				Name:    "agent-mesh",
+				Name:    "staypoint",
 				Version: "0.1.0",
 			},
 		}

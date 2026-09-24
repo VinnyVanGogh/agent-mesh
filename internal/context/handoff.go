@@ -263,11 +263,19 @@ func GenerateHandoff(opts HandoffOptions) (*HandoffRecord, error) {
 		maxKeep = 3
 	}
 
-	// 2. Serialize to ~/.agent-mesh/handoff.json and session manifest
+	// 2. Serialize to ~/.staypoint/handoff.json and session manifest
 	dataDir := opts.DataDir
 	if dataDir == "" {
 		home, _ := os.UserHomeDir()
-		dataDir = filepath.Join(home, ".agent-mesh")
+		newDir := filepath.Join(home, ".staypoint")
+		oldDir := filepath.Join(home, ".agent-mesh")
+		if _, err := os.Stat(newDir); err == nil {
+			dataDir = newDir
+		} else if _, err := os.Stat(oldDir); err == nil {
+			dataDir = oldDir
+		} else {
+			dataDir = newDir
+		}
 	}
 	_ = os.MkdirAll(dataDir, 0755)
 

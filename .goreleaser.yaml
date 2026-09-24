@@ -1,8 +1,8 @@
-# GoReleaser Configuration for Agent-Mesh
+# GoReleaser Configuration for Staypoint
 # Documentation at https://goreleaser.com
 version: 2
 
-project_name: agent-mesh
+project_name: staypoint
 
 before:
   hooks:
@@ -10,30 +10,28 @@ before:
     - go test ./...
 
 builds:
-  - id: mesh
-    main: ./cmd/mesh
-    binary: mesh
+  - id: staypoint
+    main: ./cmd/staypoint
+    binary: staypoint
     env:
       - CGO_ENABLED=0
     goos:
       - darwin
       - linux
-      - windows
     goarch:
       - amd64
       - arm64
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
 
-  - id: meshd
-    main: ./cmd/meshd
-    binary: meshd
+  - id: staypointd
+    main: ./cmd/staypointd
+    binary: staypointd
     env:
       - CGO_ENABLED=0
     goos:
       - darwin
       - linux
-      - windows
     goarch:
       - amd64
       - arm64
@@ -44,9 +42,6 @@ archives:
   - id: default
     format: tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-    format_overrides:
-      - goos: windows
-        format: zip
     files:
       - README.md
       - LICENSE*

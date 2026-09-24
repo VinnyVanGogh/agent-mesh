@@ -17,11 +17,11 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
-	meshContext "github.com/VinnyVanGogh/agent-mesh/internal/context"
-	"github.com/VinnyVanGogh/agent-mesh/internal/db"
-	"github.com/VinnyVanGogh/agent-mesh/internal/wire"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
+	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/wire"
 	_ "modernc.org/sqlite"
 )
 

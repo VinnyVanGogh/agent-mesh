@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
 )
 
 func setupTestDB(t *testing.T) *db.Store {

@@ -266,7 +266,7 @@ func TestAutoGenerateHandoffForSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to load saved handoff markdown: %v", err)
 	}
-	if !strings.Contains(md, "AGENT-MESH CONTEXT HANDOFF") {
+	if !strings.Contains(md, "STAYPOINT CONTEXT HANDOFF") {
 		t.Errorf("missing handoff header in auto-generated markdown")
 	}
 }

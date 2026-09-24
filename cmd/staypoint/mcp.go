@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/mcp"
+	"github.com/VinnyVanGogh/staypoint/internal/mcp"
 	"github.com/spf13/cobra"
 )
 

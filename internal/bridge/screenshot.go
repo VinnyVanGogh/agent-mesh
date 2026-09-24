@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 )
 
 // ScreenshotOptions configures screenshot capture and transfer between local and remote hosts.

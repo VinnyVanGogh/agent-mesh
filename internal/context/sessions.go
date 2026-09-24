@@ -453,7 +453,7 @@ func GenerateSessionHandoffWithOptions(sess *SessionInfo, dbConn *sql.DB, opts S
 		originName = "Antigravity (Gemini)"
 	}
 
-	sb.WriteString("# ⚡ AGENT-MESH CONTEXT HANDOFF\n")
+	sb.WriteString("# ⚡ STAYPOINT CONTEXT HANDOFF\n")
 	sb.WriteString(fmt.Sprintf("- **Origin Agent**: %s (%s)\n", originName, ageStr))
 	sb.WriteString(fmt.Sprintf("- **Session ID**: `%s`\n", sess.ID))
 	sb.WriteString(fmt.Sprintf("- **Repository Path**: `%s`\n", gitCtx.RepoRoot))

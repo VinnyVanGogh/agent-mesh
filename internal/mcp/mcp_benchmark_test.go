@@ -50,7 +50,7 @@ func BenchmarkMCPToolsList(b *testing.B) {
 	}
 }
 
-// BenchmarkMCPCondenseToolCall benchmarks an in-process tool call (mesh_condense) via MCP JSON-RPC.
+// BenchmarkMCPCondenseToolCall benchmarks an in-process tool call (staypoint_condense) via MCP JSON-RPC.
 func BenchmarkMCPCondenseToolCall(b *testing.B) {
 	s := NewServer()
 	defer s.Close()
@@ -60,7 +60,7 @@ func BenchmarkMCPCondenseToolCall(b *testing.B) {
 		ID:      makeRawID(3),
 		Method:  "tools/call",
 		Params: json.RawMessage(`{
-			"name": "mesh_condense",
+			"name": "staypoint_condense",
 			"arguments": {
 				"raw_text": "Error: connection refused\nError: connection refused\nError: connection refused\nDone.",
 				"format": "generic",

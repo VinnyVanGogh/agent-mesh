@@ -2,28 +2,39 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
-	"github.com/VinnyVanGogh/agent-mesh/internal/logging"
-	"github.com/VinnyVanGogh/agent-mesh/internal/telemetry"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/logging"
+	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 )
 
 func main() {
-	logLevel := os.Getenv("MESH_LOG_LEVEL")
+	logLevel := os.Getenv("STAYPOINT_LOG_LEVEL")
 	if logLevel == "" {
-		logLevel = "INFO"
+		if legacy := os.Getenv("MESH_LOG_LEVEL"); legacy != "" {
+			fmt.Fprintf(os.Stderr, "DEPRECATION WARNING: MESH_LOG_LEVEL is deprecated and will be removed in v0.3.0. Use STAYPOINT_LOG_LEVEL instead.\n")
+			logLevel = legacy
+		} else {
+			logLevel = "INFO"
+		}
 	}
-	logFormat := os.Getenv("MESH_LOG_FORMAT")
+	logFormat := os.Getenv("STAYPOINT_LOG_FORMAT")
 	if logFormat == "" {
-		logFormat = "text"
+		if legacy := os.Getenv("MESH_LOG_FORMAT"); legacy != "" {
+			fmt.Fprintf(os.Stderr, "DEPRECATION WARNING: MESH_LOG_FORMAT is deprecated and will be removed in v0.3.0. Use STAYPOINT_LOG_FORMAT instead.\n")
+			logFormat = legacy
+		} else {
+			logFormat = "text"
+		}
 	}
 	logging.SetupLogger(logLevel, logFormat, os.Stderr)
 
-	slog.Info("Starting Agent-Mesh Background Daemon...")
+	slog.Info("Starting Staypoint Background Daemon...")
 
 	cfg, err := config.LoadConfig()
 	if err != nil {

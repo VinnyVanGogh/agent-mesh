@@ -139,7 +139,7 @@ func (b *BreakerTracker) RecordFailure(meshDB *sql.DB, sessionID, repoPath, agen
 			repoName = "workspace"
 		}
 		SendNotification(
-			"[Agent-Mesh] Circuit Breaker Tripped!",
+			"[Staypoint] Circuit Breaker Tripped!",
 			fmt.Sprintf("Agent %s in %s paused: %s", agentType, repoName, reason),
 		)
 	}
