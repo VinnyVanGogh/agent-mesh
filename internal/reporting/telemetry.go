@@ -152,13 +152,13 @@ func FetchTelemetryWithRange(cfg *config.Config, rangeOpts DateRangeOptions) (
 		EngineerName:         cfg.EngineerName,
 		WorkEmail:            cfg.WorkEmail,
 		HourlyRate:           cfg.HourlyRate,
-		AuditPeriod:          "Aug 10 – Sep 19, 2026",
+		AuditPeriod:          "Aug 10 to Sep 19, 2026",
 		SubstantiatedValue:   "$2,881.71",
 		ROIMultiplier:        "91.4x",
 		MonthlyRunRate:       "$1,827.57/mo",
 		AcceptedTurns:        "25,814",
 		MonthlyNetCost:       "+$180.00 / mo",
-		ExpectedROI:          "9.1x – 15.0x",
+		ExpectedROI:          "9.1x to 15.0x",
 		HasHourlyRate:        cfg.HourlyRate > 0,
 		HasCompanyName:       strings.TrimSpace(cfg.CompanyName) != "",
 		HasEngineerName:      strings.TrimSpace(cfg.EngineerName) != "",
@@ -173,7 +173,7 @@ func FetchTelemetryWithRange(cfg *config.Config, rangeOpts DateRangeOptions) (
 	personal = PersonalReportData{
 		EngineerName:    cfg.EngineerName,
 		PersonalEmail:   cfg.PersonalEmail,
-		AuditPeriod:     "Aug 11 – Sep 19, 2026",
+		AuditPeriod:     "Aug 11 to Sep 19, 2026",
 		TotalRequests:   "102,502",
 		DeliveredValue:  "$7,574.00",
 		NetSurplus:      "+$7,474.00",
@@ -193,7 +193,7 @@ func FetchTelemetryWithRange(cfg *config.Config, rangeOpts DateRangeOptions) (
 	brainCount := countBrainSessions()
 	gemini = GeminiReportData{
 		EngineerName:    cfg.EngineerName,
-		AuditPeriod:     "Aug 1 – Sep 19, 2026",
+		AuditPeriod:     "Aug 1 to Sep 19, 2026",
 		TotalTokens:     "53.08 Million",
 		InputTokens:     "51.13 Million",
 		OutputTokens:    "1.95 Million",
@@ -213,7 +213,7 @@ func FetchTelemetryWithRange(cfg *config.Config, rangeOpts DateRangeOptions) (
 
 	combined = CombinedReportData{
 		EngineerName:          cfg.EngineerName,
-		AuditPeriod:           "July 7 – Sep 19, 2026",
+		AuditPeriod:           "July 7 to Sep 19, 2026",
 		TotalValue:            "$14,259.29",
 		TotalInvocations:      "145,624",
 		TotalTokens:           "39.7 Billion",
@@ -408,9 +408,9 @@ func formatPeriod(start, end string) string {
 	t1, err1 := time.Parse(time.RFC3339, start)
 	t2, err2 := time.Parse(time.RFC3339, end)
 	if err1 == nil && err2 == nil {
-		return fmt.Sprintf("%s – %s", t1.Format("Jan 2"), t2.Format("Jan 2, 2006"))
+		return fmt.Sprintf("%s to %s", t1.Format("Jan 2"), t2.Format("Jan 2, 2006"))
 	}
-	return "Aug 1 – Sep 19, 2026"
+	return "Aug 1 to Sep 19, 2026"
 }
 
 func formatBoundDate(s string) string {
