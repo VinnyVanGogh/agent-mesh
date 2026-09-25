@@ -33,13 +33,21 @@ var hookPromptCmd = &cobra.Command{
 	},
 }
 
+var hookPromptFormat string
+
 func handleHookPrompt() {
-	rawInput, err := io.ReadAll(os.Stdin)
+	var rawInput []byte
+	stat, err := os.Stdin.Stat()
+	if err == nil && (stat.Mode()&os.ModeCharDevice) == 0 {
+		rawInput, _ = io.ReadAll(os.Stdin)
+	}
+
 	var promptText string
 	var sessionID string
+	var payload map[string]interface{}
+	isAntigravity := false
 
-	if err == nil && len(rawInput) > 0 {
-		var payload map[string]interface{}
+	if len(rawInput) > 0 {
 		if err := json.Unmarshal(rawInput, &payload); err == nil {
 			if p, ok := payload["prompt"].(string); ok {
 				promptText = p
@@ -48,10 +56,27 @@ func handleHookPrompt() {
 				sessionID = s
 			} else if s, ok := payload["session_id"].(string); ok && s != "" {
 				sessionID = s
+			} else if c, ok := payload["conversationId"].(string); ok && c != "" {
+				sessionID = c
+			}
+			if _, ok := payload["conversationId"]; ok {
+				isAntigravity = true
+			}
+			if _, ok := payload["invocationNum"]; ok {
+				isAntigravity = true
+			}
+			if _, ok := payload["workspacePaths"]; ok {
+				isAntigravity = true
 			}
 		} else {
 			promptText = string(rawInput)
 		}
+	}
+
+	if hookPromptFormat == "gemini" {
+		isAntigravity = true
+	} else if hookPromptFormat == "claude" {
+		isAntigravity = false
 	}
 
 	if sessionID == "" {
@@ -69,6 +94,13 @@ func handleHookPrompt() {
 	}
 
 	cwd, _ := os.Getwd()
+	if payload != nil {
+		if wsPaths, ok := payload["workspacePaths"].([]interface{}); ok && len(wsPaths) > 0 {
+			if firstPath, ok := wsPaths[0].(string); ok && firstPath != "" {
+				cwd = firstPath
+			}
+		}
+	}
 	var notices []string
 
 	// Open staypoint database
@@ -280,18 +312,44 @@ func handleHookPrompt() {
 					if data, err := os.ReadFile(filePath); err == nil {
 						var rev struct {
 							SHA      string `json:"sha"`
+							Repo     string `json:"repo"`
 							Verdict  string `json:"verdict"`
 							Review   string `json:"review"`
 							Reviewer string `json:"reviewer"`
 						}
 						if json.Unmarshal(data, &rev) == nil {
-							notices = append(notices, fmt.Sprintf("⚖️ [CODE REVIEW FROM CLAUDE CODE on commit %s - VERDICT: %s]:\n%s", rev.SHA, rev.Verdict, rev.Review))
+							if rev.Repo == "" || strings.EqualFold(rev.Repo, filepath.Base(cwd)) {
+								notices = append(notices, fmt.Sprintf("⚖️ [CODE REVIEW FROM CLAUDE CODE on commit %s : VERDICT %s]:\n%s", rev.SHA, rev.Verdict, rev.Review))
+								_ = os.Remove(filePath)
+							}
 						}
 					}
-					_ = os.Remove(filePath)
 				}
 			}
 		}
+	}
+
+	if isAntigravity {
+		if len(notices) > 0 {
+			type InjectedStep struct {
+				EphemeralMessage string `json:"ephemeralMessage,omitempty"`
+			}
+			type HookResp struct {
+				InjectSteps []InjectedStep `json:"injectSteps"`
+			}
+			resp := HookResp{
+				InjectSteps: []InjectedStep{
+					{
+						EphemeralMessage: strings.Join(notices, "\n\n"),
+					},
+				},
+			}
+			out, _ := json.Marshal(resp)
+			fmt.Println(string(out))
+			return
+		}
+		fmt.Println("{}")
+		return
 	}
 
 	if len(notices) > 0 {
@@ -306,8 +364,8 @@ func handleHookPrompt() {
 	fmt.Println("{}")
 }
 
-
 func init() {
+	hookPromptCmd.Flags().StringVar(&hookPromptFormat, "format", "auto", "Output format: auto, gemini, or claude")
 	rootCmd.AddCommand(hookCmd)
 	hookCmd.AddCommand(hookPromptCmd)
 }
