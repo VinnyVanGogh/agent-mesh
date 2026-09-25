@@ -23,6 +23,10 @@ const (
 	TargetClaudePersonal  RouteTarget = "claude-personal"
 )
 
+// ContinuityQuotaMarginPct is the weekly headroom margin below which repo continuity
+// yields to balanced headroom pacing to prevent sticking with an exhausted tool.
+const ContinuityQuotaMarginPct = 20.0
+
 type RouteOptions struct {
 	CheckSSH              bool
 	RemoteHost            string
@@ -103,7 +107,9 @@ func IsWorkRepo(cwd string) (bool, string, error) {
 	for {
 		gitPath := filepath.Join(checkDir, ".git")
 		var gitCfgPath string
+		foundGit := false
 		if fi, err := os.Stat(gitPath); err == nil {
+			foundGit = true
 			if fi.IsDir() {
 				gitCfgPath = filepath.Join(gitPath, "config")
 			} else {
@@ -114,13 +120,18 @@ func IsWorkRepo(cwd string) (bool, string, error) {
 						if !filepath.IsAbs(gitdir) {
 							gitdir = filepath.Join(checkDir, gitdir)
 						}
-						candidate := filepath.Join(gitdir, "config")
-						if _, err := os.Stat(candidate); err == nil {
-							gitCfgPath = candidate
+						// Check gitdir commondir pointer first, then local worktree config
+						commondirFile := filepath.Join(gitdir, "commondir")
+						if cdata, err := os.ReadFile(commondirFile); err == nil {
+							cd := strings.TrimSpace(string(cdata))
+							if !filepath.IsAbs(cd) {
+								cd = filepath.Join(gitdir, cd)
+							}
+							gitCfgPath = filepath.Join(cd, "config")
 						} else {
-							candidateCommon := filepath.Join(filepath.Dir(filepath.Dir(gitdir)), "config")
-							if _, err := os.Stat(candidateCommon); err == nil {
-								gitCfgPath = candidateCommon
+							candidate := filepath.Join(gitdir, "config")
+							if _, err := os.Stat(candidate); err == nil {
+								gitCfgPath = candidate
 							}
 						}
 					}
@@ -136,8 +147,11 @@ func IsWorkRepo(cwd string) (bool, string, error) {
 					strings.Contains(contentLower, "mansol") {
 					return true, "git remote: Managed Solution", nil
 				}
-				break
 			}
+		}
+
+		if foundGit {
+			break
 		}
 
 		parent := filepath.Dir(checkDir)
@@ -324,12 +338,12 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 	// Priority 2: Both tools are available, balance between them
 	if claudeOk && geminiOk {
 		// Repo continuity: if this repository was recently used with one tool, stick to it
-		// provided that tool has not fallen behind by > 20% weekly quota margin
-		if opts.LastUsedTool == "claude" && poolPersonal.Weekly.RemainingPct >= poolGemini.Weekly.RemainingPct-20.0 {
+		// provided that tool has not fallen behind by > ContinuityQuotaMarginPct weekly quota margin
+		if opts.LastUsedTool == "claude" && poolPersonal.Weekly.RemainingPct >= poolGemini.Weekly.RemainingPct-ContinuityQuotaMarginPct {
 			return routeToClaude(fmt.Sprintf("Personal repo: continuing with Claude Code (last tool used in this repo: %d turns runway | week: %.1f%% left)",
 				poolPersonal.TurnsRunway, poolPersonal.Weekly.RemainingPct))
 		}
-		if (opts.LastUsedTool == "agy" || opts.LastUsedTool == "gemini") && poolGemini.Weekly.RemainingPct >= poolPersonal.Weekly.RemainingPct-20.0 {
+		if (opts.LastUsedTool == "agy" || opts.LastUsedTool == "gemini") && poolGemini.Weekly.RemainingPct >= poolPersonal.Weekly.RemainingPct-ContinuityQuotaMarginPct {
 			return routeToGemini(fmt.Sprintf("Personal repo: continuing with Antigravity (last tool used in this repo: %d turns runway | week: %.1f%% left)",
 				poolGemini.TurnsRunway, poolGemini.Weekly.RemainingPct))
 		}

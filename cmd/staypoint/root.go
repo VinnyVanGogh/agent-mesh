@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 	"github.com/VinnyVanGogh/staypoint/internal/config"
@@ -130,8 +131,9 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Render the Tokyo Night statusline before launch (to stderr if headless stream, stdout if interactive)
-	if isHeadlessStream(args) {
+	// Render the Tokyo Night statusline before launch (to stderr if non-tty pipe or headless stream, stdout if interactive terminal)
+	isTerminal := isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
+	if !isTerminal || isHeadlessStream(args) {
 		_ = router.RenderStatusline(os.Stderr, nil)
 	} else {
 		_ = router.RenderStatusline(os.Stdout, nil)
@@ -200,29 +202,23 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 }
 
 func isHeadlessStream(args []string) bool {
-	check := func(slice []string) bool {
-		for i, arg := range slice {
-			if arg == "--print" || arg == "-p" || arg == "--json" {
-				return true
-			}
-			if strings.HasPrefix(arg, "--output-format=") {
-				val := strings.TrimPrefix(arg, "--output-format=")
-				if val == "stream-json" || val == "json" {
-					return true
-				}
-			}
-			if arg == "--output-format" && i+1 < len(slice) {
-				if slice[i+1] == "stream-json" || slice[i+1] == "json" {
-					return true
-				}
-			}
-			if strings.Contains(arg, "stream-json") {
+	for i, arg := range args {
+		if arg == "--print" || arg == "-p" {
+			return true
+		}
+		if strings.HasPrefix(arg, "--output-format=") {
+			val := strings.TrimPrefix(arg, "--output-format=")
+			if val == "stream-json" || val == "json" {
 				return true
 			}
 		}
-		return false
+		if arg == "--output-format" && i+1 < len(args) {
+			if args[i+1] == "stream-json" || args[i+1] == "json" {
+				return true
+			}
+		}
 	}
-	return check(args) || check(os.Args[1:])
+	return false
 }
 
 func init() {

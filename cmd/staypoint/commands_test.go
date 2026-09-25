@@ -163,8 +163,8 @@ func TestIsHeadlessStream(t *testing.T) {
 		{args: []string{"--output-format=stream-json"}, expected: true},
 		{args: []string{"--output-format", "json"}, expected: true},
 		{args: []string{"--output-format=json"}, expected: true},
-		{args: []string{"--json"}, expected: true},
-		{args: []string{"something", "stream-json"}, expected: true},
+		{args: []string{"something", "stream-json"}, expected: false},
+		{args: []string{"staypoint", "fix the stream-json parser"}, expected: false},
 		{args: []string{"--model", "claude-sonnet-4-6"}, expected: false},
 		{args: []string{}, expected: false},
 	}
