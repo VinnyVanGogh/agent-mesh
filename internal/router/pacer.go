@@ -176,6 +176,8 @@ func LoadPacerState() (*PacerState, error) {
 	}
 	if q, ok := stateData.Quotas["Claude (Personal)"]; ok {
 		applyStateQuota(state.Pools[PoolPersonalClaude], q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt, q.LastUpdated)
+	} else if q, ok := stateData.Quotas["Claude"]; ok {
+		applyStateQuota(state.Pools[PoolPersonalClaude], q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt, q.LastUpdated)
 	}
 	if q, ok := stateData.Quotas["Claude (Work)"]; ok {
 		applyStateQuota(state.Pools[PoolWorkClaude], q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt, q.LastUpdated)

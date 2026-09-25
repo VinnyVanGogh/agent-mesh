@@ -65,8 +65,22 @@ func TestBalancedPeerPacingRouting(t *testing.T) {
 		t.Errorf("expected tool claude for higher headroom, got %s (reason: %s)", dec1.Tool, dec1.Reason)
 	}
 
-	// Case 2: Repo continuity: LastUsedTool is agy -> sticks with agy
-	dec2, err := Route(ctx, "/Users/vincevasile/Documents/dev/personal-app", basePacer, RouteOptions{
+	// Case 2: Repo continuity within 20% margin: LastUsedTool is agy sticks with agy even if Claude has slightly more
+	continuityPacer := &PacerState{
+		Pools: map[PoolID]*QuotaPool{
+			PoolGeminiNative: {
+				TurnsRunway: 80,
+				FiveHour:    QuotaWindow{RemainingPct: 80.0},
+				Weekly:      QuotaWindow{RemainingPct: 75.0},
+			},
+			PoolPersonalClaude: {
+				TurnsRunway: 80,
+				FiveHour:    QuotaWindow{RemainingPct: 90.0},
+				Weekly:      QuotaWindow{RemainingPct: 85.0}, // 10% difference, within 20% margin
+			},
+		},
+	}
+	dec2, err := Route(ctx, "/Users/vincevasile/Documents/dev/personal-app", continuityPacer, RouteOptions{
 		CheckSSH:     false,
 		LastUsedTool: "agy",
 	})
@@ -74,7 +88,19 @@ func TestBalancedPeerPacingRouting(t *testing.T) {
 		t.Fatalf("Route failed: %v", err)
 	}
 	if dec2.Tool != "agy" {
-		t.Errorf("expected tool agy for repo continuity, got %s", dec2.Tool)
+		t.Errorf("expected tool agy for repo continuity within 20%% margin, got %s", dec2.Tool)
+	}
+
+	// Case 2b: Repo continuity overridden when tool is >20% starved compared to peer
+	dec2b, err := Route(ctx, "/Users/vincevasile/Documents/dev/personal-app", basePacer, RouteOptions{
+		CheckSSH:     false,
+		LastUsedTool: "agy", // Gemini is at 40% while Claude is at 90% (50% gap)
+	})
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+	if dec2b.Tool != "claude" {
+		t.Errorf("expected tool claude when continuity tool is starved by >20%% margin, got %s", dec2b.Tool)
 	}
 
 	// Case 3: User explicit preference: PreferredPersonalTool is claude

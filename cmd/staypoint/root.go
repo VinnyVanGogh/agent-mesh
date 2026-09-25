@@ -99,11 +99,13 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 		targetModel = "gemini-3.8-flash-high"
 	} else {
 		lastTool := ""
-		if store, err := db.Open(cfg.DBPath); err == nil {
-			if sess, err := meshContext.GetLatestSession(cwd, store.DB()); err == nil && sess != nil {
-				lastTool = sess.AgentType
+		if cfg != nil && cfg.DBPath != "" {
+			if store, err := db.Open(cfg.DBPath); err == nil {
+				if sess, err := meshContext.GetLatestSession(cwd, store.DB()); err == nil && sess != nil {
+					lastTool = sess.AgentType
+				}
+				store.Close()
 			}
-			store.Close()
 		}
 
 		prefTool := "auto"
@@ -128,8 +130,12 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	// Always render the Tokyo Night statusline before launch
-	_ = router.RenderStatusline(os.Stdout, nil)
+	// Render the Tokyo Night statusline before launch (to stderr if headless stream, stdout if interactive)
+	if isHeadlessStream(args) {
+		_ = router.RenderStatusline(os.Stderr, nil)
+	} else {
+		_ = router.RenderStatusline(os.Stdout, nil)
+	}
 
 	if dryRun {
 		fmt.Printf("\n\033[1;36m[Staypoint :: Dry Run]\033[0m\n")
@@ -193,6 +199,31 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 	}
 }
 
+func isHeadlessStream(args []string) bool {
+	check := func(slice []string) bool {
+		for i, arg := range slice {
+			if arg == "--print" || arg == "-p" || arg == "--json" {
+				return true
+			}
+			if strings.HasPrefix(arg, "--output-format=") {
+				val := strings.TrimPrefix(arg, "--output-format=")
+				if val == "stream-json" || val == "json" {
+					return true
+				}
+			}
+			if arg == "--output-format" && i+1 < len(slice) {
+				if slice[i+1] == "stream-json" || slice[i+1] == "json" {
+					return true
+				}
+			}
+			if strings.Contains(arg, "stream-json") {
+				return true
+			}
+		}
+		return false
+	}
+	return check(args) || check(os.Args[1:])
+}
 
 func init() {
 	cfg = config.DefaultConfig()

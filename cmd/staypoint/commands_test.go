@@ -151,3 +151,28 @@ func TestCommands_InProcess(t *testing.T) {
 		_ = runInProcess(t, repoDir, "handoff", "branches")
 	})
 }
+
+func TestIsHeadlessStream(t *testing.T) {
+	cases := []struct {
+		args     []string
+		expected bool
+	}{
+		{args: []string{"--print"}, expected: true},
+		{args: []string{"-p", "fix bug"}, expected: true},
+		{args: []string{"--output-format", "stream-json"}, expected: true},
+		{args: []string{"--output-format=stream-json"}, expected: true},
+		{args: []string{"--output-format", "json"}, expected: true},
+		{args: []string{"--output-format=json"}, expected: true},
+		{args: []string{"--json"}, expected: true},
+		{args: []string{"something", "stream-json"}, expected: true},
+		{args: []string{"--model", "claude-sonnet-4-6"}, expected: false},
+		{args: []string{}, expected: false},
+	}
+
+	for _, tc := range cases {
+		got := isHeadlessStream(tc.args)
+		if got != tc.expected {
+			t.Errorf("isHeadlessStream(%v) = %v; want %v", tc.args, got, tc.expected)
+		}
+	}
+}

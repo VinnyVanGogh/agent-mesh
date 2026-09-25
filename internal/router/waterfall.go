@@ -98,19 +98,48 @@ func IsWorkRepo(cwd string) (bool, string, error) {
 		}
 	}
 
-	// 3. Check git remote origin URL in repository config
+	// 3. Check git remote origin URL in repository config (supports standard git and worktrees)
 	checkDir := cleanCwd
 	for {
-		gitCfgPath := filepath.Join(checkDir, ".git", "config")
-		if data, err := os.ReadFile(gitCfgPath); err == nil {
-			contentLower := strings.ToLower(string(data))
-			if strings.Contains(contentLower, "managedsolution") ||
-				strings.Contains(contentLower, "managed-solution") ||
-				strings.Contains(contentLower, "mansol") {
-				return true, "git remote: Managed Solution", nil
+		gitPath := filepath.Join(checkDir, ".git")
+		var gitCfgPath string
+		if fi, err := os.Stat(gitPath); err == nil {
+			if fi.IsDir() {
+				gitCfgPath = filepath.Join(gitPath, "config")
+			} else {
+				if content, err := os.ReadFile(gitPath); err == nil {
+					line := strings.TrimSpace(string(content))
+					if strings.HasPrefix(line, "gitdir:") {
+						gitdir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+						if !filepath.IsAbs(gitdir) {
+							gitdir = filepath.Join(checkDir, gitdir)
+						}
+						candidate := filepath.Join(gitdir, "config")
+						if _, err := os.Stat(candidate); err == nil {
+							gitCfgPath = candidate
+						} else {
+							candidateCommon := filepath.Join(filepath.Dir(filepath.Dir(gitdir)), "config")
+							if _, err := os.Stat(candidateCommon); err == nil {
+								gitCfgPath = candidateCommon
+							}
+						}
+					}
+				}
 			}
-			break
 		}
+
+		if gitCfgPath != "" {
+			if data, err := os.ReadFile(gitCfgPath); err == nil {
+				contentLower := strings.ToLower(string(data))
+				if strings.Contains(contentLower, "managedsolution") ||
+					strings.Contains(contentLower, "managed-solution") ||
+					strings.Contains(contentLower, "mansol") {
+					return true, "git remote: Managed Solution", nil
+				}
+				break
+			}
+		}
+
 		parent := filepath.Dir(checkDir)
 		if parent == checkDir || parent == "" || parent == "/" {
 			break
@@ -135,9 +164,7 @@ func IsWorkRepo(cwd string) (bool, string, error) {
 
 				if cleanCwd == cleanRepoPath || evalCwd == evalRepoPath ||
 					strings.HasPrefix(cleanCwd, cleanRepoPath+string(filepath.Separator)) ||
-					strings.HasPrefix(evalCwd, evalRepoPath+string(filepath.Separator)) ||
-					strings.HasPrefix(cleanRepoPath, cleanCwd+string(filepath.Separator)) ||
-					strings.HasPrefix(evalRepoPath, evalCwd+string(filepath.Separator)) {
+					strings.HasPrefix(evalCwd, evalRepoPath+string(filepath.Separator)) {
 					return true, fmt.Sprintf("scan-repos: %s", r.Name), nil
 				}
 			}
@@ -297,11 +324,12 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 	// Priority 2: Both tools are available, balance between them
 	if claudeOk && geminiOk {
 		// Repo continuity: if this repository was recently used with one tool, stick to it
-		if opts.LastUsedTool == "claude" {
+		// provided that tool has not fallen behind by > 20% weekly quota margin
+		if opts.LastUsedTool == "claude" && poolPersonal.Weekly.RemainingPct >= poolGemini.Weekly.RemainingPct-20.0 {
 			return routeToClaude(fmt.Sprintf("Personal repo: continuing with Claude Code (last tool used in this repo: %d turns runway | week: %.1f%% left)",
 				poolPersonal.TurnsRunway, poolPersonal.Weekly.RemainingPct))
 		}
-		if opts.LastUsedTool == "agy" || opts.LastUsedTool == "gemini" {
+		if (opts.LastUsedTool == "agy" || opts.LastUsedTool == "gemini") && poolGemini.Weekly.RemainingPct >= poolPersonal.Weekly.RemainingPct-20.0 {
 			return routeToGemini(fmt.Sprintf("Personal repo: continuing with Antigravity (last tool used in this repo: %d turns runway | week: %.1f%% left)",
 				poolGemini.TurnsRunway, poolGemini.Weekly.RemainingPct))
 		}
