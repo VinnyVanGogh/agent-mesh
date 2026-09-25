@@ -104,6 +104,8 @@ func TestGetPendingReviewFromDir(t *testing.T) {
 	if err := os.WriteFile(newPath, newData, 0644); err != nil {
 		t.Fatal(err)
 	}
+	newerTime := time.Now()
+	_ = os.Chtimes(newPath, newerTime, newerTime)
 
 	// Write an unrelated repo review
 	otherRev := map[string]interface{}{
@@ -117,6 +119,7 @@ func TestGetPendingReviewFromDir(t *testing.T) {
 	if err := os.WriteFile(otherPath, otherData, 0644); err != nil {
 		t.Fatal(err)
 	}
+	_ = os.Chtimes(otherPath, newerTime, newerTime)
 
 	// Query for bassline should pick newest bassline review
 	rev := getPendingReviewFromDir("/Users/vincevasile/Documents/dev/bassline", tempDir)
@@ -139,14 +142,31 @@ func TestGetPendingReviewFromDir(t *testing.T) {
 }
 
 func TestRenderStatuslineWithReviewBadge(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("skipping without home dir")
+	}
+	pendingDir := filepath.Join(home, ".claude", "reviews", "pending")
+	_ = os.MkdirAll(pendingDir, 0755)
+
+	testPath := filepath.Join(pendingDir, "test-render-badge.json")
+	revData := []byte(`{"repo":"agent-mesh","sha":"abc1234","verdict":"WARN"}`)
+	if err := os.WriteFile(testPath, revData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(testPath)
+
 	var buf bytes.Buffer
 	input := `{"cwd": "/Users/vincevasile/Documents/dev/agent-mesh", "vim_mode": "NORMAL"}`
-	err := RenderStatusline(&buf, strings.NewReader(input))
+	err = RenderStatusline(&buf, strings.NewReader(input))
 	if err != nil {
 		t.Fatalf("RenderStatusline failed: %v", err)
 	}
 	out := buf.String()
 	if !strings.Contains(out, "agent-mesh") {
 		t.Fatalf("expected agent-mesh in output, got:\n%s", out)
+	}
+	if !strings.Contains(out, "REVIEW: WARN (abc1234)") {
+		t.Fatalf("expected review badge in statusline output, got:\n%s", out)
 	}
 }

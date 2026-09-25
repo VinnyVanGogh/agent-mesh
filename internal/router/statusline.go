@@ -210,11 +210,11 @@ func fastGitInfo(dir string) (branch, dirty, sync string) {
 
 // RenderStatusline produces the Tokyo Night multi-line statusline in <5ms.
 func RenderStatusline(w io.Writer, r io.Reader) error {
-	// 1. Read input payload if piped (e.g. from Claude Code) with 5ms timeout
+	// 1. Read input payload if piped (e.g. from Claude Code) with 25ms timeout
 	var payload StatuslinePayload
 	hasPipedInput := false
 
-	data := readPipedInput(r, 5*time.Millisecond)
+	data := readPipedInput(r, 25*time.Millisecond)
 	if len(data) > 0 {
 		_ = json.Unmarshal(data, &payload)
 		hasPipedInput = true
@@ -533,14 +533,9 @@ func getPendingReviewFromDir(dir string, pendingDir string) *pendingReviewInfo {
 	var newestTime time.Time
 	var bestMatch *pendingReviewInfo
 
-	inspected := 0
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".json") {
 			continue
-		}
-		inspected++
-		if inspected > 20 {
-			break
 		}
 
 		filePath := filepath.Join(pendingDir, e.Name())
