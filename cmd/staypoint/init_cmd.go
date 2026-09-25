@@ -102,13 +102,21 @@ agy() {
 
 		fmt.Printf("\033[1;32m✔ Staypoint initialized at: %s\033[0m\n", cfg.DataDir)
 		fmt.Printf("✔ SQLite database active with WAL mode: %s\n", cfg.DBPath)
-		fmt.Println("\nTo install shell aliases & auto-router, add this to your ~/.zshrc:")
-		fmt.Println("  \033[1;36meval \"$(staypoint init --shell)\"\033[0m")
+
+		hooksFlag, _ := cmd.Flags().GetBool("hooks")
+		if hooksFlag {
+			installHooks()
+		} else {
+			fmt.Println("\nTo install shell aliases & auto-router, add this to your ~/.zshrc:")
+			fmt.Println("  \033[1;36meval \"$(staypoint init --shell)\"\033[0m")
+			fmt.Println("\nOptional: To install cross-agent review and prompt hooks for Antigravity & Claude Code, run:")
+			fmt.Println("  \033[1;36mstaypoint init --hooks\033[0m")
+		}
 	},
 }
-
 
 func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.Flags().Bool("shell", false, "Print shell integration hook code for ~/.zshrc or ~/.bashrc")
+	initCmd.Flags().Bool("hooks", false, "Install Antigravity and Claude Code lifecycle hooks for bidirectional review and context injection")
 }

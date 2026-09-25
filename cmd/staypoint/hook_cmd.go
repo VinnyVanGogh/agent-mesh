@@ -364,8 +364,17 @@ func handleHookPrompt() {
 	fmt.Println("{}")
 }
 
+var hookInstallCmd = &cobra.Command{
+	Use:   "install",
+	Short: "Install Antigravity and Claude Code lifecycle hooks for bidirectional review",
+	Run: func(cmd *cobra.Command, args []string) {
+		installHooks()
+	},
+}
+
 func init() {
 	hookPromptCmd.Flags().StringVar(&hookPromptFormat, "format", "auto", "Output format: auto, gemini, or claude")
 	rootCmd.AddCommand(hookCmd)
 	hookCmd.AddCommand(hookPromptCmd)
+	hookCmd.AddCommand(hookInstallCmd)
 }
