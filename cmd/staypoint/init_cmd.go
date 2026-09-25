@@ -63,7 +63,7 @@ claude() {
   if [[ "$force" == true ]]; then
     command claude "${clean_args[@]}"
   else
-    staypoint "${clean_args[@]}"
+    staypoint --claude "${clean_args[@]}"
   fi
 }
 
@@ -81,7 +81,7 @@ agy() {
   if [[ "$force" == true ]]; then
     command agy "${clean_args[@]}"
   else
-    staypoint "${clean_args[@]}"
+    staypoint --gemini "${clean_args[@]}"
   fi
 }
 `)

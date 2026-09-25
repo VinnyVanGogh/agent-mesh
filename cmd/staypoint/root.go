@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -63,7 +64,16 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	forceClaude, _ := cmd.Flags().GetBool("claude")
 	forceGemini, _ := cmd.Flags().GetBool("gemini")
+	force, _ := cmd.Flags().GetBool("force")
 	noSSH, _ := cmd.Flags().GetBool("no-ssh")
+
+	if force && !forceClaude && !forceGemini {
+		if strings.Contains(os.Args[0], "claude") {
+			forceClaude = true
+		} else if strings.Contains(os.Args[0], "agy") {
+			forceGemini = true
+		}
+	}
 
 	pacerState, _ := router.LoadPacerState()
 	cwd, _ := os.Getwd()
@@ -171,6 +181,7 @@ func init() {
 	cfg = config.DefaultConfig()
 	rootCmd.Flags().BoolP("claude", "C", false, "Force route to Claude Code")
 	rootCmd.Flags().BoolP("gemini", "G", false, "Force route to Antigravity Gemini")
+	rootCmd.Flags().BoolP("force", "f", false, "Force direct execution of target tool bypassing router")
 	rootCmd.Flags().BoolP("continue", "c", false, "Continue the most recent agent session in this repository")
 	rootCmd.Flags().BoolP("resume", "r", false, "Show recent sessions across Claude and Antigravity to resume or hand off")
 	rootCmd.Flags().BoolP("handoff", "H", false, "Synthesize zero-effort handoff prompt to clipboard instead of launching")

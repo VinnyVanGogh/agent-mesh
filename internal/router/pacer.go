@@ -219,6 +219,18 @@ func LoadPacerState() (*PacerState, error) {
 			}
 		}
 
+		// Auto-reset windows whose reset timestamp has passed
+		if !pool.FiveHour.ResetsAt.IsZero() && now.After(pool.FiveHour.ResetsAt) {
+			pool.FiveHour.UsedPct = 0.0
+			pool.FiveHour.RemainingPct = 100.0
+			pool.FiveHour.IsLocked = false
+		}
+		if !pool.Weekly.ResetsAt.IsZero() && now.After(pool.Weekly.ResetsAt) {
+			pool.Weekly.UsedPct = 0.0
+			pool.Weekly.RemainingPct = 100.0
+			pool.Weekly.IsLocked = false
+		}
+
 		if lockEntry != nil && lockEntry.Locked && lockEntry.ResetsAt > float64(now.Unix()) {
 			pool.IsLocked = true
 			pool.LockoutUntil = time.Unix(int64(lockEntry.ResetsAt), 0)
