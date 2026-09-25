@@ -269,6 +269,31 @@ func handleHookPrompt() {
 		}
 	}
 
+	// 3. Drain pending code reviews from Claude Code for Gemini
+	homeDir, _ := os.UserHomeDir()
+	if homeDir != "" {
+		pendingGeminiDir := filepath.Join(homeDir, ".claude", "reviews", "pending-gemini")
+		if entries, err := os.ReadDir(pendingGeminiDir); err == nil {
+			for _, e := range entries {
+				if strings.HasSuffix(e.Name(), ".json") {
+					filePath := filepath.Join(pendingGeminiDir, e.Name())
+					if data, err := os.ReadFile(filePath); err == nil {
+						var rev struct {
+							SHA      string `json:"sha"`
+							Verdict  string `json:"verdict"`
+							Review   string `json:"review"`
+							Reviewer string `json:"reviewer"`
+						}
+						if json.Unmarshal(data, &rev) == nil {
+							notices = append(notices, fmt.Sprintf("⚖️ [CODE REVIEW FROM CLAUDE CODE on commit %s - VERDICT: %s]:\n%s", rev.SHA, rev.Verdict, rev.Review))
+						}
+					}
+					_ = os.Remove(filePath)
+				}
+			}
+		}
+	}
+
 	if len(notices) > 0 {
 		resp := map[string]string{
 			"additionalContext": strings.Join(notices, "\n\n"),
