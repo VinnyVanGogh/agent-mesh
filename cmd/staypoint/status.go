@@ -89,7 +89,7 @@ var statuslineCmd = &cobra.Command{
 	Use:   "statusline",
 	Short: "Render instantaneous statusline widget (<2ms) for prompt/tmux integration",
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := router.RenderStatusline(os.Stdout, nil); err != nil {
+		if err := router.RenderStatusline(os.Stdout, os.Stdin); err != nil {
 			os.Exit(1)
 		}
 	},

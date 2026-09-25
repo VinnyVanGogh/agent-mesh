@@ -324,6 +324,22 @@ func RenderStatusline(w io.Writer, r io.Reader) error {
 		line2Parts = append(line2Parts, fmt.Sprintf("%s%s%s%s", vimColor, Bold, payload.VimMode, Reset))
 	}
 
+	// Pending code review badge for Claude
+	if rev := getPendingReviewForClaude(dir); rev != nil {
+		vCol := Green
+		switch rev.Verdict {
+		case "FAIL", "DEFECT", "REJECT":
+			vCol = Red
+		case "WARN", "WARNING", "CONCERN":
+			vCol = Yellow
+		}
+		shaStr := ""
+		if rev.SHA != "" {
+			shaStr = fmt.Sprintf(" (%s)", rev.SHA)
+		}
+		line2Parts = append(line2Parts, fmt.Sprintf("%s%s⚖️ REVIEW: %s%s%s", vCol, Bold, rev.Verdict, shaStr, Reset))
+	}
+
 	// Check Caveman mode
 	home, _ := os.UserHomeDir()
 	cavemanFile := filepath.Join(home, ".claude", ".caveman-mode")
@@ -483,4 +499,100 @@ func readPipedInput(r io.Reader, timeout time.Duration) []byte {
 	case <-time.After(timeout):
 		return nil
 	}
+}
+
+type pendingReviewInfo struct {
+	SHA     string
+	Verdict string
+}
+
+func getPendingReviewForClaude(dir string) *pendingReviewInfo {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+
+	repoName := filepath.Base(dir)
+	dirsToCheck := []string{
+		filepath.Join(home, ".claude", "reviews", "pending"),
+		filepath.Join(home, ".claude", "reviews", "pending-claude"),
+	}
+
+	for _, d := range dirsToCheck {
+		entries, err := os.ReadDir(d)
+		if err != nil {
+			continue
+		}
+
+		for _, e := range entries {
+			if !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+
+			filePath := filepath.Join(d, e.Name())
+			data, err := os.ReadFile(filePath)
+			if err != nil {
+				continue
+			}
+
+			var rec struct {
+				Repo     string      `json:"repo"`
+				RepoPath string      `json:"repo_path"`
+				SHA      string      `json:"sha"`
+				Verdict  string      `json:"verdict"`
+				Severity interface{} `json:"severity"`
+				Mismatch string      `json:"mismatch"`
+			}
+
+			if err := json.Unmarshal(data, &rec); err != nil {
+				continue
+			}
+
+			matched := false
+			if rec.RepoPath != "" && strings.HasPrefix(dir, rec.RepoPath) {
+				matched = true
+			} else if rec.Repo != "" && strings.EqualFold(rec.Repo, repoName) {
+				matched = true
+			} else if rec.Repo == "" && rec.RepoPath == "" {
+				matched = true
+			}
+
+			if !matched {
+				continue
+			}
+
+			verdict := strings.ToUpper(rec.Verdict)
+			if verdict == "" {
+				sev := 0
+				switch v := rec.Severity.(type) {
+				case float64:
+					sev = int(v)
+				case int:
+					sev = v
+				}
+
+				if sev >= 3 {
+					verdict = "FAIL"
+				} else if sev >= 2 || strings.EqualFold(rec.Mismatch, "yes") {
+					verdict = "WARN"
+				} else if sev == 1 {
+					verdict = "NIT"
+				} else {
+					verdict = "PASS"
+				}
+			}
+
+			sha := rec.SHA
+			if len(sha) > 7 {
+				sha = sha[:7]
+			}
+
+			return &pendingReviewInfo{
+				SHA:     sha,
+				Verdict: verdict,
+			}
+		}
+	}
+
+	return nil
 }
