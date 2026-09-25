@@ -210,11 +210,11 @@ func fastGitInfo(dir string) (branch, dirty, sync string) {
 
 // RenderStatusline produces the Tokyo Night multi-line statusline in <5ms.
 func RenderStatusline(w io.Writer, r io.Reader) error {
-	// 1. Read input payload if piped (e.g. from Claude Code) with 25ms timeout
+	// 1. Read input payload if piped (e.g. from Claude Code) with 5ms timeout
 	var payload StatuslinePayload
 	hasPipedInput := false
 
-	data := readPipedInput(r, 25*time.Millisecond)
+	data := readPipedInput(r, 5*time.Millisecond)
 	if len(data) > 0 {
 		_ = json.Unmarshal(data, &payload)
 		hasPipedInput = true
@@ -506,61 +506,75 @@ type pendingReviewInfo struct {
 	Verdict string
 }
 
-func getPendingReviewForClaude(dir string) *pendingReviewInfo {
-	home, err := os.UserHomeDir()
+func matchRepoPath(dir, recRepoPath, recRepo string) bool {
+	if recRepoPath != "" {
+		cleanDir := filepath.Clean(dir)
+		cleanRP := filepath.Clean(recRepoPath)
+		if cleanDir == cleanRP || strings.HasPrefix(cleanDir, cleanRP+string(filepath.Separator)) {
+			return true
+		}
+		// When repo_path is explicitly set but does not match, do not fall back to basename.
+		return false
+	}
+	// Fall back to repo basename only when repo_path is empty.
+	if recRepo != "" {
+		return strings.EqualFold(filepath.Base(dir), recRepo)
+	}
+	// If both are empty, never match.
+	return false
+}
+
+func getPendingReviewFromDir(dir string, pendingDir string) *pendingReviewInfo {
+	entries, err := os.ReadDir(pendingDir)
 	if err != nil {
 		return nil
 	}
 
-	repoName := filepath.Base(dir)
-	dirsToCheck := []string{
-		filepath.Join(home, ".claude", "reviews", "pending"),
-		filepath.Join(home, ".claude", "reviews", "pending-claude"),
-	}
+	var newestTime time.Time
+	var bestMatch *pendingReviewInfo
 
-	for _, d := range dirsToCheck {
-		entries, err := os.ReadDir(d)
+	inspected := 0
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		inspected++
+		if inspected > 20 {
+			break
+		}
+
+		filePath := filepath.Join(pendingDir, e.Name())
+		fi, err := e.Info()
 		if err != nil {
 			continue
 		}
 
-		for _, e := range entries {
-			if !strings.HasSuffix(e.Name(), ".json") {
-				continue
-			}
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
 
-			filePath := filepath.Join(d, e.Name())
-			data, err := os.ReadFile(filePath)
-			if err != nil {
-				continue
-			}
+		var rec struct {
+			Repo      string      `json:"repo"`
+			RepoPath  string      `json:"repo_path"`
+			SHA       string      `json:"sha"`
+			Verdict   string      `json:"verdict"`
+			Severity  interface{} `json:"severity"`
+			Mismatch  string      `json:"mismatch"`
+			SessionID string      `json:"session_id"`
+		}
 
-			var rec struct {
-				Repo     string      `json:"repo"`
-				RepoPath string      `json:"repo_path"`
-				SHA      string      `json:"sha"`
-				Verdict  string      `json:"verdict"`
-				Severity interface{} `json:"severity"`
-				Mismatch string      `json:"mismatch"`
-			}
+		if err := json.Unmarshal(data, &rec); err != nil {
+			continue
+		}
 
-			if err := json.Unmarshal(data, &rec); err != nil {
-				continue
-			}
+		// session_id is intentionally not filtered here: any pending review for this
+		// repository is surfaced on the statusline so the user sees it immediately.
+		if !matchRepoPath(dir, rec.RepoPath, rec.Repo) {
+			continue
+		}
 
-			matched := false
-			if rec.RepoPath != "" && strings.HasPrefix(dir, rec.RepoPath) {
-				matched = true
-			} else if rec.Repo != "" && strings.EqualFold(rec.Repo, repoName) {
-				matched = true
-			} else if rec.Repo == "" && rec.RepoPath == "" {
-				matched = true
-			}
-
-			if !matched {
-				continue
-			}
-
+		if bestMatch == nil || fi.ModTime().After(newestTime) {
 			verdict := strings.ToUpper(rec.Verdict)
 			if verdict == "" {
 				sev := 0
@@ -587,12 +601,22 @@ func getPendingReviewForClaude(dir string) *pendingReviewInfo {
 				sha = sha[:7]
 			}
 
-			return &pendingReviewInfo{
+			newestTime = fi.ModTime()
+			bestMatch = &pendingReviewInfo{
 				SHA:     sha,
 				Verdict: verdict,
 			}
 		}
 	}
 
-	return nil
+	return bestMatch
+}
+
+func getPendingReviewForClaude(dir string) *pendingReviewInfo {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	pendingDir := filepath.Join(home, ".claude", "reviews", "pending")
+	return getPendingReviewFromDir(dir, pendingDir)
 }

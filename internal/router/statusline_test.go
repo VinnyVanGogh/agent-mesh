@@ -1,0 +1,152 @@
+package router
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestMatchRepoPath(t *testing.T) {
+	tests := []struct {
+		name        string
+		dir         string
+		recRepoPath string
+		recRepo     string
+		want        bool
+	}{
+		{
+			name:        "exact repo_path match",
+			dir:         "/home/user/dev/project",
+			recRepoPath: "/home/user/dev/project",
+			recRepo:     "project",
+			want:        true,
+		},
+		{
+			name:        "subdirectory in repo_path",
+			dir:         "/home/user/dev/project/sub/pkg",
+			recRepoPath: "/home/user/dev/project",
+			recRepo:     "project",
+			want:        true,
+		},
+		{
+			name:        "false prefix does not match",
+			dir:         "/home/user/dev/project-fork",
+			recRepoPath: "/home/user/dev/project",
+			recRepo:     "project",
+			want:        false,
+		},
+		{
+			name:        "mismatched repo_path does not fall through to basename",
+			dir:         "/work/project",
+			recRepoPath: "/personal/project",
+			recRepo:     "project",
+			want:        false,
+		},
+		{
+			name:        "empty repo_path falls back to repo basename",
+			dir:         "/home/user/dev/project",
+			recRepoPath: "",
+			recRepo:     "project",
+			want:        true,
+		},
+		{
+			name:        "empty repo_path and empty repo never matches",
+			dir:         "/home/user/dev/project",
+			recRepoPath: "",
+			recRepo:     "",
+			want:        false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := matchRepoPath(tc.dir, tc.recRepoPath, tc.recRepo)
+			if got != tc.want {
+				t.Fatalf("matchRepoPath(%q, %q, %q) = %v; want %v", tc.dir, tc.recRepoPath, tc.recRepo, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGetPendingReviewFromDir(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Write an older review
+	oldRev := map[string]interface{}{
+		"repo":      "bassline",
+		"repo_path": "/Users/vincevasile/Documents/dev/bassline",
+		"sha":       "1111111aaaa",
+		"severity":  1,
+	}
+	oldData, _ := json.Marshal(oldRev)
+	oldPath := filepath.Join(tempDir, "review-old.json")
+	if err := os.WriteFile(oldPath, oldData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set older mtime
+	olderTime := time.Now().Add(-10 * time.Minute)
+	_ = os.Chtimes(oldPath, olderTime, olderTime)
+
+	// Write a newer review
+	newRev := map[string]interface{}{
+		"repo":      "bassline",
+		"repo_path": "/Users/vincevasile/Documents/dev/bassline",
+		"sha":       "2222222bbbb",
+		"severity":  2,
+	}
+	newData, _ := json.Marshal(newRev)
+	newPath := filepath.Join(tempDir, "review-new.json")
+	if err := os.WriteFile(newPath, newData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write an unrelated repo review
+	otherRev := map[string]interface{}{
+		"repo":      "other-project",
+		"repo_path": "/Users/vincevasile/Documents/dev/other-project",
+		"sha":       "3333333cccc",
+		"verdict":   "FAIL",
+	}
+	otherData, _ := json.Marshal(otherRev)
+	otherPath := filepath.Join(tempDir, "review-other.json")
+	if err := os.WriteFile(otherPath, otherData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Query for bassline should pick newest bassline review
+	rev := getPendingReviewFromDir("/Users/vincevasile/Documents/dev/bassline", tempDir)
+	if rev == nil {
+		t.Fatal("expected pending review, got nil")
+	}
+
+	if rev.SHA != "2222222" {
+		t.Fatalf("expected SHA 2222222, got %s", rev.SHA)
+	}
+	if rev.Verdict != "WARN" {
+		t.Fatalf("expected verdict WARN, got %s", rev.Verdict)
+	}
+
+	// Query for unreviewed repo should return nil
+	revUnrelated := getPendingReviewFromDir("/Users/vincevasile/Documents/dev/not-here", tempDir)
+	if revUnrelated != nil {
+		t.Fatalf("expected nil for unrelated repo, got %+v", revUnrelated)
+	}
+}
+
+func TestRenderStatuslineWithReviewBadge(t *testing.T) {
+	var buf bytes.Buffer
+	input := `{"cwd": "/Users/vincevasile/Documents/dev/agent-mesh", "vim_mode": "NORMAL"}`
+	err := RenderStatusline(&buf, strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("RenderStatusline failed: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "agent-mesh") {
+		t.Fatalf("expected agent-mesh in output, got:\n%s", out)
+	}
+}
