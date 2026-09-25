@@ -123,3 +123,36 @@ func TestGenerateSessionHandoff(t *testing.T) {
 		t.Errorf("expected /tmp/ai-handoff.md to be written")
 	}
 }
+
+func TestFindGitRoot(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "git-root-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	gitDir := filepath.Join(tempDir, ".git")
+	_ = os.MkdirAll(gitDir, 0755)
+
+	subDir := filepath.Join(tempDir, "pkg", "subpkg")
+	_ = os.MkdirAll(subDir, 0755)
+
+	filePath := filepath.Join(subDir, "main.go")
+	_ = os.WriteFile(filePath, []byte("package main"), 0644)
+
+	root := findGitRoot(filePath)
+	if root != tempDir {
+		t.Errorf("expected git root %s, got %s", tempDir, root)
+	}
+
+	rootFromDir := findGitRoot(subDir)
+	if rootFromDir != tempDir {
+		t.Errorf("expected git root %s from dir, got %s", tempDir, rootFromDir)
+	}
+
+	noRoot := findGitRoot("/tmp")
+	if noRoot == "/tmp" {
+		t.Errorf("expected empty string or non-git root for /tmp")
+	}
+}
+

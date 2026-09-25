@@ -24,8 +24,10 @@ const (
 )
 
 type RouteOptions struct {
-	CheckSSH   bool
-	RemoteHost string
+	CheckSSH              bool
+	RemoteHost            string
+	PreferredPersonalTool string // "auto", "claude", or "agy"
+	LastUsedTool          string // "claude", "agy", "gemini"
 }
 
 type RouteDecision struct {
@@ -54,7 +56,7 @@ type scanReposFile struct {
 }
 
 // IsWorkRepo determines whether the given directory is part of an enterprise work repo
-// by matching configured paths or ~/.agents/skills/ticket-notes/scan-repos.json.
+// by matching configured paths, directory patterns, git remotes, or ~/.agents/skills/ticket-notes/scan-repos.json.
 func IsWorkRepo(cwd string) (bool, string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -77,13 +79,46 @@ func IsWorkRepo(cwd string) (bool, string, error) {
 		evalCwd = cleanCwd
 	}
 
-	// 1. Check pattern: ~/Documents/dev/work*
+	// 1. Check patterns: ~/Documents/dev/work*, ~/Documents/dev/mansol*
 	workPrefix := filepath.Join(home, "Documents", "dev", "work")
 	if strings.HasPrefix(cleanCwd, workPrefix) || strings.HasPrefix(evalCwd, workPrefix) {
 		return true, "prefix: ~/Documents/dev/work*", nil
 	}
+	mansolPrefix := filepath.Join(home, "Documents", "dev", "mansol")
+	if strings.HasPrefix(cleanCwd, mansolPrefix) || strings.HasPrefix(evalCwd, mansolPrefix) {
+		return true, "prefix: ~/Documents/dev/mansol*", nil
+	}
 
-	// 2. Check scan-repos.json: ~/.agents/skills/ticket-notes/scan-repos.json
+	// 2. Check path keywords: mansol, managed-solution, managed_solution
+	lowerCwd := strings.ToLower(cleanCwd)
+	lowerEval := strings.ToLower(evalCwd)
+	for _, kw := range []string{"mansol", "managed-solution", "managed_solution"} {
+		if strings.Contains(lowerCwd, kw) || strings.Contains(lowerEval, kw) {
+			return true, fmt.Sprintf("keyword: %s in path", kw), nil
+		}
+	}
+
+	// 3. Check git remote origin URL in repository config
+	checkDir := cleanCwd
+	for {
+		gitCfgPath := filepath.Join(checkDir, ".git", "config")
+		if data, err := os.ReadFile(gitCfgPath); err == nil {
+			contentLower := strings.ToLower(string(data))
+			if strings.Contains(contentLower, "managedsolution") ||
+				strings.Contains(contentLower, "managed-solution") ||
+				strings.Contains(contentLower, "mansol") {
+				return true, "git remote: Managed Solution", nil
+			}
+			break
+		}
+		parent := filepath.Dir(checkDir)
+		if parent == checkDir || parent == "" || parent == "/" {
+			break
+		}
+		checkDir = parent
+	}
+
+	// 4. Check scan-repos.json: ~/.agents/skills/ticket-notes/scan-repos.json
 	scanPath := filepath.Join(home, ".agents", "skills", "ticket-notes", "scan-repos.json")
 	if data, err := os.ReadFile(scanPath); err == nil {
 		var srf scanReposFile
@@ -100,7 +135,9 @@ func IsWorkRepo(cwd string) (bool, string, error) {
 
 				if cleanCwd == cleanRepoPath || evalCwd == evalRepoPath ||
 					strings.HasPrefix(cleanCwd, cleanRepoPath+string(filepath.Separator)) ||
-					strings.HasPrefix(evalCwd, evalRepoPath+string(filepath.Separator)) {
+					strings.HasPrefix(evalCwd, evalRepoPath+string(filepath.Separator)) ||
+					strings.HasPrefix(cleanRepoPath, cleanCwd+string(filepath.Separator)) ||
+					strings.HasPrefix(evalRepoPath, evalCwd+string(filepath.Separator)) {
 					return true, fmt.Sprintf("scan-repos: %s", r.Name), nil
 				}
 			}
@@ -219,55 +256,106 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 		return decision, nil
 	}
 
-	// 2. Personal Repo: Quota Headroom Waterfall
+	// 2. Personal Repo: Balanced Peer Pacing between Claude Code and Antigravity
 	decision.AccountRole = "personal"
 
 	poolGemini := pacerState.Pools[PoolGeminiNative]
 	pool3P := pacerState.Pools[Pool3PClaude]
 	poolPersonal := pacerState.Pools[PoolPersonalClaude]
 
-	// Prefer Gemini Native as primary daily driver
-	if poolGemini != nil && !poolGemini.IsLocked && poolGemini.Weekly.RemainingPct > 0.0 && poolGemini.FiveHour.RemainingPct > 0.0 {
+	geminiOk := poolGemini != nil && !poolGemini.IsLocked && poolGemini.Weekly.RemainingPct > 0.0 && poolGemini.FiveHour.RemainingPct > 0.0
+	claudeOk := poolPersonal != nil && !poolPersonal.IsLocked && poolPersonal.Weekly.RemainingPct > 0.0 && poolPersonal.FiveHour.RemainingPct > 0.0
+
+	routeToGemini := func(reason string) (*RouteDecision, error) {
 		decision.Target = TargetGeminiNative
 		decision.Tool = "agy"
 		decision.Model = "gemini-3.8-flash-high"
 		decision.Command = "agy"
-		decision.Reason = fmt.Sprintf("Personal repo; Gemini Native is healthy and preferred primary daily driver (%d turns runway | 5h: %.1f%% left | week: %.1f%% left)",
-			poolGemini.TurnsRunway, poolGemini.FiveHour.RemainingPct, poolGemini.Weekly.RemainingPct)
+		decision.Reason = reason
 		return decision, nil
 	}
 
-	// Gemini Native is locked out -> Fallback to 3P / Claude
-	geminiLockReason := "Gemini quota exhausted"
-	if poolGemini != nil && poolGemini.LockoutReason != "" {
-		geminiLockReason = poolGemini.LockoutReason
+	routeToClaude := func(reason string) (*RouteDecision, error) {
+		decision.Target = TargetClaudePersonal
+		decision.Tool = "claude"
+		decision.Model = "claude-opus-5"
+		decision.Command = "claude"
+		decision.Reason = reason
+		return decision, nil
 	}
 
-	// Option A: 3P Claude in Antigravity
+	// Priority 1: User explicitly configured a preferred personal tool
+	if opts.PreferredPersonalTool == "claude" && claudeOk {
+		return routeToClaude(fmt.Sprintf("Personal repo: Claude Code selected by user preference (%d turns runway | week: %.1f%% left)",
+			poolPersonal.TurnsRunway, poolPersonal.Weekly.RemainingPct))
+	}
+	if (opts.PreferredPersonalTool == "agy" || opts.PreferredPersonalTool == "gemini") && geminiOk {
+		return routeToGemini(fmt.Sprintf("Personal repo: Antigravity selected by user preference (%d turns runway | week: %.1f%% left)",
+			poolGemini.TurnsRunway, poolGemini.Weekly.RemainingPct))
+	}
+
+	// Priority 2: Both tools are available, balance between them
+	if claudeOk && geminiOk {
+		// Repo continuity: if this repository was recently used with one tool, stick to it
+		if opts.LastUsedTool == "claude" {
+			return routeToClaude(fmt.Sprintf("Personal repo: continuing with Claude Code (last tool used in this repo: %d turns runway | week: %.1f%% left)",
+				poolPersonal.TurnsRunway, poolPersonal.Weekly.RemainingPct))
+		}
+		if opts.LastUsedTool == "agy" || opts.LastUsedTool == "gemini" {
+			return routeToGemini(fmt.Sprintf("Personal repo: continuing with Antigravity (last tool used in this repo: %d turns runway | week: %.1f%% left)",
+				poolGemini.TurnsRunway, poolGemini.Weekly.RemainingPct))
+		}
+
+		// Weekly headroom balance: route to the tool with more weekly quota remaining
+		diff := poolPersonal.Weekly.RemainingPct - poolGemini.Weekly.RemainingPct
+		if diff >= 5.0 {
+			return routeToClaude(fmt.Sprintf("Personal repo: balanced pacing favors Claude Code (%.1f%% week left vs Gemini %.1f%%)",
+				poolPersonal.Weekly.RemainingPct, poolGemini.Weekly.RemainingPct))
+		}
+		if diff <= -5.0 {
+			return routeToGemini(fmt.Sprintf("Personal repo: balanced pacing favors Antigravity (%.1f%% week left vs Claude %.1f%%)",
+				poolGemini.Weekly.RemainingPct, poolPersonal.Weekly.RemainingPct))
+		}
+
+		// Within 5%: alternate by ISO week number
+		_, weekNum := time.Now().ISOWeek()
+		if weekNum%2 == 0 {
+			return routeToClaude(fmt.Sprintf("Personal repo: balanced weekly pacing (week %d) favors Claude Code (%.1f%% left)",
+				weekNum, poolPersonal.Weekly.RemainingPct))
+		}
+		return routeToGemini(fmt.Sprintf("Personal repo: balanced weekly pacing (week %d) favors Antigravity (%.1f%% left)",
+			weekNum, poolGemini.Weekly.RemainingPct))
+	}
+
+	// Priority 3: Only one tool is available
+	if claudeOk && !geminiOk {
+		geminiReason := "Gemini quota exhausted"
+		if poolGemini != nil && poolGemini.LockoutReason != "" {
+			geminiReason = poolGemini.LockoutReason
+		}
+		decision.Warnings = append(decision.Warnings, fmt.Sprintf("Gemini Native is locked: %s. Routing to standalone Claude Code.", geminiReason))
+		return routeToClaude(fmt.Sprintf("Personal repo: Gemini Native locked (%s), routing to Claude Code (%d turns runway | week: %.1f%% left)",
+			geminiReason, poolPersonal.TurnsRunway, poolPersonal.Weekly.RemainingPct))
+	}
+
+	if geminiOk && !claudeOk {
+		return routeToGemini(fmt.Sprintf("Personal repo: Claude Code locked or exhausted, routing to Gemini Native (%d turns runway | week: %.1f%% left)",
+			poolGemini.TurnsRunway, poolGemini.Weekly.RemainingPct))
+	}
+
+	// Priority 4: Both native tools exhausted, check 3P Claude in Antigravity
 	if pool3P != nil && !pool3P.IsLocked && pool3P.Weekly.RemainingPct > 0.0 && pool3P.FiveHour.RemainingPct > 0.0 {
 		decision.Target = TargetClaude3P
 		decision.Tool = "agy"
 		decision.Model = "claude-sonnet-4-6"
 		decision.Command = "agy"
-		decision.Reason = fmt.Sprintf("Gemini Native locked (%s); falling back to 3P Claude in Antigravity (%d turns runway)",
-			geminiLockReason, pool3P.TurnsRunway)
-		decision.Warnings = append(decision.Warnings, fmt.Sprintf("Gemini Native is locked: %s. Switch model in agy using '/model claude-sonnet-4-6'.", geminiLockReason))
+		decision.Reason = fmt.Sprintf("Gemini Native & Standalone Claude locked, falling back to 3P Claude in Antigravity (%d turns runway)",
+			pool3P.TurnsRunway)
+		decision.Warnings = append(decision.Warnings, "Gemini Native and Standalone Claude are locked. Switch model in agy using '/model claude-sonnet-4-6'.")
 		return decision, nil
 	}
 
-	// Option B: Personal Claude CLI
-	if poolPersonal != nil && !poolPersonal.IsLocked && poolPersonal.Weekly.RemainingPct > 0.0 && poolPersonal.FiveHour.RemainingPct > 0.0 {
-		decision.Target = TargetClaudePersonal
-		decision.Tool = "claude"
-		decision.Model = "claude-opus-5"
-		decision.Command = "claude"
-		decision.Reason = fmt.Sprintf("Gemini Native & 3P Claude locked; falling back to standalone Claude CLI (%d turns runway | week: %.1f%% left)",
-			poolPersonal.TurnsRunway, poolPersonal.Weekly.RemainingPct)
-		decision.Warnings = append(decision.Warnings, "Gemini Native and 3P Claude are locked; routing to standalone Claude Code.")
-		return decision, nil
-	}
-
-	// All personal quotas locked or exhausted
+	// Priority 5: All locked
 	decision.Target = TargetGeminiNative
 	decision.Tool = "agy"
 	decision.Model = "gemini-3.8-flash-high"
@@ -277,11 +365,11 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 	if poolGemini != nil && poolGemini.IsLocked {
 		decision.Warnings = append(decision.Warnings, fmt.Sprintf("Gemini Native locked until %s", poolGemini.LockoutUntil.Format("03:04pm")))
 	}
-	if pool3P != nil && pool3P.IsLocked {
-		decision.Warnings = append(decision.Warnings, fmt.Sprintf("3P Claude locked until %s", pool3P.LockoutUntil.Format("03:04pm")))
-	}
 	if poolPersonal != nil && poolPersonal.IsLocked {
 		decision.Warnings = append(decision.Warnings, fmt.Sprintf("Personal Claude locked until %s", poolPersonal.LockoutUntil.Format("03:04pm")))
+	}
+	if pool3P != nil && pool3P.IsLocked {
+		decision.Warnings = append(decision.Warnings, fmt.Sprintf("3P Claude locked until %s", pool3P.LockoutUntil.Format("03:04pm")))
 	}
 
 	return decision, nil

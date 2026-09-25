@@ -115,8 +115,14 @@ func DiscoverSessions(repoPath string, limit int, meshDB *sql.DB) ([]SessionInfo
 					continue
 				}
 
-				if cleanRepo != "" && sess.RepoPath != "" && sess.RepoPath != cleanRepo && !strings.HasPrefix(cleanRepo, sess.RepoPath) && !strings.HasPrefix(sess.RepoPath, cleanRepo) {
-					continue
+				if cleanRepo != "" {
+					if sess.RepoPath == "" {
+						continue
+					}
+					cleanSessRepo := filepath.Clean(sess.RepoPath)
+					if cleanSessRepo != cleanRepo && !strings.HasPrefix(cleanRepo, cleanSessRepo+string(filepath.Separator)) && !strings.HasPrefix(cleanSessRepo, cleanRepo+string(filepath.Separator)) {
+						continue
+					}
 				}
 
 				if !seenIDs[sess.ID] {
@@ -148,8 +154,14 @@ func DiscoverSessions(repoPath string, limit int, meshDB *sql.DB) ([]SessionInfo
 				continue
 			}
 
-			if cleanRepo != "" && sess.RepoPath != "" && sess.RepoPath != cleanRepo && !strings.HasPrefix(cleanRepo, sess.RepoPath) && !strings.HasPrefix(sess.RepoPath, cleanRepo) {
-				continue
+			if cleanRepo != "" {
+				if sess.RepoPath == "" {
+					continue
+				}
+				cleanSessRepo := filepath.Clean(sess.RepoPath)
+				if cleanSessRepo != cleanRepo && !strings.HasPrefix(cleanRepo, cleanSessRepo+string(filepath.Separator)) && !strings.HasPrefix(cleanSessRepo, cleanRepo+string(filepath.Separator)) {
+					continue
+				}
 			}
 
 			if !seenIDs[sess.ID] {
@@ -243,6 +255,11 @@ func parseClaudeSession(filePath string, modTime time.Time) *SessionInfo {
 			}
 			if cwd, ok := record["cwd"].(string); ok && cwd != "" {
 				repoPath = cwd
+			}
+			if repoPath != "" {
+				if gitRoot := findGitRoot(repoPath); gitRoot != "" {
+					repoPath = gitRoot
+				}
 			}
 		}
 
@@ -350,8 +367,15 @@ func parseAntigravitySession(brainID, filePath string, modTime time.Time) *Sessi
 							for _, key := range []string{"AbsolutePath", "TargetFile", "Cwd"} {
 								if pathStr, ok := args[key].(string); ok && pathStr != "" {
 									if filepath.IsAbs(pathStr) {
-										// find toplevel or dir
-										repoPath = filepath.Dir(pathStr)
+										if gitRoot := findGitRoot(pathStr); gitRoot != "" {
+											repoPath = gitRoot
+										} else {
+											dir := pathStr
+											if fi, err := os.Stat(pathStr); err == nil && !fi.IsDir() {
+												dir = filepath.Dir(pathStr)
+											}
+											repoPath = filepath.Clean(dir)
+										}
 										break
 									}
 								}
@@ -691,3 +715,26 @@ func FindSessionByID(sessionID string) *SessionInfo {
 
 	return nil
 }
+
+// findGitRoot traverses upwards from path looking for a .git directory.
+func findGitRoot(path string) string {
+	if path == "" {
+		return ""
+	}
+	dir := path
+	if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+		dir = filepath.Dir(path)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return filepath.Clean(dir)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir || parent == "" || parent == "/" {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+

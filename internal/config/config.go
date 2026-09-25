@@ -25,7 +25,8 @@ type Config struct {
 	MachineRole     string  `json:"machine_role" toml:"machine_role"` // "hybrid" (default), "work", or "personal"
 	GooglePlanTier  string  `json:"google_plan_tier" toml:"google_plan_tier"` // e.g. "Google AI Ultra" or "Ultra"
 	ClaudePlanTier  string  `json:"claude_plan_tier" toml:"claude_plan_tier"` // e.g. "Max 5x" or "Pro"
-	MaxHandoffsPerRepo int  `json:"max_handoffs_per_repo" toml:"max_handoffs_per_repo"`
+	MaxHandoffsPerRepo    int     `json:"max_handoffs_per_repo" toml:"max_handoffs_per_repo"`
+	PreferredPersonalTool string  `json:"preferred_personal_tool" toml:"preferred_personal_tool"` // "auto" (default), "claude", or "agy"
 }
 
 // DefaultConfig returns the default configuration.
@@ -50,8 +51,9 @@ func DefaultConfig() *Config {
 		RemoteRepoRoot:     "~/Documents/dev/work",
 		MachineRole:        "hybrid",
 		GooglePlanTier:     "Google AI Ultra",
-		ClaudePlanTier:     "Pro",
-		MaxHandoffsPerRepo: 3,
+		ClaudePlanTier:        "Pro",
+		MaxHandoffsPerRepo:    3,
+		PreferredPersonalTool: "auto",
 	}
 }
 

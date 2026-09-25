@@ -46,6 +46,7 @@ func handleContinueFlow(cmd *cobra.Command, handoffOnly bool) {
 	sess, err := meshContext.GetLatestSession(cwd, storeDB)
 	if err != nil || sess == nil {
 		fmt.Println("No previous session found in this repository. Starting new session...")
+		_ = cmd.Flags().Set("continue", "false")
 		runSmartLaunch(cmd, nil)
 		return
 	}

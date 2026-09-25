@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 	"github.com/VinnyVanGogh/staypoint/internal/config"
+	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/router"
 )
 
@@ -96,9 +98,24 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 		targetTool = "agy"
 		targetModel = "gemini-3.8-flash-high"
 	} else {
+		lastTool := ""
+		if store, err := db.Open(cfg.DBPath); err == nil {
+			if sess, err := meshContext.GetLatestSession(cwd, store.DB()); err == nil && sess != nil {
+				lastTool = sess.AgentType
+			}
+			store.Close()
+		}
+
+		prefTool := "auto"
+		if cfg != nil && cfg.PreferredPersonalTool != "" {
+			prefTool = cfg.PreferredPersonalTool
+		}
+
 		decision, err := router.Route(routeCtx, cwd, pacerState, router.RouteOptions{
-			CheckSSH:   !noSSH,
-			RemoteHost: remoteHost,
+			CheckSSH:              !noSSH,
+			RemoteHost:            remoteHost,
+			PreferredPersonalTool: prefTool,
+			LastUsedTool:          lastTool,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Routing error: %v\n", err)
