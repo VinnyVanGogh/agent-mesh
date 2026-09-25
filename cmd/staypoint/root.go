@@ -131,9 +131,17 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	var srcArgs []string
+	if len(os.Args) > 1 && !strings.HasSuffix(os.Args[0], ".test") {
+		srcArgs = os.Args[1:]
+	} else {
+		srcArgs = args
+	}
+	passthroughArgs := extractPassthroughArgs(srcArgs)
+
 	// Render the Tokyo Night statusline before launch (to stderr if non-tty pipe or headless stream, stdout if interactive terminal)
 	isTerminal := isatty.IsTerminal(os.Stdout.Fd()) || isatty.IsCygwinTerminal(os.Stdout.Fd())
-	if !isTerminal || isHeadlessStream(args) {
+	if !isTerminal || isHeadlessStream(passthroughArgs) {
 		_ = router.RenderStatusline(os.Stderr, nil)
 	} else {
 		_ = router.RenderStatusline(os.Stdout, nil)
@@ -144,7 +152,7 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 		fmt.Printf("  • Tool:        %s\n", targetTool)
 		fmt.Printf("  • Model:       %s\n", targetModel)
 		fmt.Printf("  • Remote Work: %t\n", isRemoteWork)
-		fmt.Printf("  • Arguments:   %v\n", args)
+		fmt.Printf("  • Arguments:   %v\n", passthroughArgs)
 		return
 	}
 
@@ -153,7 +161,7 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 		err := bridge.Launch(context.Background(), bridge.LaunchOptions{
 			Host:       remoteHost,
 			TargetDir:  cwd,
-			Args:       args,
+			Args:       passthroughArgs,
 			ForceLocal: false,
 		})
 		if err != nil {
@@ -183,10 +191,10 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 		binName = altBin
 	}
 
-	execArgs := append([]string{binName}, args...)
+	execArgs := append([]string{binName}, passthroughArgs...)
 	if err := syscall.Exec(binPath, execArgs, os.Environ()); err != nil {
 		// Fallback to exec.Command if syscall.Exec fails (e.g. on non-Unix)
-		subCmd := exec.Command(binPath, args...)
+		subCmd := exec.Command(binPath, passthroughArgs...)
 		subCmd.Stdin = os.Stdin
 		subCmd.Stdout = os.Stdout
 		subCmd.Stderr = os.Stderr
@@ -199,6 +207,28 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 			os.Exit(1)
 		}
 	}
+}
+
+func extractPassthroughArgs(rawArgs []string) []string {
+	var forwarded []string
+	staypointFlags := map[string]bool{
+		"--claude": true, "-C": true,
+		"--gemini": true, "-G": true,
+		"--force": true, "-f": true,
+		"--continue": true, "-c": true,
+		"--resume": true, "-r": true,
+		"--handoff": true, "-H": true,
+		"--status": true, "-s": true,
+		"--dry-run": true, "-n": true,
+		"--no-ssh": true,
+	}
+	for _, arg := range rawArgs {
+		if staypointFlags[arg] {
+			continue
+		}
+		forwarded = append(forwarded, arg)
+	}
+	return forwarded
 }
 
 func isHeadlessStream(args []string) bool {

@@ -176,3 +176,18 @@ func TestIsHeadlessStream(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractPassthroughArgs(t *testing.T) {
+	raw := []string{"--claude", "-p", "fix bug", "--output-format", "stream-json", "--force"}
+	expected := []string{"-p", "fix bug", "--output-format", "stream-json"}
+
+	got := extractPassthroughArgs(raw)
+	if len(got) != len(expected) {
+		t.Fatalf("expected %d args, got %d: %v", len(expected), len(got), got)
+	}
+	for i := range expected {
+		if got[i] != expected[i] {
+			t.Errorf("arg[%d]: expected %s, got %s", i, expected[i], got[i])
+		}
+	}
+}
