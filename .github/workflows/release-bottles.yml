@@ -1,0 +1,119 @@
+name: Bottle Hashing
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  bottle-arm64:
+    name: Build Bottle (arm64)
+    runs-on: macos-latest
+    outputs:
+      sha256: ${{ steps.bottle.outputs.sha256 }}
+      filename: ${{ steps.bottle.outputs.filename }}
+    steps:
+      - name: Add tap
+        run: brew tap vinnyvangogh/tap
+
+      - name: Install staypoint from release source
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          brew install --build-bottle vinnyvangogh/tap/staypoint
+
+      - name: Build bottle
+        id: bottle
+        run: |
+          brew bottle vinnyvangogh/tap/staypoint
+          BOTTLE_FILE=$(ls staypoint*.bottle.tar.gz 2>/dev/null | head -1)
+          if [ -z "$BOTTLE_FILE" ]; then
+            echo "ERROR: no bottle file found" >&2
+            exit 1
+          fi
+          SHA256=$(shasum -a 256 "$BOTTLE_FILE" | awk '{print $1}')
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "filename=$BOTTLE_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Upload bottle to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "${{ steps.bottle.outputs.filename }}" \
+            --repo "${{ github.repository }}" \
+            --clobber
+
+  bottle-x86_64:
+    name: Build Bottle (x86_64)
+    runs-on: macos-13
+    outputs:
+      sha256: ${{ steps.bottle.outputs.sha256 }}
+      filename: ${{ steps.bottle.outputs.filename }}
+    steps:
+      - name: Add tap
+        run: brew tap vinnyvangogh/tap
+
+      - name: Install staypoint from release source
+        run: brew install --build-bottle vinnyvangogh/tap/staypoint
+
+      - name: Build bottle
+        id: bottle
+        run: |
+          brew bottle vinnyvangogh/tap/staypoint
+          BOTTLE_FILE=$(ls staypoint*.bottle.tar.gz 2>/dev/null | head -1)
+          if [ -z "$BOTTLE_FILE" ]; then
+            echo "ERROR: no bottle file found" >&2
+            exit 1
+          fi
+          SHA256=$(shasum -a 256 "$BOTTLE_FILE" | awk '{print $1}')
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "filename=$BOTTLE_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Upload bottle to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "${{ steps.bottle.outputs.filename }}" \
+            --repo "${{ github.repository }}" \
+            --clobber
+
+  update-formula-bottles:
+    name: Update Formula Bottle Stanza
+    needs: [bottle-arm64, bottle-x86_64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: VinnyVanGogh/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: homebrew-tap
+
+      - name: Patch bottle stanza in Formula/staypoint.rb
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+          ARM64_SHA: ${{ needs.bottle-arm64.outputs.sha256 }}
+          AMD64_SHA: ${{ needs.bottle-x86_64.outputs.sha256 }}
+        run: |
+          cd homebrew-tap
+          FORMULA="Formula/staypoint.rb"
+
+          # Replace placeholder SHAs with real bottle checksums
+          sed -i "s|BOTTLE_ARM64_SHA256|${ARM64_SHA}|g" "$FORMULA"
+          sed -i "s|BOTTLE_AMD64_SHA256|${AMD64_SHA}|g" "$FORMULA"
+
+          # Update root_url to point to this release's bottle download
+          sed -i "s|root_url \".*\"|root_url \"https://github.com/VinnyVanGogh/staypoint/releases/download/${VERSION}\"|g" "$FORMULA"
+
+      - name: Commit and push bottle update
+        run: |
+          cd homebrew-tap
+          git config user.name "goreleaserbot"
+          git config user.email "bot@goreleaser.com"
+          git add Formula/staypoint.rb
+          git diff --cached --quiet && echo "no changes" && exit 0
+          git commit -m "feat: add bottles for staypoint ${{ github.event.release.tag_name }}"
+          git push

@@ -18,6 +18,7 @@ builds:
     goos:
       - darwin
       - linux
+      - windows
     goarch:
       - amd64
       - arm64
@@ -32,6 +33,7 @@ builds:
     goos:
       - darwin
       - linux
+      - windows
     goarch:
       - amd64
       - arm64
@@ -41,11 +43,70 @@ builds:
 archives:
   - id: default
     format: tar.gz
+    # Windows archives use .zip for compatibility with Explorer / winget / Scoop.
+    format_overrides:
+      - goos: windows
+        format: zip
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
       - LICENSE*
-      - templates/*
+
+nfpms:
+  - id: staypoint
+    package_name: staypoint
+    vendor: VinnyVanGogh
+    homepage: https://github.com/VinnyVanGogh/staypoint
+    maintainer: Vince Vasile <stylesbyvinny@gmail.com>
+    description: |-
+      Staypoint is an AI agent ops toolkit: quota-aware routing, git micro-checkpoints,
+      loop circuit breaker, error condenser, context handoff, and daemon telemetry.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    builds:
+      - staypoint
+      - staypointd
+    contents:
+      - src: dist/linux/staypointd.service
+        dst: /usr/lib/systemd/user/staypointd.service
+        file_info:
+          mode: 0644
+    scripts:
+      postinstall: dist/linux/postinstall.sh
+      preremove: dist/linux/preremove.sh
+
+brews:
+  - name: staypoint
+    ids:
+      - staypoint
+      - staypointd
+    repository:
+      owner: VinnyVanGogh
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    commit_author:
+      name: goreleaserbot
+      email: bot@goreleaser.com
+    commit_msg_template: "feat: update staypoint formula to {{ .Tag }}"
+    homepage: "https://github.com/VinnyVanGogh/staypoint"
+    description: "Autonomous AI Agent Ops, Quota Pacing & Cross-AI Context Platform"
+    license: "Apache-2.0"
+    install: |
+      bin.install "staypoint"
+      bin.install "staypointd" if File.exist?("staypointd")
+      bin.install_symlink "staypoint" => "mesh"
+      bin.install_symlink "staypointd" => "meshd" if (bin/"staypointd").exist?
+    caveats: |
+      StayPoint installed! Add shell integration to ~/.zshrc:
+        eval "$(staypoint init --shell)"
+      Start background daemon:
+        staypoint init
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/staypoint version")
 
 checksum:
   name_template: "checksums.txt"

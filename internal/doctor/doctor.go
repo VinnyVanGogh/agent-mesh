@@ -97,6 +97,7 @@ type DoctorOptions struct {
 	ClaudeOnly  bool           `json:"claude_only"`
 	GeminiOnly  bool           `json:"gemini_only"`
 	RemoteOnly  bool           `json:"remote_only"`
+	BrewOnly    bool           `json:"brew_only"`
 	RemoteHost  string         `json:"remote_host"`
 	Config      *config.Config `json:"-"`
 }
@@ -122,6 +123,7 @@ type FleetDoctor struct {
 	ReadFileFunc         func(filename string) ([]byte, error)
 	StatFileFunc         func(name string) (os.FileInfo, error)
 	RemoteCommandFunc    func(ctx context.Context, host string, cmd string) (string, time.Duration, error)
+	RunBrewCommandFunc   func(ctx context.Context, args ...string) (string, time.Duration, error)
 }
 
 // NewFleetDoctor initializes a FleetDoctor with production defaults.
@@ -280,6 +282,19 @@ func NewFleetDoctor(opts DoctorOptions) *FleetDoctor {
 		return out, time.Since(start), err
 	}
 
+	d.RunBrewCommandFunc = func(ctx context.Context, args ...string) (string, time.Duration, error) {
+		start := time.Now()
+		cmdCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		defer cancel()
+		brewPath, err := exec.LookPath("brew")
+		if err != nil {
+			return "", time.Since(start), fmt.Errorf("brew not found in PATH")
+		}
+		cmd := exec.CommandContext(cmdCtx, brewPath, args...)
+		out, err := cmd.CombinedOutput()
+		return string(out), time.Since(start), err
+	}
+
 	return d
 }
 
@@ -324,7 +339,7 @@ func (d *FleetDoctor) Run(ctx context.Context) (*Report, error) {
 		Sections:   make([]SectionResult, 0),
 	}
 
-	runAll := !d.opts.ClaudeOnly && !d.opts.GeminiOnly && !d.opts.RemoteOnly
+	runAll := !d.opts.ClaudeOnly && !d.opts.GeminiOnly && !d.opts.RemoteOnly && !d.opts.BrewOnly
 
 	// Section 1: Staypoint Infrastructure
 	if runAll {
@@ -344,6 +359,11 @@ func (d *FleetDoctor) Run(ctx context.Context) (*Report, error) {
 	// Section 4: Remote Node Health
 	if runAll || d.opts.RemoteOnly {
 		report.Sections = append(report.Sections, d.checkRemoteNode(ctx))
+	}
+
+	// Section 5: Homebrew Distribution
+	if runAll || d.opts.BrewOnly {
+		report.Sections = append(report.Sections, d.checkHomebrew(ctx))
 	}
 
 	// Compute summary stats
@@ -916,6 +936,109 @@ func (d *FleetDoctor) checkRemoteNode(ctx context.Context) SectionResult {
 		}
 	}
 	sec.Checks = append(sec.Checks, chkRepos)
+
+	sec.Status = aggregateStatus(sec.Checks)
+	return sec
+}
+
+// checkHomebrew runs Section e) Homebrew Distribution diagnostics.
+func (d *FleetDoctor) checkHomebrew(ctx context.Context) SectionResult {
+	sec := SectionResult{
+		ID:     "homebrew",
+		Name:   "Homebrew Distribution",
+		Status: StatusOK,
+		Checks: make([]CheckResult, 0),
+	}
+
+	// 1. brew binary present
+	chkBrew := CheckResult{Name: "Homebrew Installed"}
+	brewPath, err := d.LookPathFunc("brew")
+	if err != nil {
+		chkBrew.Status = StatusError
+		chkBrew.Message = "'brew' not found in PATH — Homebrew is not installed"
+		chkBrew.Remediation = "Install Homebrew: https://brew.sh"
+		sec.Checks = append(sec.Checks, chkBrew)
+		sec.Status = StatusError
+		return sec
+	}
+	chkBrew.Status = StatusOK
+	chkBrew.Message = fmt.Sprintf("Homebrew found at %s", brewPath)
+	sec.Checks = append(sec.Checks, chkBrew)
+
+	// 2. Tap installed
+	chkTap := CheckResult{Name: "Tap vinnyvangogh/tap"}
+	tapOut, tapLat, _ := d.RunBrewCommandFunc(ctx, "tap")
+	chkTap.Latency = tapLat
+	if strings.Contains(tapOut, "vinnyvangogh/tap") {
+		chkTap.Status = StatusOK
+		chkTap.Message = "Tap installed (vinnyvangogh/tap)"
+	} else {
+		chkTap.Status = StatusWarn
+		chkTap.Message = "Tap vinnyvangogh/tap not installed"
+		chkTap.Remediation = "brew tap vinnyvangogh/tap"
+	}
+	sec.Checks = append(sec.Checks, chkTap)
+
+	// 3. staypoint installed via brew
+	chkInstalled := CheckResult{Name: "staypoint via Homebrew"}
+	infoOut, infoLat, infoErr := d.RunBrewCommandFunc(ctx, "info", "--json=v2", "vinnyvangogh/tap/staypoint")
+	chkInstalled.Latency = infoLat
+	if infoErr != nil && !strings.Contains(infoOut, "installed") {
+		chkInstalled.Status = StatusWarn
+		chkInstalled.Message = "staypoint not installed via Homebrew"
+		chkInstalled.Remediation = "brew install vinnyvangogh/tap/staypoint"
+		sec.Checks = append(sec.Checks, chkInstalled)
+		sec.Status = aggregateStatus(sec.Checks)
+		return sec
+	}
+
+	// Parse installed version from brew info JSON
+	var brewInfo struct {
+		Formulae []struct {
+			Versions struct {
+				Stable string `json:"stable"`
+			} `json:"versions"`
+			Installed []struct {
+				Version string `json:"version"`
+			} `json:"installed"`
+		} `json:"formulae"`
+	}
+	brewVersion := ""
+	installedVersion := ""
+	if err := json.Unmarshal([]byte(infoOut), &brewInfo); err == nil && len(brewInfo.Formulae) > 0 {
+		brewVersion = brewInfo.Formulae[0].Versions.Stable
+		if len(brewInfo.Formulae[0].Installed) > 0 {
+			installedVersion = brewInfo.Formulae[0].Installed[0].Version
+		}
+	}
+
+	if installedVersion == "" {
+		chkInstalled.Status = StatusWarn
+		chkInstalled.Message = fmt.Sprintf("staypoint formula available (v%s) but not installed", brewVersion)
+		chkInstalled.Remediation = "brew install vinnyvangogh/tap/staypoint"
+	} else {
+		chkInstalled.Status = StatusOK
+		chkInstalled.Message = fmt.Sprintf("staypoint v%s installed via Homebrew", installedVersion)
+	}
+	sec.Checks = append(sec.Checks, chkInstalled)
+
+	// 4. Binary version freshness: compare brew formula version vs local binary
+	chkFresh := CheckResult{Name: "Formula Version Parity"}
+	localVer, _ := d.LocalVersionFunc()
+	if brewVersion != "" && localVer != "" {
+		if localVer == brewVersion {
+			chkFresh.Status = StatusOK
+			chkFresh.Message = fmt.Sprintf("Local binary v%s matches tap formula v%s", localVer, brewVersion)
+		} else {
+			chkFresh.Status = StatusWarn
+			chkFresh.Message = fmt.Sprintf("Version drift: local binary v%s, tap formula v%s", localVer, brewVersion)
+			chkFresh.Remediation = "brew upgrade vinnyvangogh/tap/staypoint  or  brew reinstall vinnyvangogh/tap/staypoint"
+		}
+	} else {
+		chkFresh.Status = StatusSkipped
+		chkFresh.Message = "Unable to determine formula version for parity check"
+	}
+	sec.Checks = append(sec.Checks, chkFresh)
 
 	sec.Status = aggregateStatus(sec.Checks)
 	return sec

@@ -1,0 +1,30 @@
+[Unit]
+Description=Staypoint Background Daemon
+Documentation=https://github.com/VinnyVanGogh/staypoint
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/staypointd
+Restart=on-failure
+RestartSec=5s
+
+# Create /run/user/<uid>/staypoint/ at start; staypointd binds its IPC socket there.
+RuntimeDirectory=staypoint
+RuntimeDirectoryMode=0700
+
+# Structured logging to the journal.
+Environment=STAYPOINT_LOG_FORMAT=json
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=staypointd
+
+# Harden the service surface.
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.staypoint
+
+[Install]
+WantedBy=default.target
