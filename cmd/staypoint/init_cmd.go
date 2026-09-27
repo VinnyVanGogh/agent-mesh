@@ -14,6 +14,54 @@ var initCmd = &cobra.Command{
 	Short: "Initialize staypoint directories and SQLite storage engine",
 	Run: func(cmd *cobra.Command, args []string) {
 		shellFlag, _ := cmd.Flags().GetBool("shell")
+		powershellFlag, _ := cmd.Flags().GetBool("powershell")
+
+		if powershellFlag {
+			fmt.Print(`# Staypoint PowerShell Integration
+# Add to your $PROFILE: . (staypoint init --powershell | Out-String | Invoke-Expression)
+# Or save to a file: staypoint init --powershell | Out-File -Encoding UTF8 $PROFILE -Append
+
+Set-Alias ai-status    { staypoint status }
+Set-Alias agy-status   { staypoint statusline }
+
+function ai-memo    { staypoint report --pdf --type work }
+function ai-report  { staypoint report --pdf --type combined }
+function ai-personal { staypoint report --pdf --type personal }
+function ai-all     { staypoint report --pdf --type all }
+
+function ai {
+    $routeOutput = staypoint route $PWD --eval 2>$null
+    if ($routeOutput) { Invoke-Expression $routeOutput }
+    $model   = if ($env:STAYPOINT_ROUTE_MODEL)   { $env:STAYPOINT_ROUTE_MODEL }   else { 'gemini-3.8-flash-high' }
+    $cmd     = if ($env:STAYPOINT_ROUTE_COMMAND) { $env:STAYPOINT_ROUTE_COMMAND } else { 'agy' }
+    $reason  = if ($env:STAYPOINT_ROUTE_REASON)  { $env:STAYPOINT_ROUTE_REASON }  else { '' }
+    Write-Host "[Staypoint] Target: $model ($cmd)" -ForegroundColor Cyan
+    if ($reason) { Write-Host "[Context] $reason" -ForegroundColor Yellow }
+    staypoint statusline
+    if ($env:STAYPOINT_ROUTE_TARGET -eq 'remote-claude') {
+        staypoint bridge launch $PWD @args
+    } elseif ($cmd -eq 'claude') {
+        & claude @args
+    } else {
+        & agy --model $model @args
+    }
+}
+
+function Invoke-Claude {
+    param([switch]$Force)
+    if ($Force) { & claude @args } else { staypoint --claude @args }
+}
+Set-Alias claude Invoke-Claude
+
+function Invoke-Agy {
+    param([switch]$Force)
+    if ($Force) { & agy @args } else { staypoint --gemini @args }
+}
+Set-Alias agy Invoke-Agy
+`)
+			return
+		}
+
 		if shellFlag {
 			fmt.Print(`# Staypoint Shell Integration
 # Add to ~/.zshrc or ~/.bashrc: eval "$(staypoint init --shell)"
@@ -107,8 +155,10 @@ agy() {
 		if hooksFlag {
 			installHooks()
 		} else {
-			fmt.Println("\nTo install shell aliases & auto-router, add this to your ~/.zshrc:")
+			fmt.Println("\nTo install shell aliases & auto-router, add this to your ~/.zshrc or ~/.bashrc:")
 			fmt.Println("  \033[1;36meval \"$(staypoint init --shell)\"\033[0m")
+			fmt.Println("\nOn PowerShell (Windows), add this to your $PROFILE:")
+			fmt.Println("  \033[1;36mstaypoint init --powershell | Out-File -Encoding UTF8 $PROFILE -Append\033[0m")
 			fmt.Println("\nOptional: To install cross-agent review and prompt hooks for Antigravity & Claude Code, run:")
 			fmt.Println("  \033[1;36mstaypoint init --hooks\033[0m")
 		}
@@ -118,5 +168,6 @@ agy() {
 func init() {
 	rootCmd.AddCommand(initCmd)
 	initCmd.Flags().Bool("shell", false, "Print shell integration hook code for ~/.zshrc or ~/.bashrc")
+	initCmd.Flags().Bool("powershell", false, "Print PowerShell profile integration code for $PROFILE")
 	initCmd.Flags().Bool("hooks", false, "Install Antigravity and Claude Code lifecycle hooks for bidirectional review and context injection")
 }

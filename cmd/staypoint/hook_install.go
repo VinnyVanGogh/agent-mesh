@@ -159,8 +159,68 @@ exit 0
 		fmt.Printf("\033[1;32m✔ Global Git post-commit hook active:\033[0m %s\n", postCommitPath)
 	}
 
+	// 4. PowerShell profile hook (Windows; best-effort on non-Windows)
+	installPowerShellHook(homeDir, staypointBin)
+
 	fmt.Println("\n\033[1;32m✔ Bidirectional review setup complete!\033[0m")
 	fmt.Println("  • Commits by Antigravity are reviewed in the background by Claude Code.")
 	fmt.Println("  • Commits by Claude Code are reviewed in the background by Antigravity.")
 	fmt.Println("  • Warnings or defects inject automatically into the active agent on the next turn.")
+}
+
+// installPowerShellHook appends a staypoint UserPromptSubmit hook to the current
+// user's PowerShell $PROFILE (Documents\PowerShell\Microsoft.PowerShell_profile.ps1).
+// On non-Windows this writes the profile to a predictable path so Windows users who
+// copy the home directory can benefit without re-running the installer.
+func installPowerShellHook(homeDir, staypointBin string) {
+	profileDir := filepath.Join(homeDir, "Documents", "PowerShell")
+	profilePath := filepath.Join(profileDir, "Microsoft.PowerShell_profile.ps1")
+
+	_ = os.MkdirAll(profileDir, 0755)
+
+	// The hook snippet to inject — idempotent check prevents double-install.
+	snippet := fmt.Sprintf(`
+# --- Staypoint hook (auto-installed by staypoint hook install) ---
+if (-not (Get-Variable -Name _StaypointHookLoaded -Scope Global -ErrorAction SilentlyContinue)) {
+    Set-Variable -Name _StaypointHookLoaded -Value $true -Scope Global
+    . (staypoint init --powershell | Out-String | Invoke-Expression)
+}
+# --- end Staypoint hook ---
+`, )
+	_ = snippet // snippet written below
+
+	existing := ""
+	if data, err := os.ReadFile(profilePath); err == nil {
+		existing = string(data)
+	}
+	if strings.Contains(existing, "_StaypointHookLoaded") {
+		fmt.Printf("\033[1;32m✔ PowerShell profile hook already active:\033[0m %s\n", profilePath)
+		return
+	}
+
+	hookBlock := fmt.Sprintf(`
+# --- Staypoint hook (auto-installed by staypoint hook install) ---
+if (-not (Get-Variable -Name _StaypointHookLoaded -Scope Global -ErrorAction SilentlyContinue)) {
+    Set-Variable -Name _StaypointHookLoaded -Value $true -Scope Global
+    $staypointBin = "%s"
+    if (Test-Path $staypointBin) {
+        & $staypointBin init --powershell | Out-String | Invoke-Expression
+    } elseif (Get-Command staypoint -ErrorAction SilentlyContinue) {
+        staypoint init --powershell | Out-String | Invoke-Expression
+    }
+}
+# --- end Staypoint hook ---
+`, staypointBin)
+
+	f, err := os.OpenFile(profilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not write PowerShell profile %s: %v\n", profilePath, err)
+		return
+	}
+	defer f.Close()
+	if _, err := fmt.Fprint(f, hookBlock); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not append to PowerShell profile: %v\n", err)
+		return
+	}
+	fmt.Printf("\033[1;32m✔ PowerShell profile hook appended:\033[0m %s\n", profilePath)
 }

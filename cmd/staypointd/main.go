@@ -2,14 +2,19 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/VinnyVanGogh/staypoint/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/ipc"
 	"github.com/VinnyVanGogh/staypoint/internal/logging"
+	"github.com/VinnyVanGogh/staypoint/internal/mcp"
 	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 )
 
@@ -20,6 +25,34 @@ var (
 )
 
 func main() {
+	var (
+		flagService       = flag.Bool("service", false, "Run as a Windows service (SCM-managed)")
+		flagInstallSvc    = flag.Bool("install-service", false, "Register staypointd with the Windows SCM")
+		flagRemoveSvc     = flag.Bool("remove-service", false, "Unregister staypointd from the Windows SCM")
+	)
+	flag.Parse()
+
+	if *flagInstallSvc {
+		exe, err := filepath.Abs(os.Args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "install-service: %v\n", err)
+			os.Exit(1)
+		}
+		if err := installService(exe); err != nil {
+			fmt.Fprintf(os.Stderr, "install-service: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if *flagRemoveSvc {
+		if err := removeService(); err != nil {
+			fmt.Fprintf(os.Stderr, "remove-service: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	logLevel := os.Getenv("STAYPOINT_LOG_LEVEL")
 	if logLevel == "" {
 		if legacy := os.Getenv("MESH_LOG_LEVEL"); legacy != "" {
@@ -38,6 +71,13 @@ func main() {
 			logFormat = "text"
 		}
 	}
+
+	// When running under the Windows SCM, log as JSON so the Windows Event Log
+	// or a log collector can parse structured fields.
+	isSvc, _ := isWindowsService()
+	if isSvc || *flagService {
+		logFormat = "json"
+	}
 	logging.SetupLogger(logLevel, logFormat, os.Stderr)
 
 	slog.Info("Starting Staypoint Background Daemon...",
@@ -46,21 +86,18 @@ func main() {
 		slog.String("build_date", date),
 	)
 
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		slog.Error("Failed to load config", slog.Any("error", err))
-		os.Exit(1)
+	if isSvc || *flagService {
+		if err := runAsService(runDaemon); err != nil {
+			slog.Error("Service exited with error", slog.Any("error", err))
+			os.Exit(1)
+		}
+		return
 	}
 
-	if err := config.EnsureDataDir(cfg); err != nil {
-		slog.Error("Failed to ensure data dir", slog.Any("error", err))
-		os.Exit(1)
-	}
-
+	// Interactive / console path: wire signal handler.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -69,22 +106,49 @@ func main() {
 		cancel()
 	}()
 
+	if err := runDaemon(ctx); err != nil {
+		slog.Error("Daemon exited with error", slog.Any("error", err))
+	}
+	slog.Info("Daemon shutdown complete.")
+}
+
+// runDaemon is the core daemon logic shared by interactive and service modes.
+func runDaemon(ctx context.Context) error {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if err := config.EnsureDataDir(cfg); err != nil {
+		return fmt.Errorf("ensure data dir: %w", err)
+	}
+
 	// 1. Start Rate Limit Notifier
 	notifier := telemetry.NewNotifier()
 	go notifier.Start(ctx)
 	slog.Info("Rate limit monitoring active")
 
-	// 2. Start File Watcher and Ingestion Engine
+	// 2. Start IPC listener (Unix socket on POSIX, named pipe on Windows).
+	socketPath := ipc.SocketPath()
+	mcpServer := mcp.NewServer(mcp.WithConfig(cfg))
+	go func() {
+		handleConn := func(conn net.Conn) {
+			defer conn.Close()
+			if err := mcpServer.Serve(ctx, conn, conn); err != nil {
+				slog.Debug("IPC connection closed", slog.Any("error", err))
+			}
+		}
+		if err := ipc.Listen(ctx, socketPath, handleConn); err != nil && ctx.Err() == nil {
+			slog.Warn("IPC listener exited", slog.Any("error", err))
+		}
+	}()
+	slog.Info("IPC listener active", slog.String("path", socketPath))
+
+	// 3. Start File Watcher and Ingestion Engine
 	watcher, err := telemetry.NewWatcher(cfg)
 	if err != nil {
-		slog.Error("Failed to initialize watcher", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("init watcher: %w", err)
 	}
 
 	slog.Info("Background daemon ready and running")
-	if err := watcher.Start(ctx); err != nil {
-		slog.Error("Watcher exited with error", slog.Any("error", err))
-	}
-
-	slog.Info("Daemon shutdown complete.")
+	return watcher.Start(ctx)
 }
