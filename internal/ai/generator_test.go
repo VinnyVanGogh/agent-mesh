@@ -210,3 +210,130 @@ func TestGenerator_HeuristicFallbackWhenOffline(t *testing.T) {
 		t.Errorf("expected urgent priority for 'critical', got %s", res.Task.Priority)
 	}
 }
+
+func TestComplexDictationInference_ManagedSolution(t *testing.T) {
+	input := "hey can you please um fix the azure active directory sync issue on the managed solution portal for client acme ASAP because the login is completely broken"
+	gen := NewGenerator(GeneratorConfig{})
+	res, err := gen.GenerateTask(context.Background(), input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	task := res.Task
+	if task.Organization != "Managed Solution" {
+		t.Errorf("expected Organization 'Managed Solution', got '%s'", task.Organization)
+	}
+	if !strings.Contains(task.Project, "Managed Solution") {
+		t.Errorf("expected Project to contain 'Managed Solution', got '%s'", task.Project)
+	}
+	if task.Priority != "urgent" && task.Priority != "high" {
+		t.Errorf("expected urgent or high priority, got '%s'", task.Priority)
+	}
+	if strings.Contains(strings.ToLower(task.Title), "hey can you please") || strings.Contains(strings.ToLower(task.Title), "um") {
+		t.Errorf("expected title to strip conversational filler, got '%s'", task.Title)
+	}
+	if len(task.Title) > 72 {
+		t.Errorf("expected title under 72 chars, got %d ('%s')", len(task.Title), task.Title)
+	}
+	if !strings.Contains(task.Description, "## Objectives") || !strings.Contains(task.Description, "## Core Specs") {
+		t.Errorf("expected structured markdown description, got: %s", task.Description)
+	}
+}
+
+func TestComplexDictationInference_RuneLite_WithPhoneticSTT(t *testing.T) {
+	input := "yo vinny so basically for runelite we need to add a prayer flicking indicator plugin with sound alerts when offensive prayers are active"
+	gen := NewGenerator(GeneratorConfig{})
+	res, err := gen.GenerateTask(context.Background(), input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	task := res.Task
+	if task.Organization != "RuneLite" {
+		t.Errorf("expected Organization 'RuneLite', got '%s'", task.Organization)
+	}
+	if task.Project != "RuneLite Plugin Suite" {
+		t.Errorf("expected Project 'RuneLite Plugin Suite', got '%s'", task.Project)
+	}
+	if strings.Contains(strings.ToLower(task.Title), "yo vinny") || strings.Contains(strings.ToLower(task.Title), "so basically") {
+		t.Errorf("expected title to strip conversational filler, got '%s'", task.Title)
+	}
+	if !strings.HasPrefix(task.Title, "Add") {
+		t.Errorf("expected title to start with imperative verb 'Add', got '%s'", task.Title)
+	}
+	hasPluginLabel := false
+	for _, l := range task.Labels {
+		if l == "plugin" || l == "runelite" {
+			hasPluginLabel = true
+			break
+		}
+	}
+	if !hasPluginLabel {
+		t.Errorf("expected runelite or plugin label in %+v", task.Labels)
+	}
+}
+
+func TestComplexDictationInference_StayPoint_PhoneticMisrecognition(t *testing.T) {
+	// User says "sharepoint" due to speech-to-text lisp and "grab" for grep/fetch
+	input := "in sharepoint we gotta update the wire daemon to grab the latest token metrics and fix the race condition in the statusline"
+	gen := NewGenerator(GeneratorConfig{})
+	res, err := gen.GenerateTask(context.Background(), input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	task := res.Task
+	if task.Organization != "StayPoint" {
+		t.Errorf("expected Organization 'StayPoint' (mapped from sharepoint), got '%s'", task.Organization)
+	}
+	if !strings.Contains(task.Project, "StayPoint") {
+		t.Errorf("expected Project to contain 'StayPoint', got '%s'", task.Project)
+	}
+	if strings.Contains(strings.ToLower(task.Title), "sharepoint") {
+		t.Errorf("expected title not to mention phonetic 'sharepoint', got '%s'", task.Title)
+	}
+	if task.Priority != "high" {
+		t.Errorf("expected high priority for race condition/bug, got '%s'", task.Priority)
+	}
+}
+
+func TestComplexDictationInference_Maintenance_Dotfiles(t *testing.T) {
+	input := "hey vinny could you please clean up my zshrc dotfiles and prune the unused homebrew packages on the local machine"
+	gen := NewGenerator(GeneratorConfig{})
+	res, err := gen.GenerateTask(context.Background(), input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	task := res.Task
+	if task.Organization != "Maintenance" {
+		t.Errorf("expected Organization 'Maintenance', got '%s'", task.Organization)
+	}
+	if task.Project != "System Maintenance & Infrastructure" {
+		t.Errorf("expected Project 'System Maintenance & Infrastructure', got '%s'", task.Project)
+	}
+	if strings.Contains(strings.ToLower(task.Title), "hey vinny") || strings.Contains(strings.ToLower(task.Title), "could you please") {
+		t.Errorf("expected title to strip conversational filler, got '%s'", task.Title)
+	}
+}
+
+func TestComplexDictationInference_Research_Benchmarking(t *testing.T) {
+	input := "we need to run an evaluation benchmark on arxiv papers comparing gemini flash and claude sonnet latency across long context needle retrieval"
+	gen := NewGenerator(GeneratorConfig{})
+	res, err := gen.GenerateTask(context.Background(), input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	task := res.Task
+	if task.Organization != "Research" {
+		t.Errorf("expected Organization 'Research', got '%s'", task.Organization)
+	}
+	if task.Project != "AI Model Benchmarking & Research" {
+		t.Errorf("expected Project 'AI Model Benchmarking & Research', got '%s'", task.Project)
+	}
+	if strings.Contains(strings.ToLower(task.Title), "we need to") {
+		t.Errorf("expected title to strip 'we need to', got '%s'", task.Title)
+	}
+}
+
