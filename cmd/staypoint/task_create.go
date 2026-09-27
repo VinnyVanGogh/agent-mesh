@@ -39,6 +39,7 @@ func init() {
 	taskCreateCmd.Flags().String("company", "", "Target Paperclip company ID (defaults to PAPERCLIP_COMPANY_ID)")
 	taskCreateCmd.Flags().String("project", "", "Target project ID (defaults to current project)")
 	taskCreateCmd.Flags().String("priority", "", "Override priority (low, medium, high, urgent)")
+	taskCreateCmd.Flags().String("role", "", "Override assignee role or agent")
 	taskCreateCmd.Flags().Float64("budget", 0.0, "Maximum budget limit in USD")
 	taskCreateCmd.Flags().Int("max-turns", 0, "Maximum allowed turns")
 	taskCreateCmd.Flags().Bool("ai", true, "Force dynamic AI inference")
@@ -51,6 +52,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	companyFlag, _ := cmd.Flags().GetString("company")
 	projectFlag, _ := cmd.Flags().GetString("project")
 	priorityOverride, _ := cmd.Flags().GetString("priority")
+	roleOverride, _ := cmd.Flags().GetString("role")
 
 	var rawComment string
 
@@ -103,13 +105,14 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	if priorityOverride != "" {
 		genResult.Task.Priority = strings.ToLower(priorityOverride)
 	}
+	if roleOverride != "" {
+		genResult.Task.AssigneeRole = roleOverride
+	}
 
 	// Output immediate confirmation for CLI and e2e tests
 	fmt.Fprintf(out, "\033[1;32m✔ Task created:\033[0m %s\n\n", genResult.Task.Title)
 
 	// 2. Render Markdown Summary via Glamour
-	renderedCard := renderMarkdownSummary(genResult.Task)
-	fmt.Fprint(out, renderedCard)
 
 	// 3. Dispatch to Paperclip API
 	paperclipClient := paperclip.NewClient("", "")
@@ -147,6 +150,36 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	var assigneeID string
+	var assigneeName string
+	if companyID != "" {
+		if agents, agentErr := paperclipClient.ListAgents(ctx, companyID); agentErr == nil {
+			if roleOverride != "" {
+				lowerRole := strings.ToLower(roleOverride)
+				for _, agent := range agents {
+					if strings.EqualFold(agent.Role, lowerRole) || strings.Contains(strings.ToLower(agent.Name), lowerRole) {
+						assigneeID = agent.ID
+						assigneeName = agent.Name
+						break
+					}
+				}
+			}
+			if assigneeID == "" {
+				for _, agent := range agents {
+					if strings.Contains(strings.ToLower(agent.Name), "chief of staff") || strings.EqualFold(agent.Role, "ceo") {
+						assigneeID = agent.ID
+						assigneeName = agent.Name
+						break
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Render Markdown Summary via Glamour
+	renderedCard := renderMarkdownSummary(genResult.Task, assigneeName, assigneeID)
+	fmt.Fprint(out, renderedCard)
+
 	var issueResp *paperclip.IssueResponse
 	var issueURL string
 
@@ -156,6 +189,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 			Description: genResult.Task.Description,
 			Priority:    genResult.Task.Priority,
 			ProjectId:   projectID,
+				AssigneeAgentId: assigneeID,
 			Labels:      genResult.Task.Labels,
 		}
 
@@ -206,7 +240,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(out)
 	if issueResp != nil {
-		printClickableLink(out, issueResp.Identifier, issueURL)
+		printClickableLink(out, issueResp.Identifier, issueURL, assigneeName)
 		fmt.Fprintln(out)
 	}
 
@@ -227,10 +261,19 @@ func sanitizeComment(raw string) string {
 	return trimmed
 }
 
-func renderMarkdownSummary(task ai.InferredTask) string {
+func renderMarkdownSummary(task ai.InferredTask, assigneeInfo ...string) string {
 	tags := strings.Join(task.Labels, ", ")
 	if tags == "" {
 		tags = "none"
+	}
+
+	assigneeStr := task.AssigneeRole
+	if len(assigneeInfo) > 0 && assigneeInfo[0] != "" {
+		if len(assigneeInfo) > 1 && assigneeInfo[1] != "" {
+			assigneeStr = fmt.Sprintf("%s (%s)", assigneeInfo[0], assigneeInfo[1])
+		} else {
+			assigneeStr = assigneeInfo[0]
+		}
 	}
 
 	card := fmt.Sprintf("# %s\n\n**Organization:** %s | **Project:** %s\n**Priority:** `%s` | **Assignee Role:** `%s` | **Labels:** `%s`\n\n---\n\n%s\n",
@@ -238,7 +281,7 @@ func renderMarkdownSummary(task ai.InferredTask) string {
 		task.Organization,
 		task.Project,
 		strings.ToUpper(task.Priority),
-		task.AssigneeRole,
+		assigneeStr,
 		tags,
 		task.Description,
 	)
@@ -273,8 +316,11 @@ func printTokenTelemetry(out io.Writer, res *ai.GenerationResult) {
 	fmt.Fprintf(out, "  • Estimated Turn Cost:     \033[1;32m$%.6f USD\033[0m\n", res.EstimatedCostUSD)
 }
 
-func printClickableLink(out io.Writer, identifier, issueURL string) {
+func printClickableLink(out io.Writer, identifier, issueURL string, assigneeName ...string) {
 	fmt.Fprintln(out, "\033[1;36m[StayPoint :: Paperclip Issue Dispatch]\033[0m")
 	fmt.Fprintf(out, "  • Issue Identifier:        \033[1;32m%s\033[0m\n", identifier)
+	if len(assigneeName) > 0 && assigneeName[0] != "" {
+		fmt.Fprintf(out, "  • Assigned To:             \033[1;35m%s\033[0m\n", assigneeName[0])
+	}
 	fmt.Fprintf(out, "  • Clickable Web Link:      \033[1;34m\033[4m%s\033[0m\n", issueURL)
 }

@@ -19,6 +19,7 @@ type CreateIssueRequest struct {
 	Description string   `json:"description"`
 	Priority    string   `json:"priority,omitempty"` // low, medium, high, urgent, critical
 	ProjectId   string   `json:"projectId,omitempty"`
+	AssigneeAgentId  string   `json:"assigneeAgentId,omitempty"`
 	Labels      []string `json:"labels,omitempty"`
 }
 
@@ -71,6 +72,22 @@ func NewClient(baseURL, apiKey string) *Client {
 	}
 }
 
+// NormalizePriority maps priority levels (including "urgent") to valid Paperclip enum values.
+func NormalizePriority(p string) string {
+	switch strings.ToLower(strings.TrimSpace(p)) {
+	case "urgent", "critical", "crit":
+		return "critical"
+	case "high":
+		return "high"
+	case "low":
+		return "low"
+	case "medium", "med":
+		return "medium"
+	default:
+		return "medium"
+	}
+}
+
 // CreateIssue sends a POST request to /api/companies/:companyId/issues.
 func (c *Client) CreateIssue(ctx context.Context, companyID string, req CreateIssueRequest) (*IssueResponse, error) {
 	if companyID == "" {
@@ -78,6 +95,10 @@ func (c *Client) CreateIssue(ctx context.Context, companyID string, req CreateIs
 		if companyID == "" {
 			return nil, errors.New("companyID is required (specify via flag or PAPERCLIP_COMPANY_ID)")
 		}
+	}
+
+	if req.Priority != "" {
+		req.Priority = NormalizePriority(req.Priority)
 	}
 
 	url := fmt.Sprintf("%s/api/companies/%s/issues", c.BaseURL, companyID)
@@ -378,3 +399,39 @@ func (c *Client) ListActiveIssues(ctx context.Context, companyID string) ([]Issu
 	return issues, nil
 }
 
+
+// AgentResponse represents an agent returned by the Paperclip API.
+type AgentResponse struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Role string `json:"role"`
+}
+
+// ListAgents fetches all agents for a company.
+func (c *Client) ListAgents(ctx context.Context, companyID string) ([]AgentResponse, error) {
+	url := fmt.Sprintf("%s/api/companies/%s/agents", c.BaseURL, companyID)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.APIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+
+	resp, err := c.HTTPClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("paperclip connection error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var agents []AgentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&agents); err != nil {
+		return nil, fmt.Errorf("failed to decode agents: %w", err)
+	}
+	return agents, nil
+}

@@ -440,3 +440,51 @@ I am curious about a few things:
 	}
 }
 
+func TestComplexDictationInference_MultilineWithQuotesAndBackticks(t *testing.T) {
+	input := `We need to fix the critical bug where 'quotes', "double quotes", and backticks like ` + "`" + `git status` + "`" + `
+or environment variables like $PAPERCLIP_API_KEY crash the textarea parser.
+Ensure that multi-line piping:
+echo "line 1
+line 2" | staypoint task create
+works cleanly without escaping artifacts!`
+
+	gen := NewGenerator(GeneratorConfig{})
+	res, err := gen.GenerateTask(context.Background(), input)
+	if err != nil {
+		t.Fatalf("unexpected error parsing complex multiline input: %v", err)
+	}
+
+	task := res.Task
+	if task.Title == "" {
+		t.Errorf("expected non-empty title")
+	}
+	if task.Priority != "urgent" && task.Priority != "high" {
+		t.Errorf("expected high or urgent priority for 'critical bug', got '%s'", task.Priority)
+	}
+	if !strings.Contains(task.Description, "Objectives") {
+		t.Errorf("expected structured description with Objectives, got: %s", task.Description)
+	}
+}
+
+func TestGenerator_RoleInferenceAndMapping(t *testing.T) {
+	cases := []struct {
+		prompt       string
+		expectedRole string
+	}{
+		{"Write unit and automated tests for the test matrix", "QA & Automated Test Engineer"},
+		{"Setup CI/CD pipeline and release system packaging for Linux", "DevOps & Release Systems Engineer"},
+		{"Audit authentication tokens, secret leaks, and OS privilege boundaries", "Security & Deep Remediation Fixer"},
+	}
+
+	gen := NewGenerator(GeneratorConfig{})
+	for _, c := range cases {
+		res, err := gen.GenerateTask(context.Background(), c.prompt)
+		if err != nil {
+			t.Fatalf("unexpected error for prompt %q: %v", c.prompt, err)
+		}
+		if res.Task.AssigneeRole == "" {
+			t.Errorf("expected non-empty AssigneeRole for prompt %q", c.prompt)
+		}
+	}
+}
+

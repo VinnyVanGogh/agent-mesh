@@ -163,6 +163,7 @@ func init() {
 	taskAddCmd.Flags().String("company", "", "Target Paperclip company ID (defaults to PAPERCLIP_COMPANY_ID)")
 	taskAddCmd.Flags().String("project", "", "Target project ID (defaults to current project)")
 	taskAddCmd.Flags().String("priority", "", "Override priority (low, medium, high, urgent)")
+	taskAddCmd.Flags().String("role", "", "Override assignee role or agent")
 	taskBudgetCmd.Flags().Float64("usd", 0.0, "Budget limit in USD")
 	taskBudgetCmd.Flags().Int("turns", 0, "Maximum allowed turns")
 }

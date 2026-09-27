@@ -149,3 +149,68 @@ func TestClient_ListActiveIssues(t *testing.T) {
 	}
 }
 
+func TestClient_ListAgents(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			t.Errorf("expected GET, got %s", r.Method)
+		}
+		if r.URL.Path != "/api/companies/comp-123/agents" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		agents := []AgentResponse{
+			{ID: "agent-cos-1", Name: "Chief of Staff", Role: "ceo"},
+			{ID: "agent-qa-2", Name: "QA & Automated Test Engineer", Role: "qa"},
+		}
+		_ = json.NewEncoder(w).Encode(agents)
+	}))
+	defer ts.Close()
+
+	client := NewClient(ts.URL, "test-key")
+	agents, err := client.ListAgents(context.Background(), "comp-123")
+	if err != nil {
+		t.Fatalf("unexpected error listing agents: %v", err)
+	}
+	if len(agents) != 2 {
+		t.Fatalf("expected 2 agents, got %d", len(agents))
+	}
+	if agents[0].Name != "Chief of Staff" || agents[0].Role != "ceo" {
+		t.Errorf("unexpected agent[0]: %+v", agents[0])
+	}
+	if agents[1].Name != "QA & Automated Test Engineer" || agents[1].Role != "qa" {
+		t.Errorf("unexpected agent[1]: %+v", agents[1])
+	}
+}
+
+func TestClient_CreateIssue_WithAssigneeAgentId(t *testing.T) {
+	var capturedPayload map[string]interface{}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedPayload)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(IssueResponse{
+			ID:         "issue-assigned-1",
+			Identifier: "STA-33",
+			Title:      "Assigned Issue",
+			Status:     "todo",
+		})
+	}))
+	defer ts.Close()
+
+	client := NewClient(ts.URL, "test-key")
+	res, err := client.CreateIssue(context.Background(), "comp-123", CreateIssueRequest{
+		Title:           "Assigned Issue",
+		Description:     "Issue with Chief of Staff",
+		Priority:        "urgent",
+		AssigneeAgentId: "agent-cos-1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error creating issue: %v", err)
+	}
+	if res.Identifier != "STA-33" {
+		t.Errorf("expected identifier STA-33, got %s", res.Identifier)
+	}
+	if capturedPayload["assigneeAgentId"] != "agent-cos-1" {
+		t.Errorf("expected payload assigneeAgentId to be 'agent-cos-1', got %v", capturedPayload["assigneeAgentId"])
+	}
+}
+

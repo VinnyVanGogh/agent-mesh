@@ -163,3 +163,227 @@ func TestTaskCreate_DispatchToMockPaperclip(t *testing.T) {
 		t.Errorf("expected priority high, got: %s", receivedReq.Priority)
 	}
 }
+
+func TestTaskCreate_BareNaturalLanguage_AssignsChiefOfStaff(t *testing.T) {
+	var receivedReq paperclip.CreateIssueRequest
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == "POST" {
+			_ = json.NewDecoder(r.Body).Decode(&receivedReq)
+			_ = json.NewEncoder(w).Encode(paperclip.IssueResponse{
+				ID:          "mock-cos-issue",
+				Identifier:  "STA-101",
+				Title:       receivedReq.Title,
+				Description: receivedReq.Description,
+				Status:      "todo",
+				Priority:    receivedReq.Priority,
+				CompanyID:   "sta-comp-id",
+			})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/agents") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode([]paperclip.AgentResponse{
+				{ID: "agent-cos-id-123", Name: "Chief of Staff", Role: "ceo"},
+				{ID: "agent-qa-id-456", Name: "QA Engineer", Role: "qa"},
+			})
+			return
+		}
+		if r.URL.Path == "/api/companies" && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode([]paperclip.CompanyResponse{
+				{ID: "sta-comp-id", Name: "StayPoint", IssuePrefix: "STA", Status: "active"},
+			})
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/companies/sta-comp-id") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode(paperclip.CompanyResponse{
+				ID:          "sta-comp-id",
+				Name:        "StayPoint",
+				IssuePrefix: "STA",
+				Status:      "active",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	os.Setenv("PAPERCLIP_API_URL", mockServer.URL)
+	os.Setenv("PAPERCLIP_COMPANY_ID", "sta-comp-id")
+	os.Setenv("PAPERCLIP_API_KEY", "test-token")
+	defer os.Unsetenv("PAPERCLIP_API_URL")
+	defer os.Unsetenv("PAPERCLIP_COMPANY_ID")
+	defer os.Unsetenv("PAPERCLIP_API_KEY")
+
+	var stdout, stderr bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+
+	_ = taskCreateCmd.Flags().Set("dry-run", "false")
+	_ = taskCreateCmd.Flags().Set("role", "")
+	_ = taskCreateCmd.Flags().Set("priority", "")
+	_ = taskCreateCmd.Flags().Set("company", "")
+	_ = taskCreateCmd.Flags().Set("project", "")
+	rootCmd.SetArgs([]string{
+		"task", "create",
+		"In StayPoint we need to implement distributed quota synchronization in the wire router",
+	})
+
+	err := rootCmd.ExecuteContext(context.Background())
+	if err != nil {
+		t.Fatalf("task create failed: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "STA-101") {
+		t.Errorf("expected issue STA-101 in output, got: %s", out)
+	}
+	if !strings.Contains(out, "Chief of Staff") {
+		t.Errorf("expected Chief of Staff in output, got: %s", out)
+	}
+	if receivedReq.AssigneeAgentId != "agent-cos-id-123" {
+		t.Errorf("expected AssigneeAgentId to be 'agent-cos-id-123', got %q", receivedReq.AssigneeAgentId)
+	}
+}
+
+func TestTaskCreate_ManualOverrideFlags(t *testing.T) {
+	var receivedReq paperclip.CreateIssueRequest
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == "POST" {
+			_ = json.NewDecoder(r.Body).Decode(&receivedReq)
+			_ = json.NewEncoder(w).Encode(paperclip.IssueResponse{
+				ID:          "mock-override-issue",
+				Identifier:  "STA-102",
+				Title:       receivedReq.Title,
+				Description: receivedReq.Description,
+				Status:      "todo",
+				Priority:    receivedReq.Priority,
+				CompanyID:   "custom-comp-id",
+			})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/agents") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode([]paperclip.AgentResponse{
+				{ID: "cos-id", Name: "Chief of Staff", Role: "ceo"},
+				{ID: "qa-id", Name: "QA & Automated Test Engineer", Role: "qa"},
+			})
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/companies/custom-comp-id") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode(paperclip.CompanyResponse{
+				ID:          "custom-comp-id",
+				Name:        "Custom Company",
+				IssuePrefix: "STA",
+				Status:      "active",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	os.Setenv("PAPERCLIP_API_URL", mockServer.URL)
+	os.Setenv("PAPERCLIP_API_KEY", "test-token")
+	defer os.Unsetenv("PAPERCLIP_API_URL")
+	defer os.Unsetenv("PAPERCLIP_API_KEY")
+
+	var stdout, stderr bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+
+	_ = taskCreateCmd.Flags().Set("dry-run", "false")
+	rootCmd.SetArgs([]string{
+		"task", "create",
+		"Fix typo in documentation comment",
+		"--company", "custom-comp-id",
+		"--project", "custom-proj-id",
+		"--priority", "urgent",
+		"--role", "qa",
+	})
+
+	err := rootCmd.ExecuteContext(context.Background())
+	if err != nil {
+		t.Fatalf("task create with overrides failed: %v", err)
+	}
+
+	if receivedReq.Priority != "critical" {
+		t.Errorf("expected priority override 'critical' (normalized from urgent), got %q", receivedReq.Priority)
+	}
+	if receivedReq.ProjectId != "custom-proj-id" {
+		t.Errorf("expected project override 'custom-proj-id', got %q", receivedReq.ProjectId)
+	}
+	if receivedReq.AssigneeAgentId != "qa-id" {
+		t.Errorf("expected role override agent 'qa-id', got %q", receivedReq.AssigneeAgentId)
+	}
+}
+
+func TestTaskCreate_StdinPipeMode(t *testing.T) {
+	homeDir := t.TempDir()
+	_ = os.Setenv("HOME", homeDir)
+	defer os.Unsetenv("HOME")
+
+	cfg = nil
+
+	// Pipe stdin with multiline text containing speech-to-text dictation, quotes, backticks
+	pipeContent := "Here is a multiline brief:\n`git status` showed uncommitted changes.\n\"Ensure quotes\" and 'single quotes' work!"
+	oldStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+	_, _ = w.Write([]byte(pipeContent))
+	_ = w.Close()
+	defer func() { os.Stdin = oldStdin }()
+
+	var stdout, stderr bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+
+	_ = taskCreateCmd.Flags().Set("dry-run", "true")
+	_ = taskCreateCmd.Flags().Set("company", "")
+	_ = taskCreateCmd.Flags().Set("project", "")
+	_ = taskCreateCmd.Flags().Set("priority", "")
+	_ = taskCreateCmd.Flags().Set("role", "")
+	rootCmd.SetArgs([]string{"task", "create", "--dry-run"})
+
+	err := rootCmd.ExecuteContext(context.Background())
+	if err != nil {
+		t.Fatalf("task create stdin pipe mode failed: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Inference Telemetry & Cost Engine") {
+		t.Errorf("expected telemetry output for stdin piped task, got: %s", out)
+	}
+	if !strings.Contains(out, "Dry Run Mode") {
+		t.Errorf("expected dry run notice, got: %s", out)
+	}
+}
+
+func TestTaskAdd_AliasedCommand(t *testing.T) {
+	homeDir := t.TempDir()
+	_ = os.Setenv("HOME", homeDir)
+	defer os.Unsetenv("HOME")
+
+	cfg = nil
+
+	var stdout, stderr bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+
+	_ = taskAddCmd.Flags().Set("dry-run", "true")
+	_ = taskAddCmd.Flags().Set("priority", "high")
+	_ = taskAddCmd.Flags().Set("role", "engineer")
+	rootCmd.SetArgs([]string{"task", "add", "Implement telemetry buffering", "--dry-run", "--priority", "high", "--role", "engineer"})
+
+	err := rootCmd.ExecuteContext(context.Background())
+	if err != nil {
+		t.Fatalf("task add failed: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Implement telemetry buffering") && !strings.Contains(out, "telemetry buffering") && !strings.Contains(out, "Objectives") {
+		t.Errorf("expected task add output to contain generated task, got: %s", out)
+	}
+	if !strings.Contains(out, "Inference Telemetry & Cost Engine") {
+		t.Errorf("expected telemetry in task add, got: %s", out)
+	}
+}
