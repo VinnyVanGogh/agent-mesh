@@ -143,3 +143,128 @@ func TestBalancedPeerPacingRouting(t *testing.T) {
 		t.Errorf("expected tool claude when Gemini locked, got %s", dec4.Tool)
 	}
 }
+
+func TestDynamicQuotaAwareFallback(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. When Claude (Work) is locked out -> Opus tier falls back to Gemini 3.1 Pro
+	lockedWorkPacer := &PacerState{
+		Pools: map[PoolID]*QuotaPool{
+			PoolWorkClaude: {
+				IsLocked:      true,
+				LockoutUntil:  time.Now().Add(2 * time.Hour),
+				LockoutReason: "429 rate limit exceeded",
+				FiveHour:      QuotaWindow{RemainingPct: 0.0},
+			},
+			PoolGeminiNative: {
+				TurnsRunway: 100,
+				FiveHour:    QuotaWindow{RemainingPct: 80.0},
+				Weekly:      QuotaWindow{RemainingPct: 60.0},
+			},
+		},
+	}
+	decWork, err := Route(ctx, "/Users/vincevasile/Documents/dev/mansol-apps-server/github_repo-prod", lockedWorkPacer, RouteOptions{})
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+	if decWork.Tool != "agy" || decWork.Model != "gemini-3.1-pro" {
+		t.Errorf("expected agy / gemini-3.1-pro for locked work Opus tier, got tool=%s, model=%s", decWork.Tool, decWork.Model)
+	}
+
+	// 2. Personal repo: Preferred Claude (Opus) locked -> falls back to Gemini 3.1 Pro
+	lockedPersonalPacer := &PacerState{
+		Pools: map[PoolID]*QuotaPool{
+			PoolPersonalClaude: {
+				IsLocked:      true,
+				LockoutUntil:  time.Now().Add(2 * time.Hour),
+				LockoutReason: "Session quota exhausted (resets 10:40pm)",
+				FiveHour:      QuotaWindow{RemainingPct: 0.0},
+			},
+			PoolGeminiNative: {
+				TurnsRunway: 90,
+				FiveHour:    QuotaWindow{RemainingPct: 90.0},
+				Weekly:      QuotaWindow{RemainingPct: 70.0},
+			},
+		},
+	}
+	decOpus, err := Route(ctx, "/Users/vincevasile/Documents/dev/personal-app", lockedPersonalPacer, RouteOptions{
+		PreferredPersonalTool: "claude",
+		PreferredModel:        "claude-opus-5",
+	})
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+	if decOpus.Tool != "agy" || decOpus.Model != "gemini-3.1-pro" {
+		t.Errorf("expected agy / gemini-3.1-pro for locked Claude Opus, got tool=%s, model=%s", decOpus.Tool, decOpus.Model)
+	}
+
+	// 3. Personal repo: Preferred Claude (Sonnet) locked -> falls back to Gemini 3.8 Flash
+	decSonnet, err := Route(ctx, "/Users/vincevasile/Documents/dev/personal-app", lockedPersonalPacer, RouteOptions{
+		PreferredPersonalTool: "claude",
+		PreferredModel:        "claude-sonnet-4-6",
+		PreferredEffort:       "high",
+	})
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+	if decSonnet.Tool != "agy" || decSonnet.Model != "gemini-3.8-flash-high" {
+		t.Errorf("expected agy / gemini-3.8-flash-high for locked Claude Sonnet, got tool=%s, model=%s", decSonnet.Tool, decSonnet.Model)
+	}
+
+	// 4. When Claude lock resets -> routes back to primary Claude model
+	unlockedPacer := &PacerState{
+		Pools: map[PoolID]*QuotaPool{
+			PoolPersonalClaude: {
+				IsLocked:    false,
+				TurnsRunway: 80,
+				FiveHour:    QuotaWindow{RemainingPct: 95.0},
+				Weekly:      QuotaWindow{RemainingPct: 80.0},
+			},
+			PoolGeminiNative: {
+				TurnsRunway: 90,
+				FiveHour:    QuotaWindow{RemainingPct: 90.0},
+				Weekly:      QuotaWindow{RemainingPct: 70.0},
+			},
+		},
+	}
+	decReset, err := Route(ctx, "/Users/vincevasile/Documents/dev/personal-app", unlockedPacer, RouteOptions{
+		PreferredPersonalTool: "claude",
+		PreferredModel:        "claude-sonnet-4-6",
+	})
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+	if decReset.Tool != "claude" || decReset.Model != "claude-sonnet-4-6" {
+		t.Errorf("expected route to return to primary Claude model on reset, got tool=%s, model=%s", decReset.Tool, decReset.Model)
+	}
+}
+
+func TestFallbackPairingMatrix(t *testing.T) {
+	testCases := []struct {
+		claudeModel    string
+		effort         string
+		expectedModel  string
+		expectedEffort string
+	}{
+		{"claude-opus-5", "high", "gemini-3.1-pro", "high"},
+		{"claude-opus-5", "", "gemini-3.1-pro", "high"},
+		{"opus", "low", "gemini-3.1-pro", "low"},
+		{"claude-sonnet-4-6", "medium", "gemini-3.8-flash", "medium"},
+		{"claude-sonnet-4-6", "high", "gemini-3.8-flash", "high"},
+		{"sonnet", "", "gemini-3.8-flash", "medium"},
+	}
+
+	for _, tc := range testCases {
+		model, effort, cmd := FallbackPairingMatrix(tc.claudeModel, tc.effort)
+		if model != tc.expectedModel {
+			t.Errorf("model mismatch for %s (effort %s): expected %s, got %s", tc.claudeModel, tc.effort, tc.expectedModel, model)
+		}
+		if effort != tc.expectedEffort {
+			t.Errorf("effort mismatch for %s (effort %s): expected %s, got %s", tc.claudeModel, tc.effort, tc.expectedEffort, effort)
+		}
+		expectedCmd := "agy --model " + tc.expectedModel + " --effort " + tc.expectedEffort
+		if cmd != expectedCmd {
+			t.Errorf("command mismatch: expected %q, got %q", expectedCmd, cmd)
+		}
+	}
+}

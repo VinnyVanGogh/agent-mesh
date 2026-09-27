@@ -42,9 +42,14 @@ var routeCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		modelFlag, _ := cmd.Flags().GetString("model")
+		effortFlag, _ := cmd.Flags().GetString("effort")
+
 		decision, err := router.Route(ctx, cwd, pacerState, router.RouteOptions{
-			CheckSSH:   !noSSH,
-			RemoteHost: remoteHost,
+			CheckSSH:        !noSSH,
+			RemoteHost:      remoteHost,
+			PreferredModel:  modelFlag,
+			PreferredEffort: effortFlag,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Routing error: %v\n", err)
@@ -137,4 +142,6 @@ func init() {
 	routeCmd.Flags().BoolP("eval", "e", false, "Output recommendation as shell environment variables for eval")
 	routeCmd.Flags().BoolP("json", "j", false, "Output recommendation in JSON format")
 	routeCmd.Flags().Bool("no-ssh", false, "Skip SSH connectivity probe for work repo routing")
+	routeCmd.Flags().StringP("model", "m", "", "Target model tier (e.g. opus, sonnet, claude-opus-5, claude-sonnet-4-6)")
+	routeCmd.Flags().String("effort", "", "Reasoning effort (high, medium, low)")
 }
