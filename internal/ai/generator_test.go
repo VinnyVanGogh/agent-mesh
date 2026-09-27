@@ -336,3 +336,69 @@ func TestComplexDictationInference_Research_Benchmarking(t *testing.T) {
 		t.Errorf("expected title to strip 'we need to', got '%s'", task.Title)
 	}
 }
+
+func TestGenerator_GeminiInferenceComplexDictation(t *testing.T) {
+	geminiServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"candidates": []map[string]interface{}{
+				{
+					"content": map[string]interface{}{
+						"parts": []map[string]interface{}{
+							{
+								"text": `{
+									"organization": "Managed Solution",
+									"project": "Managed Solution Client Services",
+									"title": "Fix Azure AD sync on client portal",
+									"description": "## Objectives\n- Resolve authentication timeout during user sync\n\n## Core Specs\n- Azure AD Graph API token validation\n\n## Next Steps\n1. Review token refresh logic\n2. Run unit tests\n\n## Original Request\n> Fix the portal sync issue",
+									"priority": "urgent",
+									"labels": ["managed-solution", "azure", "auth", "bug"],
+									"assigneeRole": "Security & Deep Remediation Fixer"
+								}`,
+							},
+						},
+					},
+				},
+			},
+			"usageMetadata": map[string]interface{}{
+				"promptTokenCount":        210,
+				"candidatesTokenCount":    165,
+				"cachedContentTokenCount": 0,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer geminiServer.Close()
+
+	cfg := GeneratorConfig{
+		GeminiAPIKey:  "test-gemini-key",
+		GeminiModel:   "gemini-3.8-flash",
+		GeminiBaseURL: geminiServer.URL,
+		HTTPClient:    geminiServer.Client(),
+	}
+
+	gen := NewGenerator(cfg)
+	res, err := gen.GenerateTask(context.Background(), "hey can you please fix the azure sync on managed solution portal ASAP")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if res.FallbackUsed {
+		t.Errorf("expected primary model to be used without fallback")
+	}
+	if res.Task.Organization != "Managed Solution" {
+		t.Errorf("expected Organization 'Managed Solution', got '%s'", res.Task.Organization)
+	}
+	if res.Task.Project != "Managed Solution Client Services" {
+		t.Errorf("expected Project 'Managed Solution Client Services', got '%s'", res.Task.Project)
+	}
+	if res.Task.Title != "Fix Azure AD sync on client portal" {
+		t.Errorf("unexpected task title: %s", res.Task.Title)
+	}
+	if res.Task.Priority != "urgent" {
+		t.Errorf("expected priority urgent, got %s", res.Task.Priority)
+	}
+	if res.Task.AssigneeRole != "Security & Deep Remediation Fixer" {
+		t.Errorf("expected role Security & Deep Remediation Fixer, got %s", res.Task.AssigneeRole)
+	}
+}
