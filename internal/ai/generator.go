@@ -100,12 +100,22 @@ func NewGenerator(cfg GeneratorConfig) *TaskGenerator {
 
 // BuildPrompt creates the system instruction and context wrapper for the raw comment.
 func BuildPrompt(comment string) string {
-	return fmt.Sprintf(`Task Input:
+	return fmt.Sprintf(`You are the CTO's autonomous AI parsing engine. A user has dictated or written a raw thought, complaint, or request.
+
+Task Input:
 """
 %s
 """
 
-Respond ONLY with a valid JSON object matching the requested schema. Ensure the title is a crisp, concise summary of the task in imperative mood, NOT a copy-paste of the input.`, strings.TrimSpace(comment))
+Your job is to read this raw input and convert it into a highly structured, professional engineering issue.
+1. DO NOT just copy and paste the input as the title or description. You MUST synthesize a crisp, concise title in imperative mood (e.g. "Implement dynamic quota router", "Fix layout bug on settings page").
+2. Carefully infer the target Organization (e.g. StayPoint, Managed Solution, RuneLite, Research) and Project from context clues in the text.
+3. Write a professional markdown description that includes:
+   ## Objectives (what needs to be achieved based on the user's intent)
+   ## Core Specs (technical details, constraints, questions asked by user)
+   ## Next Steps (concrete actions to take)
+
+Respond ONLY with a valid JSON object matching the requested schema. No markdown wrapping.`, strings.TrimSpace(comment))
 }
 
 // CalculateCost estimates the USD cost for a generation run based on token counts.

@@ -49,8 +49,12 @@ var taskListCmd = &cobra.Command{
 				}
 				budgetInfo = fmt.Sprintf(" [budget: $%.2f/$%.2f (%.0f%%), %d/%d turns]", t.SpentUSD, t.MaxBudgetUSD, pct, t.SpentTurns, t.MaxTurns)
 			}
-			fmt.Printf("  • %s[%s]\033[0m \033[1m%s\033[0m (branch: %s, role: %s)%s\n",
-				statusColor, t.Status, t.Name, t.GitBranch, t.AccountRole, budgetInfo)
+			orgProj := ""
+			if t.Organization != "" || t.Project != "" {
+				orgProj = fmt.Sprintf(" (Org: %s | Proj: %s)", t.Organization, t.Project)
+			}
+			fmt.Printf("  • %s[%s]\033[0m \033[1m%s\033[0m%s (branch: %s, role: %s)%s\n",
+				statusColor, t.Status, t.Name, orgProj, t.GitBranch, t.AccountRole, budgetInfo)
 		}
 	},
 }

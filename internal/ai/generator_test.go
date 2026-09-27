@@ -14,7 +14,7 @@ func TestBuildPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "Add speech-to-text safety to textarea") {
 		t.Errorf("expected prompt to contain input comment")
 	}
-	if !strings.Contains(prompt, "schema") || !strings.Contains(prompt, "organization") {
+	if !strings.Contains(prompt, "schema") || !strings.Contains(prompt, "Organization") {
 		t.Errorf("expected prompt to specify schema requirements")
 	}
 }

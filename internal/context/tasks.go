@@ -16,6 +16,8 @@ import (
 type Task struct {
 	ID           string  `json:"id"`
 	Name         string  `json:"name"`
+	Organization string  `json:"organization"`
+	Project      string  `json:"project"`
 	RepoPath     string  `json:"repo_path"`
 	GitBranch    string  `json:"git_branch"`
 	Status       string  `json:"status"`       // active, done, soft_deleted
@@ -33,6 +35,8 @@ type Task struct {
 // TaskCreateOptions holds configuration for creating a task with budgets.
 type TaskCreateOptions struct {
 	Name         string
+	Organization string
+	Project      string
 	RepoPath     string
 	GitBranch    string
 	AccountRole  string
@@ -103,14 +107,14 @@ func CreateTaskWithOptions(db *sql.DB, opts TaskCreateOptions) (*Task, error) {
 
 	query := `
 		INSERT INTO tasks (
-			id, name, repo_path, git_branch, status, account_role,
+			id, name, organization, project, repo_path, git_branch, status, account_role,
 			max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 			created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 0, 0.0, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, 0, 0.0, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 	`
 
-	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns); err != nil {
+	if _, err := db.Exec(query, taskID, name, opts.Organization, opts.Project, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns); err != nil {
 		return nil, fmt.Errorf("failed to insert task: %w", err)
 	}
 
@@ -216,7 +220,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 	var query string
 	if includeAll {
 		query = `
-			SELECT id, name, repo_path, git_branch, status, account_role,
+			SELECT id, name, organization, project, repo_path, git_branch, status, account_role,
 			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 			       created_at, updated_at, deleted_at
 			FROM tasks
@@ -225,7 +229,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		`
 	} else {
 		query = `
-			SELECT id, name, repo_path, git_branch, status, account_role,
+			SELECT id, name, organization, project, repo_path, git_branch, status, account_role,
 			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 			       created_at, updated_at, deleted_at
 			FROM tasks
@@ -247,6 +251,8 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		if err := rows.Scan(
 			&t.ID,
 			&t.Name,
+			&t.Organization,
+			&t.Project,
 			&t.RepoPath,
 			&t.GitBranch,
 			&t.Status,
@@ -275,7 +281,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	id = strings.TrimSpace(id)
 	query := `
-		SELECT id, name, repo_path, git_branch, status, account_role,
+		SELECT id, name, organization, project, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 		       created_at, updated_at, deleted_at
 		FROM tasks
@@ -295,6 +301,8 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 	if err := row.Scan(
 		&t.ID,
 		&t.Name,
+		&t.Organization,
+		&t.Project,
 		&t.RepoPath,
 		&t.GitBranch,
 		&t.Status,
@@ -325,7 +333,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 
 	// First try exact or prefix match on repo_path
 	query := `
-		SELECT id, name, repo_path, git_branch, status, account_role,
+		SELECT id, name, organization, project, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 		       created_at, updated_at, deleted_at
 		FROM tasks
@@ -339,6 +347,8 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	err := row.Scan(
 		&t.ID,
 		&t.Name,
+		&t.Organization,
+		&t.Project,
 		&t.RepoPath,
 		&t.GitBranch,
 		&t.Status,
@@ -361,7 +371,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 
 	// Fallback to most recent active task in any repo
 	fallbackQuery := `
-		SELECT id, name, repo_path, git_branch, status, account_role,
+		SELECT id, name, organization, project, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 		       created_at, updated_at, deleted_at
 		FROM tasks
@@ -373,6 +383,8 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	err = fbRow.Scan(
 		&t.ID,
 		&t.Name,
+		&t.Organization,
+		&t.Project,
 		&t.RepoPath,
 		&t.GitBranch,
 		&t.Status,

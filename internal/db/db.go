@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS quota_windows (
 CREATE TABLE IF NOT EXISTS tasks (
     id             TEXT PRIMARY KEY,
     name           TEXT NOT NULL,
+    organization   TEXT NOT NULL DEFAULT '',
+    project        TEXT NOT NULL DEFAULT '',
     repo_path      TEXT NOT NULL,
     git_branch     TEXT,
     status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'done', 'soft_deleted')),
@@ -147,6 +149,8 @@ func migrateSchema(conn *sql.DB) error {
 		name string
 		def  string
 	}{
+		{"organization", "TEXT NOT NULL DEFAULT ''"},
+		{"project", "TEXT NOT NULL DEFAULT ''"},
 		{"max_budget_usd", "REAL NOT NULL DEFAULT 0.0"},
 		{"max_turns", "INTEGER NOT NULL DEFAULT 0"},
 		{"spent_tokens", "INTEGER NOT NULL DEFAULT 0"},

@@ -156,10 +156,12 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 				role = "work"
 			}
 			_, _ = meshContext.CreateTaskWithOptions(store.DB(), meshContext.TaskCreateOptions{
-				Name:        genResult.Task.Title,
-				RepoPath:    cwd,
-				GitBranch:   branch,
-				AccountRole: role,
+				Name:         genResult.Task.Title,
+				Organization: genResult.Task.Organization,
+				Project:      genResult.Task.Project,
+				RepoPath:     cwd,
+				GitBranch:    branch,
+				AccountRole:  role,
 			})
 		}
 	}
