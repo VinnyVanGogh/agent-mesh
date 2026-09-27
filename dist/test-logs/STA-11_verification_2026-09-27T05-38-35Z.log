@@ -1,0 +1,27 @@
+# github.com/VinnyVanGogh/staypoint/internal/router
+internal/router/waterfall.go:304:6: syntax error: unexpected name FallbackPairingMatrix, expected (
+# github.com/VinnyVanGogh/staypoint/internal/router
+internal/router/waterfall.go:304:6: syntax error: unexpected name FallbackPairingMatrix, expected (
+# github.com/VinnyVanGogh/staypoint/internal/router
+internal/router/waterfall.go:304:6: syntax error: unexpected name FallbackPairingMatrix, expected (
+# github.com/VinnyVanGogh/staypoint/internal/router
+internal/router/waterfall.go:304:6: syntax error: unexpected name FallbackPairingMatrix, expected (
+# github.com/VinnyVanGogh/staypoint/internal/router
+internal/router/waterfall.go:304:6: syntax error: unexpected name FallbackPairingMatrix, expected (
+?   	github.com/VinnyVanGogh/staypoint/internal/ipc	[no test files]
+?   	github.com/VinnyVanGogh/staypoint/internal/config	[no test files]
+# github.com/VinnyVanGogh/staypoint/internal/router
+internal/router/waterfall.go:304:6: syntax error: unexpected name FallbackPairingMatrix, expected (
+=== RUN   TestBenchmarkCheckpointDistribution
+    checkpoint_benchmark_test.go:132: CHECKPOINT DISTRIBUTION (50 modified, 10 untracked): min=206ms, median=656ms, p95=1.381s, max=1.381s, avg=612ms
+--- PASS: TestBenchmarkCheckpointDistribution (12.58s)
+=== RUN   TestCheckpointAndUndo
+--- PASS: TestCheckpointAndUndo (4.03s)
+=== RUN   TestListAndPruneCheckpoints
+--- PASS: TestListAndPruneCheckpoints (6.41s)
+=== RUN   TestUndoCleanIgnored
+--- PASS: TestUndoCleanIgnored (6.55s)
+PASS
+ok  	github.com/VinnyVanGogh/staypoint/internal/checkpoint	29.752s
+FAIL	github.com/VinnyVanGogh/staypoint/internal/telemetry [build failed]
+FAIL

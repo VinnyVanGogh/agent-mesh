@@ -1,0 +1,5 @@
+f7038d706d7822c65cefc5b3600ab24ff87dca5abab8dde56608a29515250537  staypoint  (23M)
+b5137ec17c4fe1b78cbdb72ddacd58db5dbb1288b2b646b640149d3a56f3e5a3  staypointd  (13M)
+c8e04d73827a67fc3e8d28b5c2ff4bc7a8d9a272e2bab120ff4cb536dbf74b21  staypointd-darwin-arm64  (13M)
+78e1ea5f74ab5380acbe214d4eff1bd6f21fd47de5a0a671d31546c61e6da292  staypointd-linux-amd64  (13M)
+23b3cb92e31b89497049ffffa9c5f86234dce624c144cb5a4c6515873a185b03  staypointd-windows-amd64.exe  (13M)

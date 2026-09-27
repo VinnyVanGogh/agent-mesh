@@ -1,0 +1,37 @@
+?   	github.com/VinnyVanGogh/staypoint/internal/ipc	[no test files]
+?   	github.com/VinnyVanGogh/staypoint/internal/config	[no test files]
+=== RUN   TestBenchmarkCheckpointDistribution
+    checkpoint_benchmark_test.go:132: CHECKPOINT DISTRIBUTION (50 modified, 10 untracked): min=428ms, median=1.008s, p95=1.849s, max=1.849s, avg=1.011s
+--- PASS: TestBenchmarkCheckpointDistribution (20.73s)
+=== RUN   TestCheckpointAndUndo
+--- PASS: TestCheckpointAndUndo (5.09s)
+=== RUN   TestListAndPruneCheckpoints
+--- PASS: TestListAndPruneCheckpoints (9.03s)
+=== RUN   TestUndoCleanIgnored
+--- PASS: TestUndoCleanIgnored (9.39s)
+PASS
+ok  	github.com/VinnyVanGogh/staypoint/internal/checkpoint	45.763s
+=== RUN   TestCircuitBreakerConsecutiveLoop
+2026/09/26 22:29:38 [meshd notify] [Staypoint] Circuit Breaker Tripped!: Agent claude in project paused: Repeating failure loop: 3 consecutive identical failures of tool "run_command" (npm run build)
+--- PASS: TestCircuitBreakerConsecutiveLoop (0.75s)
+=== RUN   TestCircuitBreakerBurstSpiral
+2026/09/26 22:29:38 [meshd notify] [Staypoint] Circuit Breaker Tripped!: Agent gemini in project paused: Failure spiral: 5 errors encountered in under 5 minutes (last: bash)
+--- PASS: TestCircuitBreakerBurstSpiral (1.29s)
+=== RUN   TestCircuitBreakerDistinguishVariedFromIdentical
+2026/09/26 22:29:40 [meshd notify] [Staypoint] Circuit Breaker Tripped!: Agent claude in project paused: Failure spiral: 5 errors encountered in under 5 minutes (last: go)
+2026/09/26 22:29:42 [meshd notify] [Staypoint] Circuit Breaker Tripped!: Agent claude in project paused: Repeating failure loop: 3 consecutive identical failures of tool "cargo" (cargo build)
+--- PASS: TestCircuitBreakerDistinguishVariedFromIdentical (3.46s)
+=== RUN   TestCollisionDetection
+--- PASS: TestCollisionDetection (0.27s)
+=== RUN   TestEstimateModelCost
+--- PASS: TestEstimateModelCost (0.00s)
+=== RUN   TestIngestLineDynamicModelFamily
+--- PASS: TestIngestLineDynamicModelFamily (0.08s)
+=== RUN   TestNotifierEscaping
+--- PASS: TestNotifierEscaping (0.00s)
+=== RUN   TestWatcher_PartialLineHandling
+--- PASS: TestWatcher_PartialLineHandling (0.03s)
+=== RUN   TestWatcher_OversizedLineHandling
+--- PASS: TestWatcher_OversizedLineHandling (0.27s)
+PASS
+ok  	github.com/VinnyVanGogh/staypoint/internal/telemetry	7.812s

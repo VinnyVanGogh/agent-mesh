@@ -22,6 +22,7 @@ import (
 	"github.com/VinnyVanGogh/staypoint/internal/config"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/router"
 	"github.com/VinnyVanGogh/staypoint/internal/wire"
 	_ "modernc.org/sqlite"
 )
@@ -77,6 +78,7 @@ type Watcher struct {
 	cursors        *Cursors
 	watcher        *fsnotify.Watcher
 	breaker        *BreakerTracker
+	quotaSyncer    router.QuotaSyncer
 	handoffMu      sync.Mutex
 	pendingHandoff map[string]handoffTask
 }
@@ -144,6 +146,9 @@ func (w *Watcher) Start(ctx context.Context) error {
 	pruneTicker := time.NewTicker(5 * time.Minute)
 	defer pruneTicker.Stop()
 
+	quotaSyncTicker := time.NewTicker(15 * time.Second)
+	defer quotaSyncTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -161,6 +166,17 @@ func (w *Watcher) Start(ctx context.Context) error {
 			if w.meshDB != nil {
 				_ = PruneWorkingFiles(w.meshDB)
 				_, _ = wire.Prune(w.meshDB)
+			}
+
+		case <-quotaSyncTicker.C:
+			if w.meshDB != nil {
+				role := "worker"
+				if w.cfg != nil && w.cfg.MachineRole != "" {
+					role = w.cfg.MachineRole
+				}
+				if err := w.quotaSyncer.SyncQuotaWire(w.meshDB, role); err != nil {
+					slog.Debug("Quota sync error", slog.Any("error", err))
+				}
 			}
 
 		case event, ok := <-w.watcher.Events:
