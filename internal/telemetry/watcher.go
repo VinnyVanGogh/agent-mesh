@@ -127,13 +127,16 @@ func (w *Watcher) Start(ctx context.Context) error {
 
 	home, _ := os.UserHomeDir()
 	claudeProjects := filepath.Join(home, ".claude", "projects")
+	claudeWorkProjects := filepath.Join(home, ".claude-work", "projects")
 	agyBrain := filepath.Join(home, ".gemini", "antigravity-cli", "brain")
 
 	_ = w.addRecursiveWatch(claudeProjects)
+	_ = w.addRecursiveWatch(claudeWorkProjects)
 	_ = w.addRecursiveWatch(agyBrain)
 
 	slog.Info("Watcher active",
 		slog.String("path", claudeProjects),
+		slog.String("work_path", claudeWorkProjects),
 		slog.String("secondary_path", agyBrain),
 	)
 
@@ -403,18 +406,24 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 		}
 	}
 
+	// Agent source tagging (e.g. paperclip)
+	agentSource := ""
+	if strings.Contains(sourcePath, "paperclip") || strings.Contains(cwd, "paperclip") {
+		agentSource = "paperclip"
+	}
+
 	// Idempotency key
 	hasher := sha256.New()
 	hasher.Write(line)
 	idempotencyKey := fmt.Sprintf("hook:%s", hex.EncodeToString(hasher.Sum(nil)))
 
-	// Try inserting with cost_usd; fallback without cost_usd if table doesn't have it (older test schemas)
+	// Try inserting with cost_usd and agent_source; fallback if table schema differs
 	insertWithCost := `
 	INSERT OR IGNORE INTO requests (
 		idempotency_key, detected_via, ts, model, model_family,
 		input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
-		session_id, account_email, cost_usd, raw_json
-	) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		session_id, account_email, cost_usd, agent_source, raw_json
+	) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
 	_, err := w.db.Exec(insertWithCost,
 		idempotencyKey,
@@ -429,19 +438,20 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 		sessionID,
 		accountEmail,
 		costUSD,
+		agentSource,
 		string(line),
 	)
 	if err != nil {
-		slog.Debug("Failed to insert request with cost, attempting fallback", slog.String("path", sourcePath), slog.Any("error", err))
-		// Fallback without cost_usd
-		insertWithoutCost := `
+		slog.Debug("Failed to insert request with cost and agent_source, attempting fallback", slog.String("path", sourcePath), slog.Any("error", err))
+		// Fallback without agent_source
+		insertFallback := `
 		INSERT OR IGNORE INTO requests (
 			idempotency_key, detected_via, ts, model, model_family,
 			input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
-			session_id, account_email, raw_json
-		) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+			session_id, account_email, cost_usd, raw_json
+		) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 		`
-		if _, fallbackErr := w.db.Exec(insertWithoutCost,
+		if _, fallbackErr := w.db.Exec(insertFallback,
 			idempotencyKey,
 			ts,
 			model,
@@ -453,9 +463,33 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 			totalTokens,
 			sessionID,
 			accountEmail,
+			costUSD,
 			string(line),
 		); fallbackErr != nil {
-			slog.Error("Failed to insert request", slog.String("path", sourcePath), slog.Any("error", fallbackErr))
+			// Second fallback without cost_usd or agent_source (for test schemas)
+			insertWithoutCost := `
+			INSERT OR IGNORE INTO requests (
+				idempotency_key, detected_via, ts, model, model_family,
+				input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
+				session_id, account_email, raw_json
+			) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+			`
+			if _, secondErr := w.db.Exec(insertWithoutCost,
+				idempotencyKey,
+				ts,
+				model,
+				modelFamily,
+				int64(inputTokens),
+				int64(outputTokens),
+				int64(cacheRead),
+				int64(cacheCreation),
+				totalTokens,
+				sessionID,
+				accountEmail,
+				string(line),
+			); secondErr != nil {
+				slog.Error("Failed to insert request", slog.String("path", sourcePath), slog.Any("error", secondErr))
+			}
 		}
 	}
 

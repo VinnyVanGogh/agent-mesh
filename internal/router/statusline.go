@@ -230,11 +230,16 @@ func RenderStatusline(w io.Writer, r io.Reader) error {
 	}
 	dirName := filepath.Base(dir)
 
-	// 3. Load live pacer state (<1ms)
-	pacerState, _ := LoadPacerState()
-
-	// 4. Determine work vs personal repo
+	// 3. Determine work vs personal repo
 	isWork, _, _ := IsWorkRepo(dir)
+
+	// 4. Persist live telemetry side-effect (<1ms) so staypoint status and fleet pacer stay fresh
+	if hasPipedInput {
+		RecordClaudeStatuslineTelemetry(&payload, isWork)
+	}
+
+	// 5. Load live pacer state (<1ms)
+	pacerState, _ := LoadPacerState()
 
 	// 5. Build Model badge
 	modelName := payload.Model.DisplayName
@@ -443,8 +448,7 @@ func RenderStatusline(w io.Writer, r io.Reader) error {
 	if pacerState != nil {
 		var planParts []string
 		if isWork {
-			planParts = append(planParts, fmt.Sprintf("route ▸ %sremote-claude%s", Green, Reset))
-			planParts = append(planParts, fmt.Sprintf("fallback: %slocal-work%s", Yellow, Reset))
+			planParts = append(planParts, fmt.Sprintf("route ▸ %slocal-claude-work%s", Green, Reset))
 			if pacerState.Pools[PoolWorkClaude] != nil {
 				planParts = append(planParts, fmt.Sprintf("runway: %d turns", pacerState.Pools[PoolWorkClaude].TurnsRunway))
 			}

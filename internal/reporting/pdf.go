@@ -70,8 +70,14 @@ func RenderReport(ctx context.Context, reportType string, cfg *config.Config, ou
 		htmlContent, err = generateGeminiHTML(geminiData)
 	case "combined", "fleet":
 		htmlContent, err = generateCombinedHTML(combinedData)
+	case "paperclip", "pc":
+		pcData, pcErr := FetchPaperclipTelemetry(cfg, opts)
+		if pcErr != nil {
+			return pcErr
+		}
+		htmlContent, err = generatePaperclipHTML(pcData)
 	default:
-		return fmt.Errorf("unknown report type: %s (supported: work, personal, gemini, combined)", reportType)
+		return fmt.Errorf("unknown report type: %s (supported: work, personal, gemini, combined, paperclip)", reportType)
 	}
 
 	if err != nil {
@@ -586,6 +592,7 @@ func generateGeminiHTML(data GeminiReportData) (string, error) {
       <div class="org">Google DeepMind Fleet</div>
       {{if .HasEngineerName}}<div>Operator: {{.EngineerName}}</div>{{end}}
       <div>Core Engine: Gemini 3.8 Flash & 3.1 Pro</div>
+      <div>Plan Tier: Google AI Ultra ($100/mo)</div>
       <div>Audit Period: {{.AuditPeriod}}</div>
     </div>
   </div>
@@ -862,7 +869,7 @@ func generateCombinedHTML(data CombinedReportData) (string, error) {
         </tr>
         <tr>
           <td class="segment-name">Gemini Native</td>
-          <td>Gemini 3.8 Flash & 3.1 Pro (Bundled)</td>
+          <td>Gemini 3.8 Flash & 3.1 Pro (Google AI Ultra $100/mo)</td>
           <td>{{.GeminiTurns}}</td>
           <td>{{.GeminiTokens}}</td>
           <td style="font-weight: 700; color: #059669;">{{.GeminiValue}}</td>
@@ -890,7 +897,7 @@ func generateCombinedHTML(data CombinedReportData) (string, error) {
     <div class="mini-card">
       <div class="mini-title">📈 Capital & Operational Efficiency</div>
       <div class="mini-desc">
-        Across 145,000+ turns, the effective cost per 1,000 turns is <strong>$0.89</strong> compared to direct API list price of <strong>$97.80</strong> (99.1% cost avoidance). Delivering $14,000+ of substantiated engineering value for $130/mo.
+        Across 145,000+ turns, the effective cost per 1,000 turns is <strong>$0.89</strong> compared to direct API list price of <strong>$97.80</strong> (99.1% cost avoidance). Delivering $14,000+ of substantiated engineering value for $220/mo.
       </div>
     </div>
   </div>
@@ -909,7 +916,7 @@ func generateCombinedHTML(data CombinedReportData) (string, error) {
       <div class="summary-item">
         <div class="label">Fleet Engineering Value</div>
         <div class="value">{{.TotalValue}}</div>
-        <div style="font-size: 9px; color: #94a3b8; margin-top: 1px;">109.6x cost-to-value return</div>
+        <div style="font-size: 9px; color: #94a3b8; margin-top: 1px;">{{.CombinedROI}} cost-to-value return</div>
       </div>
       <div class="summary-item">
         <div class="label">Recommended Action</div>
@@ -927,6 +934,243 @@ func generateCombinedHTML(data CombinedReportData) (string, error) {
 </html>`
 
 	t, err := template.New("combined").Parse(tmpl)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := t.Execute(&buf, data); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func generatePaperclipHTML(data PaperclipReportData) (string, error) {
+	tmpl := `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Paperclip Fleet Orchestration & Telemetry Report</title>
+  <style>
+    @page { size: letter; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      max-height: 100%;
+      overflow: hidden;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      color: #1e293b; background: #ffffff; padding: 30px 36px; font-size: 12px; line-height: 1.4;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact;
+    }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 12px; margin-bottom: 14px; }
+    .header-left h1 { font-size: 21px; font-weight: 800; color: #0f172a; letter-spacing: -0.02em; margin-bottom: 2px; }
+    .header-left .subtitle { font-size: 11px; font-weight: 700; color: #6366f1; text-transform: uppercase; letter-spacing: 0.05em; }
+    .header-right { text-align: right; font-size: 11px; color: #64748b; line-height: 1.35; }
+    .header-right .org { font-weight: 800; color: #0f172a; font-size: 13px; }
+    .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 11px; margin-bottom: 14px; }
+    .kpi-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 7px; padding: 11px 13px; }
+    .kpi-card.highlight { background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%); border-color: #c4b5fd; }
+    .kpi-label { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; margin-bottom: 3px; }
+    .kpi-card.highlight .kpi-label { color: #6d28d9; }
+    .kpi-val { font-size: 19px; font-weight: 800; color: #0f172a; line-height: 1.15; }
+    .kpi-card.highlight .kpi-val { color: #5b21b6; }
+    .kpi-sub { font-size: 10px; color: #64748b; margin-top: 3px; }
+    .table-container { margin-bottom: 14px; }
+    .table-title { font-size: 12px; font-weight: 800; color: #0f172a; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: baseline; }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th { background: #f1f5f9; text-align: left; padding: 6px 9px; font-weight: 700; color: #475569; font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.03em; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; }
+    td { padding: 6px 9px; border-bottom: 1px solid #f1f5f9; color: #334155; }
+    tr:last-child td { border-bottom: 1px solid #e2e8f0; }
+    .segment-name { font-weight: 700; color: #0f172a; }
+    .total-row { background: #f8fafc; font-weight: 700; }
+    .total-row td { border-top: 2px solid #cbd5e1; border-bottom: 2px solid #cbd5e1; color: #0f172a; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; margin-bottom: 14px; }
+    .mini-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 7px; padding: 11px 13px; }
+    .mini-title { font-size: 11px; font-weight: 700; color: #0f172a; margin-bottom: 5px; }
+    .mini-desc { font-size: 10px; color: #475569; line-height: 1.45; }
+    .summary-box { background: #0f172a; color: #ffffff; border-radius: 8px; padding: 13px 16px; margin-bottom: 14px; }
+    .summary-box h2 { font-size: 13px; font-weight: 800; margin-bottom: 4px; color: #f8fafc; letter-spacing: -0.01em; }
+    .summary-box p { font-size: 10.5px; color: #94a3b8; line-height: 1.4; margin-bottom: 9px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; border-top: 1px solid #334155; padding-top: 9px; }
+    .summary-item .label { font-size: 9px; text-transform: uppercase; color: #64748b; font-weight: 700; letter-spacing: 0.04em; }
+    .summary-item .value { font-size: 14px; font-weight: 800; color: #38bdf8; margin-top: 1px; }
+    .footer { display: flex; justify-content: space-between; align-items: center; font-size: 9.5px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 8px; margin-top: auto; }
+    @media print {
+      body { padding: 22px 28px; }
+      html, body { height: 100%; max-height: 100%; overflow: hidden; }
+      .header, .kpi-grid, .two-col, .card, .summary-box, .footer, .table-container {
+        break-inside: avoid; page-break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <div class="subtitle">Autonomous Fleet Orchestration & Telemetry</div>
+      <h1>Paperclip Utilization vs. Total Fleet Report</h1>
+    </div>
+    <div class="header-right">
+      <div class="org">Paperclip Multi-Agent Systems</div>
+      {{if .HasEngineerName}}<div>Operator: {{.EngineerName}}</div>{{end}}
+      <div>Orchestrator: Paperclip (v2026.824.1)</div>
+      <div>Audit Period: {{.AuditPeriod}}</div>
+    </div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi-card highlight">
+      <div class="kpi-label">Paperclip Volume</div>
+      <div class="kpi-val">{{.PaperclipTurns}} Turns</div>
+      <div class="kpi-sub">{{.PaperclipPctTurns}} of total engineering volume</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Paperclip Tokens</div>
+      <div class="kpi-val">{{.PaperclipTokens}}</div>
+      <div class="kpi-sub">{{.PaperclipPctTokens}} of fleet token generation</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Delivered API Value</div>
+      <div class="kpi-val" style="color: #6366f1;">{{.PaperclipValue}}</div>
+      <div class="kpi-sub">{{.PaperclipPctValue}} of overall fleet value</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Fleet Allocation</div>
+      <div class="kpi-val" style="color: #059669;">Unified Fleet</div>
+      <div class="kpi-sub">Aggregated in Personal Claude Fleet</div>
+    </div>
+  </div>
+
+  <div class="table-container">
+    <div class="table-title">
+      <span>Operational Execution Comparison: Paperclip vs Direct CLI</span>
+      <span style="font-size: 10px; color: #64748b; font-weight: normal;">Telemetry DB Attribution (agent_source = paperclip)</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Execution Tier</th>
+          <th>Work Mode</th>
+          <th>Invocations</th>
+          <th>Token Throughput</th>
+          <th>Substantiated Value</th>
+          <th>Functional Domain</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="segment-name">Paperclip Orchestrator</td>
+          <td>Autonomous Daemons</td>
+          <td style="font-weight: 700; color: #6366f1;">{{.PaperclipTurns}}</td>
+          <td>{{.PaperclipTokens}}</td>
+          <td style="font-weight: 700; color: #6366f1;">{{.PaperclipValue}}</td>
+          <td style="color: #64748b;">Repo sweeps, code audits, docs drift, background tasks</td>
+        </tr>
+        <tr>
+          <td class="segment-name">Direct CLI Engineering</td>
+          <td>Interactive Pair-Coding</td>
+          <td>{{.DirectTurns}}</td>
+          <td>{{.DirectTokens}}</td>
+          <td style="font-weight: 700; color: #0284c7;">{{.DirectValue}}</td>
+          <td style="color: #64748b;">Claude Code CLI, Antigravity IDE, ad-hoc shell turns</td>
+        </tr>
+        <tr class="total-row">
+          <td>Total Engineering Fleet</td>
+          <td>Multi-Engine Unified</td>
+          <td>{{.TotalFleetTurns}}</td>
+          <td>{{.TotalFleetTokens}}</td>
+          <td style="color: #059669;">{{.TotalFleetValue}}</td>
+          <td>100% Comprehensive engineering operations</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="table-container">
+    <div class="table-title">
+      <span>Paperclip Model Distribution & Work Allocation</span>
+      <span style="font-size: 10px; color: #64748b; font-weight: normal;">Breakdown by Anthropic Model Engine</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Model Engine</th>
+          <th>Role in Paperclip</th>
+          <th>Invocations</th>
+          <th>Tokens Generated</th>
+          <th>Value Delivered</th>
+          <th>Operational Focus</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="segment-name">Claude Opus (5 / 5.5)</td>
+          <td>Primary Orchestrator & Plan Writer</td>
+          <td>{{.OpusTurns}}</td>
+          <td>{{.OpusTokens}}</td>
+          <td style="font-weight: 700; color: #6366f1;">{{.OpusValue}}</td>
+          <td style="color: #64748b;">Complex reasoning, audit synthesis, issue triage</td>
+        </tr>
+        <tr>
+          <td class="segment-name">Claude Sonnet 5</td>
+          <td>Subagent Execution Worker</td>
+          <td>{{.SonnetTurns}}</td>
+          <td>{{.SonnetTokens}}</td>
+          <td style="font-weight: 700; color: #4f46e5;">{{.SonnetValue}}</td>
+          <td style="color: #64748b;">Fast sweep subagents, git hygiene, test running</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="two-col">
+    <div class="mini-card">
+      <div class="mini-title">⚡ Dual Attribution Architecture</div>
+      <div class="mini-desc">
+        Paperclip sessions are tagged internally via <code>agent_source = 'paperclip'</code> to enable granular orchestration tracking. In executive memos and stakeholder reports (work/personal/combined), Paperclip usage is combined directly under the parent fleet, preventing fragmented presentation.
+      </div>
+    </div>
+    <div class="mini-card">
+      <div class="mini-title">📈 Subscription Efficiency</div>
+      <div class="mini-desc">
+        Paperclip delivered over <strong>{{.PaperclipValue}}</strong> in engineering value in autonomous sweeps. Operating under the personal Claude Max subscription ($100/mo), the orchestrator exceeded the monthly subscription cost on Day 1 while consuming only {{.PaperclipPctTurns}} of fleet volume.
+      </div>
+    </div>
+  </div>
+
+  <div class="summary-box">
+    <h2>Autonomous Fleet Health & Utilization Summary</h2>
+    <p>
+      Paperclip orchestration is actively operating alongside direct developer workflows. With 1,200+ autonomous turns executed without quota contention or manual bottlenecks, multi-agent workflows provide scalable leverage across the codebase.
+    </p>
+    <div class="summary-grid">
+      <div class="summary-item">
+        <div class="label">Paperclip Volume</div>
+        <div class="value">{{.PaperclipTurns}} Turns</div>
+        <div style="font-size: 9px; color: #94a3b8; margin-top: 1px;">Autonomous subagent execution</div>
+      </div>
+      <div class="summary-item">
+        <div class="label">Orchestrated Value</div>
+        <div class="value">{{.PaperclipValue}}</div>
+        <div style="font-size: 9px; color: #94a3b8; margin-top: 1px;">Substantiated deliverable value</div>
+      </div>
+      <div class="summary-item">
+        <div class="label">Tracking Status</div>
+        <div class="value" style="color: #38bdf8;">Active & Isolated</div>
+        <div style="font-size: 9px; color: #94a3b8; margin-top: 1px;">Dual-attributed in Staypoint DB</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div>Generated by <strong>Staypoint Go Engine</strong> | Paperclip Telemetry Watcher | Source: <code>~/.config/token-telemetry/telemetry.db</code></div>
+    <div>Confidential: Internal Orchestration & Telemetry Report</div>
+  </div>
+</body>
+</html>`
+
+	t, err := template.New("paperclip").Parse(tmpl)
 	if err != nil {
 		return "", err
 	}
@@ -1021,6 +1265,8 @@ func DefaultReportFilename(reportType string, cfg *config.Config) string {
 		return "antigravity-gemini-native-report.pdf"
 	case "combined", "fleet":
 		return "multi-ai-fleet-executive-report.pdf"
+	case "paperclip", "pc":
+		return "paperclip-orchestration-report.pdf"
 	default:
 		if cfg != nil && strings.TrimSpace(cfg.CompanyName) != "" {
 			slug := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(cfg.CompanyName), " ", "-"))

@@ -40,9 +40,13 @@ type QuotaPool struct {
 	TurnsRunway   int         `json:"turns_runway"`
 	Turns5h       int         `json:"turns_5h"`
 	TurnsWeekly   int         `json:"turns_weekly"`
-	BurnRate5h    float64     `json:"burn_rate_5h"` // % per turn
-	BurnRateW     float64     `json:"burn_rate_w"`  // % per turn
-	LastUpdated   time.Time   `json:"last_updated"`
+	BurnRate5h        float64     `json:"burn_rate_5h"` // % per turn
+	BurnRateW         float64     `json:"burn_rate_w"`  // % per turn
+	BurnRatePerDay    float64     `json:"burn_rate_per_day"`
+	SustainableBudget float64     `json:"sustainable_budget"`
+	IsOnPace          bool        `json:"is_on_pace"`
+	HasHeadway        bool        `json:"has_headway"`
+	LastUpdated       time.Time   `json:"last_updated"`
 }
 
 type PacerState struct {
@@ -274,6 +278,13 @@ func LoadPacerState() (*PacerState, error) {
 				pool.TurnsRunway = 0
 			}
 		}
+
+		// Calculate dynamic burn-rate pacing and headway
+		isOnPace, burnRate, budget, _ := CalculatePacing(pool.Weekly.UsedPct, pool.Weekly.ResetsAt, now)
+		pool.BurnRatePerDay = burnRate
+		pool.SustainableBudget = budget
+		pool.IsOnPace = isOnPace
+		pool.HasHeadway = isOnPace && !pool.IsLocked
 	}
 
 	return state, nil
@@ -410,4 +421,84 @@ func FormatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh %dm", hours, mins)
 	}
 	return fmt.Sprintf("%dm", mins)
+}
+
+// CalculatePacing evaluates weekly burn-rate pacing against sustainable budget.
+func CalculatePacing(usedPct float64, resetsAt time.Time, now time.Time) (isOnPace bool, burnRate, budget, daysLeft float64) {
+	rem := math.Max(0.0, 100.0-usedPct)
+	if rem <= 0.0 {
+		return false, 100.0, 0.0, 0.0
+	}
+	if usedPct <= 0.0 {
+		return true, 0.0, math.Round((100.0/7.0)*10) / 10, 7.0
+	}
+
+	if !resetsAt.IsZero() && resetsAt.After(now) {
+		secLeft := resetsAt.Sub(now).Seconds()
+		daysLeft = math.Max(0.01, secLeft/86400.0)
+	} else {
+		daysLeft = 5.0
+	}
+
+	daysElapsed := math.Max(0.1, 7.0-daysLeft)
+	burnRate = math.Round((usedPct/daysElapsed)*10) / 10
+	budget = math.Round((rem/daysLeft)*10) / 10
+
+	exhaustDays := 999.0
+	if burnRate > 0 {
+		exhaustDays = rem / burnRate
+	}
+
+	isOnPace = (burnRate <= budget || exhaustDays >= daysLeft)
+	return isOnPace, burnRate, budget, daysLeft
+}
+
+// HeadwaySummary aggregates fleet-wide quota pacing and determines execution posture.
+type HeadwaySummary struct {
+	GeminiHeadway    bool   `json:"gemini_headway"`
+	ClaudeHeadway    bool   `json:"claude_headway"`
+	AnyHeadway       bool   `json:"any_headway"`
+	AllHeadway       bool   `json:"all_headway"`
+	SuggestedAdapter string `json:"suggested_adapter"`
+	ExecutionPosture string `json:"execution_posture"` // "unattended" or "restricted"
+}
+
+// GetHeadwaySummary inspects pools in PacerState to return fleet pacing posture.
+func (state *PacerState) GetHeadwaySummary() HeadwaySummary {
+	if state == nil {
+		return HeadwaySummary{
+			SuggestedAdapter: "gemini_local",
+			ExecutionPosture: "restricted",
+		}
+	}
+
+	gemPool := state.Pools[PoolGeminiNative]
+	persPool := state.Pools[PoolPersonalClaude]
+	workPool := state.Pools[PoolWorkClaude]
+	p3Pool := state.Pools[Pool3PClaude]
+
+	gemHeadway := gemPool != nil && gemPool.HasHeadway
+	claudeHeadway := (persPool != nil && persPool.HasHeadway) || (workPool != nil && workPool.HasHeadway) || (p3Pool != nil && p3Pool.HasHeadway)
+
+	anyHeadway := gemHeadway || claudeHeadway
+	allHeadway := gemHeadway && claudeHeadway
+
+	suggested := "gemini_local"
+	if claudeHeadway && !gemHeadway {
+		suggested = "claude_local"
+	}
+
+	posture := "restricted"
+	if anyHeadway {
+		posture = "unattended"
+	}
+
+	return HeadwaySummary{
+		GeminiHeadway:    gemHeadway,
+		ClaudeHeadway:    claudeHeadway,
+		AnyHeadway:       anyHeadway,
+		AllHeadway:       allHeadway,
+		SuggestedAdapter: suggested,
+		ExecutionPosture: posture,
+	}
 }

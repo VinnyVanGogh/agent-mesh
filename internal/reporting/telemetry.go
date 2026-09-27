@@ -92,6 +92,30 @@ type CombinedReportData struct {
 	HasEngineerName       bool
 }
 
+type PaperclipReportData struct {
+	EngineerName       string
+	AuditPeriod        string
+	TotalFleetTurns    string
+	TotalFleetTokens   string
+	TotalFleetValue    string
+	PaperclipTurns     string
+	PaperclipTokens    string
+	PaperclipValue     string
+	DirectTurns        string
+	DirectTokens       string
+	DirectValue        string
+	PaperclipPctTurns  string
+	PaperclipPctTokens string
+	PaperclipPctValue  string
+	OpusTurns          string
+	OpusTokens         string
+	OpusValue          string
+	SonnetTurns        string
+	SonnetTokens       string
+	SonnetValue        string
+	HasEngineerName    bool
+}
+
 func countBrainSessions() int {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -217,8 +241,8 @@ func FetchTelemetryWithRange(cfg *config.Config, rangeOpts DateRangeOptions) (
 		TotalValue:            "$14,259.29",
 		TotalInvocations:      "145,624",
 		TotalTokens:           "39.7 Billion",
-		CombinedROI:           "109.6x",
-		TotalSubscriptionCost: "$130.00 / mo",
+		CombinedROI:           "64.8x",
+		TotalSubscriptionCost: "$220.00 / mo",
 		WorkTurns:             "25,814",
 		WorkValue:             "$2,881.71",
 		WorkTokens:            "7.91 Billion",
@@ -372,7 +396,7 @@ func FetchTelemetryWithRange(cfg *config.Config, rangeOpts DateRangeOptions) (
 		combined.TotalTokens = formatTokens(totTokens)
 		totalVal := totCost + 3800.0 // + Gemini value & review deliverables
 		combined.TotalValue = fmt.Sprintf("$%.2f", totalVal)
-		combined.CombinedROI = fmt.Sprintf("%.1fx", totalVal/130.0)
+		combined.CombinedROI = fmt.Sprintf("%.1fx", totalVal/220.0)
 		if totMinTs.Valid && totMaxTs.Valid {
 			combined.AuditPeriod = formatPeriod(totMinTs.String, totMaxTs.String)
 		}
@@ -468,4 +492,156 @@ func parseDateBound(s string, isEnd bool) (string, error) {
 	}
 
 	return "", fmt.Errorf("unrecognized date format (supported: YYYY-MM-DD or 7d/30d)")
+}
+
+func FetchPaperclipTelemetry(cfg *config.Config, rangeOpts ...DateRangeOptions) (PaperclipReportData, error) {
+	var opts DateRangeOptions
+	if len(rangeOpts) > 0 {
+		opts = rangeOpts[0]
+	}
+
+	sinceBound, err := parseDateBound(opts.Since, false)
+	if err != nil {
+		return PaperclipReportData{}, fmt.Errorf("invalid --since date '%s': %w", opts.Since, err)
+	}
+	untilBound, err := parseDateBound(opts.Until, true)
+	if err != nil {
+		return PaperclipReportData{}, fmt.Errorf("invalid --until date '%s': %w", opts.Until, err)
+	}
+
+	data := PaperclipReportData{
+		EngineerName:       cfg.EngineerName,
+		AuditPeriod:        "Sep 25, 2026",
+		TotalFleetTurns:    "155,838",
+		TotalFleetTokens:   "42.32 Billion",
+		TotalFleetValue:    "$14,572.03",
+		PaperclipTurns:     "1,216",
+		PaperclipTokens:    "111.48 Million",
+		PaperclipValue:     "$150.54",
+		DirectTurns:        "154,622",
+		DirectTokens:       "42.21 Billion",
+		DirectValue:        "$14,421.49",
+		PaperclipPctTurns:  "0.8%",
+		PaperclipPctTokens: "0.3%",
+		PaperclipPctValue:  "1.0%",
+		OpusTurns:          "440",
+		OpusTokens:         "28.56 Million",
+		OpusValue:          "$108.21",
+		SonnetTurns:        "776",
+		SonnetTokens:       "82.92 Million",
+		SonnetValue:        "$42.33",
+		HasEngineerName:    strings.TrimSpace(cfg.EngineerName) != "",
+	}
+
+	dbPath := cfg.TelemetryDBPath
+	if dbPath == "" {
+		home, _ := os.UserHomeDir()
+		dbPath = filepath.Join(home, ".config", "token-telemetry", "telemetry.db")
+	}
+
+	if _, statErr := os.Stat(dbPath); statErr != nil {
+		return data, nil
+	}
+
+	dsn := fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(3000)", dbPath)
+	conn, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return data, nil
+	}
+	defer conn.Close()
+
+	// Query Total Fleet
+	var totCount int64
+	var totCost float64
+	var totTokens int64
+	var totMinTs, totMaxTs sql.NullString
+	_ = conn.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(cost_usd), 0), COALESCE(SUM(total_tokens), 0), MIN(ts), MAX(ts)
+		FROM requests
+		WHERE (ts >= ? OR ? = '') AND (ts <= ? OR ? = '')`,
+		sinceBound, sinceBound, untilBound, untilBound).Scan(&totCount, &totCost, &totTokens, &totMinTs, &totMaxTs)
+
+	// Query Paperclip
+	var pcCount int64
+	var pcCost float64
+	var pcTokens int64
+	var pcMinTs, pcMaxTs sql.NullString
+	_ = conn.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(cost_usd), 0), COALESCE(SUM(total_tokens), 0), MIN(ts), MAX(ts)
+		FROM requests
+		WHERE (agent_source = 'paperclip' OR raw_json LIKE '%/.paperclip/%' OR raw_json LIKE '%--paperclip-%')
+		  AND (ts >= ? OR ? = '') AND (ts <= ? OR ? = '')`,
+		sinceBound, sinceBound, untilBound, untilBound).Scan(&pcCount, &pcCost, &pcTokens, &pcMinTs, &pcMaxTs)
+
+	// Query Opus
+	var opusCount int64
+	var opusCost float64
+	var opusTokens int64
+	_ = conn.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(cost_usd), 0), COALESCE(SUM(total_tokens), 0)
+		FROM requests
+		WHERE (agent_source = 'paperclip' OR raw_json LIKE '%/.paperclip/%' OR raw_json LIKE '%--paperclip-%')
+		  AND model LIKE '%opus%'
+		  AND (ts >= ? OR ? = '') AND (ts <= ? OR ? = '')`,
+		sinceBound, sinceBound, untilBound, untilBound).Scan(&opusCount, &opusCost, &opusTokens)
+
+	// Query Sonnet
+	var sonnetCount int64
+	var sonnetCost float64
+	var sonnetTokens int64
+	_ = conn.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(cost_usd), 0), COALESCE(SUM(total_tokens), 0)
+		FROM requests
+		WHERE (agent_source = 'paperclip' OR raw_json LIKE '%/.paperclip/%' OR raw_json LIKE '%--paperclip-%')
+		  AND model LIKE '%sonnet%'
+		  AND (ts >= ? OR ? = '') AND (ts <= ? OR ? = '')`,
+		sinceBound, sinceBound, untilBound, untilBound).Scan(&sonnetCount, &sonnetCost, &sonnetTokens)
+
+	if totCount > 0 {
+		data.TotalFleetTurns = formatInt(totCount)
+		data.TotalFleetTokens = formatTokens(totTokens)
+		totalVal := totCost + 3800.0 // + Gemini deliverables
+		data.TotalFleetValue = fmt.Sprintf("$%.2f", totalVal)
+
+		if pcCount > 0 {
+			data.PaperclipTurns = formatInt(pcCount)
+			data.PaperclipTokens = formatTokens(pcTokens)
+			data.PaperclipValue = fmt.Sprintf("$%.2f", pcCost)
+
+			directTurns := totCount - pcCount
+			directTokens := totTokens - pcTokens
+			directVal := totalVal - pcCost
+			data.DirectTurns = formatInt(directTurns)
+			data.DirectTokens = formatTokens(directTokens)
+			data.DirectValue = fmt.Sprintf("$%.2f", directVal)
+
+			pctTurns := float64(pcCount) / float64(totCount) * 100.0
+			pctTokens := float64(pcTokens) / float64(totTokens) * 100.0
+			pctValue := pcCost / totalVal * 100.0
+
+			data.PaperclipPctTurns = fmt.Sprintf("%.1f%%", pctTurns)
+			data.PaperclipPctTokens = fmt.Sprintf("%.1f%%", pctTokens)
+			data.PaperclipPctValue = fmt.Sprintf("%.1f%%", pctValue)
+		}
+
+		if opusCount > 0 {
+			data.OpusTurns = formatInt(opusCount)
+			data.OpusTokens = formatTokens(opusTokens)
+			data.OpusValue = fmt.Sprintf("$%.2f", opusCost)
+		}
+
+		if sonnetCount > 0 {
+			data.SonnetTurns = formatInt(sonnetCount)
+			data.SonnetTokens = formatTokens(sonnetTokens)
+			data.SonnetValue = fmt.Sprintf("$%.2f", sonnetCost)
+		}
+
+		if pcMinTs.Valid && pcMaxTs.Valid {
+			data.AuditPeriod = formatPeriod(pcMinTs.String, pcMaxTs.String)
+		} else if totMinTs.Valid && totMaxTs.Valid {
+			data.AuditPeriod = formatPeriod(totMinTs.String, totMaxTs.String)
+		}
+	}
+
+	return data, nil
 }

@@ -43,8 +43,8 @@ var statusCmd = &cobra.Command{
 				if cfg != nil && cfg.CompanyName != "" {
 					workName = fmt.Sprintf("%s (Work)", cfg.CompanyName)
 				}
-				fmt.Printf("  • %-26s \033[1;32m✔ Highest Priority\033[0m (routes via %s | Week Left: %.0f%% | 5h Left: %.0f%%)\n",
-					workName+":", remoteHost, workPool.Weekly.RemainingPct, workPool.FiveHour.RemainingPct)
+				fmt.Printf("  • %-26s \033[1;32m✔ Highest Priority\033[0m | Week Left: %.0f%% | 5h Left: %.0f%%\n",
+					workName+":", workPool.Weekly.RemainingPct, workPool.FiveHour.RemainingPct)
 			}
 			if persPool != nil {
 				persColor := "\033[1;32m✔ Available\033[0m"

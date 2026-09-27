@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -128,6 +129,10 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 		targetModel = decision.Model
 		if decision.Target == router.TargetRemoteClaude {
 			isRemoteWork = true
+		} else if decision.Target == router.TargetLocalClaudeWork {
+			if home, err := os.UserHomeDir(); err == nil {
+				_ = os.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude-work"))
+			}
 		}
 	}
 

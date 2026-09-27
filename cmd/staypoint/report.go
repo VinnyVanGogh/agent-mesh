@@ -24,12 +24,13 @@ var reportCmd = &cobra.Command{
 		untilFlag, _ := cmd.Flags().GetString("until")
 
 		if !pdfFlag {
-			fmt.Println("Usage: staypoint report --pdf [--type work|personal|gemini|combined|all] [--since <date>] [--until <date>] [--output <path>]")
+			fmt.Println("Usage: staypoint report --pdf [--type work|personal|gemini|combined|paperclip|all] [--since <date>] [--until <date>] [--output <path>]")
 			fmt.Println("  --type work        Executive Justification Memo (Boss Card)")
 			fmt.Println("  --type personal    Personal Claude Code Value Audit (102k+ turns, $7,500+ value)")
 			fmt.Println("  --type gemini      Antigravity & Gemini Native Report (Flash, Pro, Brain logs, Reviews)")
 			fmt.Println("  --type combined    Unified Multi-AI Fleet Executive Report ($14,000+ total value)")
-			fmt.Println("  --type all         Generate all 4 reports in one batch")
+			fmt.Println("  --type paperclip   Paperclip Fleet Orchestration Report (1.2k+ turns, $150+ value vs Direct CLI)")
+			fmt.Println("  --type all         Generate all executive reports in one batch")
 			fmt.Println("  --since <date>     Filter telemetry starting from date (e.g. 2026-08-01, 7d, 30d)")
 			fmt.Println("  --until <date>     Filter telemetry up to date (e.g. 2026-09-01)")
 			return
@@ -89,7 +90,7 @@ var reportCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(reportCmd)
 	reportCmd.Flags().Bool("pdf", false, "Generate print-ready PDF report")
-	reportCmd.Flags().StringP("type", "t", "work", "Report type: work, personal, gemini, combined (default: work)")
+	reportCmd.Flags().StringP("type", "t", "work", "Report type: work, personal, gemini, combined, paperclip (default: work)")
 	reportCmd.Flags().StringP("output", "o", "", "Destination path for generated PDF")
 	reportCmd.Flags().String("since", "", "Filter telemetry starting from date (e.g. 2026-08-01, 7d, 30d)")
 	reportCmd.Flags().String("until", "", "Filter telemetry up to date (e.g. 2026-09-01)")
