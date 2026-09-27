@@ -25,6 +25,8 @@ type Task struct {
 	SpentTokens  int64   `json:"spent_tokens"`
 	SpentUSD     float64 `json:"spent_usd"`
 	SpentTurns   int     `json:"spent_turns"`
+	Organization string  `json:"organization,omitempty"`
+	Project      string  `json:"project,omitempty"`
 	CreatedAt    string  `json:"created_at"`
 	UpdatedAt    string  `json:"updated_at"`
 	DeletedAt    *string `json:"deleted_at,omitempty"`
@@ -38,6 +40,8 @@ type TaskCreateOptions struct {
 	AccountRole  string
 	MaxBudgetUSD float64
 	MaxTurns     int
+	Organization string
+	Project      string
 }
 
 // GetCurrentGitBranch returns the current active git branch for a directory.
@@ -105,12 +109,13 @@ func CreateTaskWithOptions(db *sql.DB, opts TaskCreateOptions) (*Task, error) {
 		INSERT INTO tasks (
 			id, name, repo_path, git_branch, status, account_role,
 			max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
+			organization, project,
 			created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 0, 0.0, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 0, 0.0, 0, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 	`
 
-	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns); err != nil {
+	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns, opts.Organization, opts.Project); err != nil {
 		return nil, fmt.Errorf("failed to insert task: %w", err)
 	}
 
@@ -218,7 +223,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		query = `
 			SELECT id, name, repo_path, git_branch, status, account_role,
 			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-			       created_at, updated_at, deleted_at
+			       organization, project, created_at, updated_at, deleted_at
 			FROM tasks
 			WHERE status != 'soft_deleted'
 			ORDER BY created_at DESC
@@ -227,7 +232,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		query = `
 			SELECT id, name, repo_path, git_branch, status, account_role,
 			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-			       created_at, updated_at, deleted_at
+			       organization, project, created_at, updated_at, deleted_at
 			FROM tasks
 			WHERE status = 'active'
 			ORDER BY created_at DESC
@@ -243,7 +248,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 	var tasks []Task
 	for rows.Next() {
 		var t Task
-		var deletedAt sql.NullString
+		var deletedAt, org, proj sql.NullString
 		if err := rows.Scan(
 			&t.ID,
 			&t.Name,
@@ -256,6 +261,8 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 			&t.SpentTokens,
 			&t.SpentUSD,
 			&t.SpentTurns,
+			&org,
+			&proj,
 			&t.CreatedAt,
 			&t.UpdatedAt,
 			&deletedAt,
@@ -264,6 +271,18 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		}
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
+		}
+		if org.Valid {
+			t.Organization = org.String
+		}
+		if proj.Valid {
+			t.Project = proj.String
+		}
+		if org.Valid {
+			t.Organization = org.String
+		}
+		if proj.Valid {
+			t.Project = proj.String
 		}
 		tasks = append(tasks, t)
 	}
@@ -277,7 +296,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-		       created_at, updated_at, deleted_at
+		       organization, project, created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE id = ? OR id = ? OR id LIKE ?
 		ORDER BY created_at DESC
@@ -291,7 +310,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 
 	row := db.QueryRow(query, id, fullID, prefixMatch)
 	var t Task
-	var deletedAt sql.NullString
+	var deletedAt, org, proj sql.NullString
 	if err := row.Scan(
 		&t.ID,
 		&t.Name,
@@ -304,6 +323,8 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 		&t.SpentTokens,
 		&t.SpentUSD,
 		&t.SpentTurns,
+		&org,
+		&proj,
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,
@@ -327,7 +348,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	query := `
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-		       created_at, updated_at, deleted_at
+		       organization, project, created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE status = 'active' AND (repo_path = ? OR repo_path LIKE ?)
 		ORDER BY updated_at DESC
@@ -335,7 +356,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	`
 	row := db.QueryRow(query, cleanPath, cleanPath+"/%")
 	var t Task
-	var deletedAt sql.NullString
+	var deletedAt, org, proj sql.NullString
 	err := row.Scan(
 		&t.ID,
 		&t.Name,
@@ -348,6 +369,8 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.SpentTokens,
 		&t.SpentUSD,
 		&t.SpentTurns,
+		&org,
+		&proj,
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,
@@ -356,6 +379,18 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
 		}
+		if org.Valid {
+			t.Organization = org.String
+		}
+		if proj.Valid {
+			t.Project = proj.String
+		}
+		if org.Valid {
+			t.Organization = org.String
+		}
+		if proj.Valid {
+			t.Project = proj.String
+		}
 		return &t, nil
 	}
 
@@ -363,7 +398,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	fallbackQuery := `
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-		       created_at, updated_at, deleted_at
+		       organization, project, created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE status = 'active'
 		ORDER BY updated_at DESC
@@ -382,6 +417,8 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.SpentTokens,
 		&t.SpentUSD,
 		&t.SpentTurns,
+		&org,
+		&proj,
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,
@@ -389,6 +426,18 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	if err == nil {
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
+		}
+		if org.Valid {
+			t.Organization = org.String
+		}
+		if proj.Valid {
+			t.Project = proj.String
+		}
+		if org.Valid {
+			t.Organization = org.String
+		}
+		if proj.Valid {
+			t.Project = proj.String
 		}
 		return &t, nil
 	}

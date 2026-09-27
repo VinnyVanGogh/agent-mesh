@@ -49,6 +49,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     spent_tokens   INTEGER NOT NULL DEFAULT 0,
     spent_usd      REAL NOT NULL DEFAULT 0.0,
     spent_turns    INTEGER NOT NULL DEFAULT 0,
+    organization   TEXT,
+    project        TEXT,
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     deleted_at     TEXT
@@ -152,6 +154,8 @@ func migrateSchema(conn *sql.DB) error {
 		{"spent_tokens", "INTEGER NOT NULL DEFAULT 0"},
 		{"spent_usd", "REAL NOT NULL DEFAULT 0.0"},
 		{"spent_turns", "INTEGER NOT NULL DEFAULT 0"},
+		{"organization", "TEXT"},
+		{"project", "TEXT"},
 	}
 
 	for _, c := range cols {

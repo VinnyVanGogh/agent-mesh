@@ -27,18 +27,11 @@ var taskListCmd = &cobra.Command{
 		pclipClient := paperclip.NewClient("", "")
 		var pclipIssues []paperclip.IssueResponse
 
-		// Try to fetch active issues from Paperclip
-		companyID := os.Getenv("PAPERCLIP_COMPANY_ID")
-		if companyID != "" {
-			if issues, err := pclipClient.ListActiveIssues(ctx, companyID); err == nil {
-				pclipIssues = issues
-			}
-		} else {
-			if companies, err := pclipClient.ListCompanies(ctx); err == nil {
-				for _, c := range companies {
-					if issues, err := pclipClient.ListActiveIssues(ctx, c.ID); err == nil && len(issues) > 0 {
-						pclipIssues = append(pclipIssues, issues...)
-					}
+		// Always fetch from all companies so tasks across different organizations are visible
+		if companies, err := pclipClient.ListCompanies(ctx); err == nil {
+			for _, c := range companies {
+				if issues, err := pclipClient.ListActiveIssues(ctx, c.ID); err == nil && len(issues) > 0 {
+					pclipIssues = append(pclipIssues, issues...)
 				}
 			}
 		}
@@ -98,8 +91,12 @@ var taskListCmd = &cobra.Command{
 				}
 				budgetInfo = fmt.Sprintf(" [budget: $%.2f/$%.2f (%.0f%%), %d/%d turns]", t.SpentUSD, t.MaxBudgetUSD, pct, t.SpentTurns, t.MaxTurns)
 			}
-			fmt.Printf("  • %s[%s]\033[0m \033[1m%s\033[0m (branch: %s, role: %s)%s\n",
-				statusColor, t.Status, t.Name, t.GitBranch, t.AccountRole, budgetInfo)
+			orgProjInfo := ""
+			if t.Organization != "" || t.Project != "" {
+				orgProjInfo = fmt.Sprintf(" (Org: %s | Proj: %s)", t.Organization, t.Project)
+			}
+			fmt.Printf("  • %s[%s]\033[0m \033[1m%s\033[0m%s (branch: %s, role: %s)%s\n",
+				statusColor, t.Status, t.Name, orgProjInfo, t.GitBranch, t.AccountRole, budgetInfo)
 		}
 	},
 }

@@ -194,6 +194,8 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 				AccountRole:  role,
 				MaxBudgetUSD: budget,
 				MaxTurns:     maxTurns,
+				Organization: genResult.Task.Organization,
+				Project:      genResult.Task.Project,
 			})
 		}
 	}
