@@ -1,0 +1,24 @@
+# .coderabbit.yaml
+language: "en-US"
+tone_instructions: "Reviewers should focus on architectural decisions, performance bottlenecks, concurrency patterns, and security. Avoid nitpicking formatting that local linters (Ruff, ESLint, Biome, or gofmt/golangci-lint) catch. Provide clear explanations for any suggested changes."
+early_access: false
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  sequence_diagrams: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  path_instructions:
+    - path: "**/*.go"
+      instructions: "Ensure idiomatic Go conventions, proper error handling, memory safety, and thread safety for concurrency constructs like goroutines and channels. Alert on goroutine leaks."
+    - path: "**/*.md"
+      instructions: "Ensure documentation is clear, accurate, and free of typos."
+  path_excludes:
+    - "dist/**"
+    - "vendor/**"
+    - "**/mock_*.go"
+    - "**/*_test.go"
+chat:
+  auto_reply: true
