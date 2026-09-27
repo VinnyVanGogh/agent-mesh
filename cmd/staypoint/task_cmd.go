@@ -57,9 +57,19 @@ var taskListCmd = &cobra.Command{
 
 var taskAddCmd = &cobra.Command{
 	Use:   "add [name]",
-	Short: "Add a new active task",
-	Args:  cobra.ExactArgs(1),
+	Short: "Add a new active task (or dynamic task creation with --tui / --ai)",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		tuiFlag, _ := cmd.Flags().GetBool("tui")
+		aiFlag, _ := cmd.Flags().GetBool("ai")
+		if tuiFlag || aiFlag || len(args) == 0 {
+			if err := runTaskCreate(cmd, args); err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating task: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
 		store, err := db.Open(cfg.DBPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
@@ -144,6 +154,9 @@ func init() {
 	taskListCmd.Flags().BoolP("all", "a", false, "Include done and soft-deleted tasks")
 	taskAddCmd.Flags().Float64("budget", 0.0, "Maximum budget limit in USD")
 	taskAddCmd.Flags().Int("max-turns", 0, "Maximum allowed turns")
+	taskAddCmd.Flags().Bool("tui", false, "Launch Bubble Tea TUI interactive textarea")
+	taskAddCmd.Flags().Bool("ai", false, "Force dynamic AI inference")
+	taskAddCmd.Flags().Bool("dry-run", false, "Preview generated task without dispatching to Paperclip")
 	taskBudgetCmd.Flags().Float64("usd", 0.0, "Budget limit in USD")
 	taskBudgetCmd.Flags().Int("turns", 0, "Maximum allowed turns")
 }

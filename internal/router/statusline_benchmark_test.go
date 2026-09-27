@@ -28,6 +28,9 @@ func TestBenchmarkStatuslineProcessLatency(t *testing.T) {
 	if _, err := os.Stat(staypointBin); os.IsNotExist(err) {
 		staypointBin = "../../bin/mesh"
 	}
+	if _, err := os.Stat(staypointBin); os.IsNotExist(err) {
+		t.Skip("skipping process latency benchmark: staypoint binary not found in bin/staypoint or bin/mesh")
+	}
 	iterations := 20
 	var samples []time.Duration
 
