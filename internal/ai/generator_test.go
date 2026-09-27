@@ -402,3 +402,41 @@ func TestGenerator_GeminiInferenceComplexDictation(t *testing.T) {
 		t.Errorf("expected role Security & Deep Remediation Fixer, got %s", res.Task.AssigneeRole)
 	}
 }
+
+func TestComplexDictationInference_UserResearchPrompt(t *testing.T) {
+	input := `Can you please open a new task under Research and Organization: Research and Implementation?
+
+The task is to research GitHub agents and see if I can start using GitHub Copilot agents with my account. It can use the GitHub CLI or do whatever else it needs to do, as long as it's read-only (though if it needs to activate an agent, that's fine).
+
+I am curious about a few things:
+
+1. Since I have both an organization account and a personal account, is there a separation or difference between the two?
+2. Do both of them have free usage or maximum usage limits? What is going on there, and how much usage can I actually get out of them?`
+
+	gen := NewGenerator(GeneratorConfig{})
+	res, err := gen.GenerateTask(context.Background(), input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	task := res.Task
+	if task.Organization != "Research" {
+		t.Errorf("expected Organization 'Research', got '%s'", task.Organization)
+	}
+	if task.Project != "Tooling, AppSec & Observability Intelligence" {
+		t.Errorf("expected Project 'Tooling, AppSec & Observability Intelligence', got '%s'", task.Project)
+	}
+	if strings.Contains(strings.ToLower(task.Title), "open a new task") {
+		t.Errorf("expected title to strip meta-dictation 'open a new task', got '%s'", task.Title)
+	}
+	if !strings.HasPrefix(task.Title, "Research") {
+		t.Errorf("expected title to start with 'Research', got '%s'", task.Title)
+	}
+	if len(task.Title) > 72 {
+		t.Errorf("expected title length <= 72, got %d ('%s')", len(task.Title), task.Title)
+	}
+	if !strings.Contains(task.Description, "## Key Inquiries & Questions") {
+		t.Errorf("expected description to extract inquiries, got: %s", task.Description)
+	}
+}
+

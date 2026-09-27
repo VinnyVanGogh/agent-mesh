@@ -87,3 +87,65 @@ func TestClient_GetCompany(t *testing.T) {
 		t.Errorf("unexpected company response: %+v", comp)
 	}
 }
+
+func TestClient_ListCompaniesAndResolve(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		comps := []CompanyResponse{
+			{ID: "sta-1", Name: "StayPoint", IssuePrefix: "STA", Status: "active"},
+			{ID: "res-1", Name: "Research & Intelligence", IssuePrefix: "RES", Status: "active"},
+			{ID: "man-1", Name: "Managed Solution", IssuePrefix: "MAN", Status: "active"},
+		}
+		_ = json.NewEncoder(w).Encode(comps)
+	}))
+	defer ts.Close()
+
+	client := NewClient(ts.URL, "test-key")
+	companies, err := client.ListCompanies(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error listing companies: %v", err)
+	}
+	if len(companies) != 3 {
+		t.Fatalf("expected 3 companies, got %d", len(companies))
+	}
+
+	// Resolve Research
+	comp, err := client.ResolveCompany(context.Background(), "Research")
+	if err != nil {
+		t.Fatalf("unexpected error resolving Research: %v", err)
+	}
+	if comp.ID != "res-1" || comp.IssuePrefix != "RES" {
+		t.Errorf("expected res-1 (RES), got %+v", comp)
+	}
+
+	// Resolve StayPoint
+	comp, err = client.ResolveCompany(context.Background(), "StayPoint")
+	if err != nil {
+		t.Fatalf("unexpected error resolving StayPoint: %v", err)
+	}
+	if comp.ID != "sta-1" || comp.IssuePrefix != "STA" {
+		t.Errorf("expected sta-1 (STA), got %+v", comp)
+	}
+}
+
+func TestClient_ListActiveIssues(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		issues := []IssueResponse{
+			{ID: "issue-1", Identifier: "STA-21", Title: "Dynamic task generator", Status: "in_progress", Priority: "high"},
+			{ID: "issue-2", Identifier: "STA-20", Title: "Architecture RFC", Status: "done", Priority: "medium"},
+		}
+		_ = json.NewEncoder(w).Encode(issues)
+	}))
+	defer ts.Close()
+
+	client := NewClient(ts.URL, "test-key")
+	issues, err := client.ListActiveIssues(context.Background(), "comp-123")
+	if err != nil {
+		t.Fatalf("unexpected error listing issues: %v", err)
+	}
+	if len(issues) != 2 || issues[0].Identifier != "STA-21" {
+		t.Errorf("unexpected issues: %+v", issues)
+	}
+}
+

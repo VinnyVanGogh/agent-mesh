@@ -503,7 +503,13 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 	case "Maintenance":
 		project = "System Maintenance & Infrastructure"
 	case "Research":
-		project = "AI Model Benchmarking & Research"
+		if strings.Contains(lowerNorm, "tooling") || strings.Contains(lowerNorm, "observability") ||
+			strings.Contains(lowerNorm, "github") || strings.Contains(lowerNorm, "copilot") ||
+			strings.Contains(lowerNorm, "appsec") {
+			project = "Tooling, AppSec & Observability Intelligence"
+		} else {
+			project = "AI Model Benchmarking & Research"
+		}
 	case "StayPoint":
 		if strings.Contains(lowerNorm, "statusline") || strings.Contains(lowerNorm, "tui") ||
 			strings.Contains(lowerNorm, "bubbletea") || strings.Contains(lowerNorm, "textarea") ||
@@ -555,7 +561,12 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 			labels = append(labels, "dotfiles")
 		}
 	case "Research":
-		labels = []string{"research", "ai", "benchmark"}
+		labels = []string{"research", "ai"}
+		if strings.Contains(lowerNorm, "github") || strings.Contains(lowerNorm, "copilot") {
+			labels = append(labels, "github", "copilot", "agents")
+		} else {
+			labels = append(labels, "benchmark")
+		}
 	case "StayPoint":
 		labels = []string{"staypoint"}
 		if strings.Contains(lowerNorm, "tui") || strings.Contains(lowerNorm, "bubbletea") {
@@ -579,12 +590,31 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 		role = "Security & Deep Remediation Fixer"
 	case strings.Contains(lowerNorm, "review") || strings.Contains(lowerNorm, "audit"):
 		role = "Senior PR Reviewer"
+	case strings.Contains(lowerNorm, "research") || strings.Contains(lowerNorm, "copilot") || strings.Contains(lowerNorm, "eval"):
+		role = "Research & Architecture Specialist"
 	case strings.Contains(lowerNorm, "wire") || strings.Contains(lowerNorm, "architecture") || strings.Contains(lowerNorm, "rfc") || strings.Contains(lowerNorm, "daemon"):
 		role = "Architecture Lead"
 	case strings.Contains(lowerNorm, "ci") || strings.Contains(lowerNorm, "lint") || strings.Contains(lowerNorm, "hook") || strings.Contains(lowerNorm, "test"):
 		role = "CI/CD Engineer"
 	case strings.Contains(lowerNorm, "release") || strings.Contains(lowerNorm, "deploy") || strings.Contains(lowerNorm, "package") || strings.Contains(lowerNorm, "homebrew"):
 		role = "DevOps & Release Engineer"
+	}
+
+	// Extract questions if present
+	var questions []string
+	reQuestion := regexp.MustCompile(`(?m)^\s*(\d+\.|\*|-)\s*(.+)`)
+	for _, match := range reQuestion.FindAllStringSubmatch(cleanComment, -1) {
+		if len(match) > 2 {
+			q := strings.TrimSpace(match[2])
+			if q != "" {
+				questions = append(questions, fmt.Sprintf("%s %s", match[1], q))
+			}
+		}
+	}
+
+	questionBlock := ""
+	if len(questions) > 0 {
+		questionBlock = fmt.Sprintf("\n\n## Key Inquiries & Questions\n%s", strings.Join(questions, "\n"))
 	}
 
 	// 7. Synthesize Markdown Description
@@ -596,7 +626,7 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 - **Target Organization:** %s
 - **Target Project:** %s
 - **Priority Tier:** %s
-- **Scope Summary:** %s
+- **Scope Summary:** %s%s
 
 ## Next Steps
 1. Triage codebase and inspect relevant source files.
@@ -604,7 +634,7 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 3. Validate against StayPoint Definition of Done under race detection.
 
 ## Original Request
-> %s`, title, org, project, strings.ToUpper(priority), title, cleanComment)
+> %s`, title, org, project, strings.ToUpper(priority), title, questionBlock, cleanComment)
 
 	return InferredTask{
 		Organization: org,
@@ -620,19 +650,18 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 // cleanImperativeTitle strips conversational dictation filler and ensures imperative mood under 72 chars.
 func cleanImperativeTitle(input, org string) string {
 	raw := strings.TrimSpace(input)
-	if idx := strings.Index(raw, "\n"); idx != -1 {
-		raw = raw[:idx]
-	}
 
-	// Repeatedly strip conversational preambles from the beginning
+	// Repeatedly strip conversational and meta-dictation preambles from beginning
 	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)^(?:can\s+you\s+(?:please\s+)?)?(?:open|create|add|make|file)\s+(?:a\s+)?(?:new\s+)?task\s+(?:under|for|in|titled|about)\s+[^\n\?]+[\?\.]?\s*`),
 		regexp.MustCompile(`(?i)^(?:hey|yo|hi|hello)\s+(?:vinny\s+|there\s+|assistant\s+)?`),
 		regexp.MustCompile(`(?i)^(?:so\s+)?basically\s+`),
-		regexp.MustCompile(`(?i)^(?:can\s+you|could\s+you|would\s+you)\s+`),
+		regexp.MustCompile(`(?i)^(?:can\s+you|could\s+you|would\s+you)\s+(?:please\s+)?`),
 		regexp.MustCompile(`(?i)^please\s+`),
 		regexp.MustCompile(`(?i)^(?:um+|uh+|er+|ah+)\s+`),
-		regexp.MustCompile(`(?i)^(?:in|for)\s+(?:sharepoint|staypoint|runelite|managed\s+solution)\s+`),
+		regexp.MustCompile(`(?i)^(?:in|for)\s+(?:sharepoint|staypoint|runelite|managed\s+solution|research)\s+`),
 		regexp.MustCompile(`(?i)^(?:we\s+(?:need\s+to|gotta|should|have\s+to)|i\s+(?:need\s+to|want\s+to|would\s+like\s+to))\s+`),
+		regexp.MustCompile(`(?i)^(?:the\s+)?task\s+(?:is\s+to|should\s+be\s+to|is)\s+`),
 	}
 
 	stripped := raw
@@ -645,6 +674,14 @@ func cleanImperativeTitle(input, org string) string {
 				changed = true
 			}
 		}
+	}
+
+	// Use first substantive line or sentence
+	if idx := strings.Index(stripped, "\n"); idx != -1 {
+		stripped = strings.TrimSpace(stripped[:idx])
+	}
+	if idx := strings.Index(stripped, ". "); idx != -1 && idx > 20 {
+		stripped = strings.TrimSpace(stripped[:idx])
 	}
 
 	// Strip conversational trailing clauses
@@ -661,7 +698,7 @@ func cleanImperativeTitle(input, org string) string {
 	}
 
 	// Ensure imperative verb prefix if missing
-	verbs := []string{"Fix", "Implement", "Add", "Update", "Refactor", "Clean", "Prune", "Run", "Resolve", "Audit", "Remove"}
+	verbs := []string{"Fix", "Implement", "Add", "Update", "Refactor", "Clean", "Prune", "Run", "Resolve", "Audit", "Remove", "Research", "Investigate", "Evaluate", "Benchmark", "Design"}
 	hasVerb := false
 	for _, v := range verbs {
 		if strings.HasPrefix(stripped, v) {
