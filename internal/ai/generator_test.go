@@ -336,4 +336,3 @@ func TestComplexDictationInference_Research_Benchmarking(t *testing.T) {
 		t.Errorf("expected title to strip 'we need to', got '%s'", task.Title)
 	}
 }
-
