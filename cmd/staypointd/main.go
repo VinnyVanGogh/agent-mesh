@@ -7,20 +7,20 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
-	"github.com/VinnyVanGogh/agent-mesh/internal/telemetry"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 )
 
 func main() {
-	log.Println("[meshd] Starting Agent-Mesh Background Daemon...")
+	log.Println("[staypointd] Starting StayPoint Background Daemon...")
 
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		log.Fatalf("[meshd] Failed to load config: %v", err)
+		log.Fatalf("[staypointd] Failed to load config: %v", err)
 	}
 
 	if err := config.EnsureDataDir(cfg); err != nil {
-		log.Fatalf("[meshd] Failed to ensure data dir: %v", err)
+		log.Fatalf("[staypointd] Failed to ensure data dir: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -31,25 +31,25 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		sig := <-sigChan
-		log.Printf("[meshd] Received signal %v, shutting down...", sig)
+		log.Printf("[staypointd] Received signal %v, shutting down...", sig)
 		cancel()
 	}()
 
 	// 1. Start Rate Limit Notifier
 	notifier := telemetry.NewNotifier()
 	go notifier.Start(ctx)
-	log.Println("[meshd] Rate limit monitoring active")
+	log.Println("[staypointd] Rate limit monitoring active")
 
 	// 2. Start File Watcher & Ingestion Engine
 	watcher, err := telemetry.NewWatcher(cfg)
 	if err != nil {
-		log.Fatalf("[meshd] Failed to initialize watcher: %v", err)
+		log.Fatalf("[staypointd] Failed to initialize watcher: %v", err)
 	}
 
-	log.Println("[meshd] Background daemon ready and running")
+	log.Println("[staypointd] Background daemon ready and running")
 	if err := watcher.Start(ctx); err != nil {
-		log.Printf("[meshd] Watcher exited with error: %v", err)
+		log.Printf("[staypointd] Watcher exited with error: %v", err)
 	}
 
-	log.Println("[meshd] Daemon shutdown complete.")
+	log.Println("[staypointd] Daemon shutdown complete.")
 }

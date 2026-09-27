@@ -34,10 +34,10 @@ func DefaultConfig() *Config {
 		home = "."
 	}
 
-	dataDir := filepath.Join(home, ".agent-mesh")
+	dataDir := filepath.Join(home, ".staypoint")
 	return &Config{
 		DataDir:         dataDir,
-		DBPath:          filepath.Join(dataDir, "mesh.db"),
+		DBPath:          filepath.Join(dataDir, "staypoint.db"),
 		TelemetryDBPath: filepath.Join(home, ".config", "token-telemetry", "telemetry.db"),
 		CompanyName:     "",
 		EngineerName:    "",
@@ -53,16 +53,18 @@ func DefaultConfig() *Config {
 	}
 }
 
-// LoadConfig loads configuration from ~/.agent-mesh/config.toml, then config.json if toml does not exist.
+// LoadConfig loads configuration from ~/.staypoint/config.toml, then config.json if toml does not exist.
 // If neither exists, DefaultConfig() is returned.
 func LoadConfig() (*Config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "."
 	}
+	
+	migrateLegacyDataDir(home)
 
 	cfg := DefaultConfig()
-	dataDir := filepath.Join(home, ".agent-mesh")
+	dataDir := filepath.Join(home, ".staypoint")
 	tomlPath := filepath.Join(dataDir, "config.toml")
 	jsonPath := filepath.Join(dataDir, "config.json")
 
@@ -78,6 +80,7 @@ func LoadConfig() (*Config, error) {
 	} else {
 		return cfg, nil
 	}
+
 
 	if isTOML {
 		if err := toml.Unmarshal(raw, cfg); err != nil {
@@ -118,4 +121,23 @@ func expandPath(path, home string) string {
 
 func EnsureDataDir(cfg *Config) error {
 	return os.MkdirAll(cfg.DataDir, 0755)
+}
+
+func migrateLegacyDataDir(home string) {
+	legacyDir := filepath.Join(home, ".agent-mesh")
+	newDir := filepath.Join(home, ".staypoint")
+
+	// If legacy dir exists and new dir doesn't, rename legacy to new
+	if _, err := os.Stat(legacyDir); err == nil {
+		if _, err := os.Stat(newDir); os.IsNotExist(err) {
+			os.Rename(legacyDir, newDir)
+			
+			// Try to rename mesh.db to staypoint.db
+			legacyDB := filepath.Join(newDir, "mesh.db")
+			newDB := filepath.Join(newDir, "staypoint.db")
+			if _, err := os.Stat(legacyDB); err == nil {
+				os.Rename(legacyDB, newDB)
+			}
+		}
+	}
 }

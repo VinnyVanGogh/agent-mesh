@@ -6,12 +6,12 @@ import (
 	"testing"
 
 	_ "modernc.org/sqlite"
-	"github.com/VinnyVanGogh/agent-mesh/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {
 	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "test-mesh.db")
+	dbPath := filepath.Join(tmpDir, "test-staypoint.db")
 	store, err := db.Open(dbPath)
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)
@@ -26,7 +26,7 @@ func TestTaskCRUD(t *testing.T) {
 	database := setupTestDB(t)
 
 	// 1. Create Task
-	task1, err := CreateTask(database, "Implement bridge package", "/path/to/personal/agent-mesh", "feature/bridge", "personal")
+	task1, err := CreateTask(database, "Implement bridge package", "/path/to/personal/staypoint", "feature/bridge", "personal")
 	if err != nil {
 		t.Fatalf("CreateTask failed: %v", err)
 	}

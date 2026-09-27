@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 )
 
 const (
@@ -580,8 +580,8 @@ func executeRemotely(ctx context.Context, host, remoteDir string, args []string,
 	}
 	cmdString := strings.Join(quoted, " ")
 
-	// Sanitize session name from repo directory (e.g. "mesh-api-service")
-	sessionName := "mesh-" + filepath.Base(remoteDir)
+	// Sanitize session name from repo directory (e.g. "staypoint-api-service")
+	sessionName := "staypoint-" + filepath.Base(remoteDir)
 	sessionName = strings.ReplaceAll(sessionName, ".", "-")
 	sessionName = strings.ReplaceAll(sessionName, ":", "-")
 
@@ -640,8 +640,8 @@ func deployRemoteSession(ctx context.Context, host string, session BridgeSession
 		return
 	}
 	deployScript := fmt.Sprintf(`
-mkdir -p ~/.agent-mesh /tmp/mesh-cache
-cat << 'EOF' > ~/.agent-mesh/bridge-session.json
+mkdir -p ~/.staypoint /tmp/staypoint-cache
+cat << 'EOF' > ~/.staypoint/bridge-session.json
 %s
 EOF
 `, string(data))
@@ -652,8 +652,8 @@ EOF
 
 func cleanupRemoteSession(ctx context.Context, host string) {
 	cleanupScript := `
-if [ -f ~/.agent-mesh/bridge-session.json ]; then
-    rm -f ~/.agent-mesh/bridge-session.json
+if [ -f ~/.staypoint/bridge-session.json ]; then
+    rm -f ~/.staypoint/bridge-session.json
 fi
 `
 	cmd := exec.CommandContext(ctx, "ssh", host, "bash -s")

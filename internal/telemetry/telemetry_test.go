@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 	_ "modernc.org/sqlite"
 )
 
 func TestIngestLineDynamicModelFamily(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "mesh-watcher-test-*")
+	tempDir, err := os.MkdirTemp("", "staypoint-watcher-test-*")
 	if err != nil {
 		t.Fatalf("temp dir error: %v", err)
 	}

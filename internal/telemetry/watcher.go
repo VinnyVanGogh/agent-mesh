@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 	_ "modernc.org/sqlite"
 )
 
@@ -103,7 +103,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 	_ = w.addRecursiveWatch(claudeProjects)
 	_ = w.addRecursiveWatch(agyBrain)
 
-	log.Printf("[meshd] Watcher active on %s and %s", claudeProjects, agyBrain)
+	log.Printf("[staypointd] Watcher active on %s and %s", claudeProjects, agyBrain)
 
 	saveTicker := time.NewTicker(30 * time.Second)
 	defer saveTicker.Stop()
@@ -137,7 +137,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			log.Printf("[meshd] Watcher error: %v", err)
+			log.Printf("[staypointd] Watcher error: %v", err)
 		}
 	}
 }

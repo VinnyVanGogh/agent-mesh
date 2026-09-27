@@ -1,4 +1,4 @@
-module github.com/VinnyVanGogh/agent-mesh
+module github.com/VinnyVanGogh/staypoint
 
 go 1.26.2
 

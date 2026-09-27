@@ -1,4 +1,4 @@
-# Agent-Mesh (`mesh`)
+# StayPoint (`staypoint`)
 
 [![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -9,7 +9,7 @@
 
 > **Autonomous AI Agent Ops, Quota Pacing & Cross-AI Context Platform for Claude Code and Google Antigravity / Gemini.**
 
-Agent-Mesh unifies disparate AI agent tooling into a single, high-performance static Go binary. It provides real-time multi-pool rate limit pacing, zero-clarification context handoffs across models, persistent remote SSH bridging with `tmux`, event-driven background token accounting, and print-ready executive ROI briefing generation ("The Boss Card") rendered in pure Go.
+StayPoint unifies disparate AI agent tooling into a single, high-performance static Go binary. It provides real-time multi-pool rate limit pacing, zero-clarification context handoffs across models, persistent remote SSH bridging with `tmux`, event-driven background token accounting, and print-ready executive ROI briefing generation ("The Boss Card") rendered in pure Go.
 
 ---
 
@@ -23,7 +23,7 @@ Agent-Mesh unifies disparate AI agent tooling into a single, high-performance st
                   │ ~/.claude/projects/*.jsonl                 │ ~/.gemini/brain/*.jsonl
                   ▼                                            ▼
       ┌─────────────────────────────────────────────────────────────────────┐
-      │                        meshd Background Daemon                      │
+      │                        staypointd Background Daemon                      │
       │  • Event-driven file watcher (fsnotify, <19MB RAM)                  │
       │  • Account attribution engine (Work vs Personal via machine_role)   │
       │  • Predictive rate-limit curve analyzer & system notifications      │
@@ -31,7 +31,7 @@ Agent-Mesh unifies disparate AI agent tooling into a single, high-performance st
                                          │
                                          ▼
       ┌─────────────────────────────────────────────────────────────────────┐
-      │                   Local SQLite Engine (mesh.db)                     │
+      │                   Local SQLite Engine (staypoint.db)                     │
       │  • Pure Go (modernc.org/sqlite, CGO_ENABLED=0), WAL mode, FTS5     │
       │  • Telemetry warehouse: 100k+ requests, model pricing, token cache  │
       │  • Active context state: task tracking, git diffs, session history │
@@ -58,7 +58,7 @@ Agent-Mesh unifies disparate AI agent tooling into a single, high-performance st
 
 ---
 
-## The Problem Agent-Mesh Solves
+## The Problem StayPoint Solves
 
 Modern AI software engineers work across multiple state-of-the-art coding agents. This fragmented workflow creates distinct operational headaches:
 
@@ -68,7 +68,7 @@ Modern AI software engineers work across multiple state-of-the-art coding agents
 4. **Corporate MDM Friction**: iCloud Continuity / Universal Clipboard is routinely disabled on corporate-managed laptops for data loss prevention (DLP), making cross-laptop context transfer painful.
 5. **The ROI Justification Gap**: Engineers deliver hundreds of thousands of dollars in software value using AI agents, but executives only see the monthly subscription invoice. Without empirical proof of leverage, subscription upgrades are delayed or denied.
 
-Agent-Mesh eliminates these pain points with a single, zero-dependency Go platform.
+StayPoint eliminates these pain points with a single, zero-dependency Go platform.
 
 ---
 
@@ -96,7 +96,7 @@ Inspects the current working directory, git origin, SSH reachability to corporat
 
 ### 🔄 Zero-Clarification Context Handoff Engine
 
-Run `mesh handoff` in any repository to synthesize an authoritative continuation prompt containing:
+Run `staypoint handoff` in any repository to synthesize an authoritative continuation prompt containing:
 
 - Target model prompt framing (Gemini or Claude).
 - Current repository name and active git branch.
@@ -109,10 +109,10 @@ Automatically copies to the system clipboard (`pbcopy` / `xclip`) and writes `/t
 
 > [!TIP]
 > **Zero Token Waste (Pure Go Engine)**
-> Unlike LLM-based context generation scripts, `mesh handoff` consumes **0 AI tokens** and costs **$0.00** to run. It queries `git` and SQLite directly in `<10ms` using compiled Go.
+> Unlike LLM-based context generation scripts, `staypoint handoff` consumes **0 AI tokens** and costs **$0.00** to run. It queries `git` and SQLite directly in `<10ms` using compiled Go.
 > - **Works When 100% Rate-Limited**: Because no LLM API calls are made, handoffs work flawlessly even when your Anthropic or Gemini quota is completely exhausted or you are offline.
 > - **Zero Hallucination**: Emits exact ground-truth git diffs and modified files rather than fuzzy AI summaries.
-> - **Preemptive 5-Hour Warning**: When your quota approaches 85% used (~15% left), `mesh hook prompt` automatically stages this handoff in your clipboard and alerts you before you run out of turns.
+> - **Preemptive 5-Hour Warning**: When your quota approaches 85% used (~15% left), `staypoint hook prompt` automatically stages this handoff in your clipboard and alerts you before you run out of turns.
 
 
 ### 🌉 Resilient Work Bridge & Remote `tmux` Persistence
@@ -120,7 +120,7 @@ Seamlessly bridges local workstations with enterprise hardware (e.g., `company-m
 
 - **Dynamic Path Translation**: Translates local mirror paths to remote enterprise repo structures.
 - **2-Second Latency Probe**: Tests SSH reachability with a fast timeout and latency benchmark.
-- **Persistent `tmux` Execution**: Automatically creates or attaches to named remote `tmux` sessions (`mesh-<repo>`). Dropping an SSH connection never kills running builds or agent tasks.
+- **Persistent `tmux` Execution**: Automatically creates or attaches to named remote `tmux` sessions (`staypoint-<repo>`). Dropping an SSH connection never kills running builds or agent tasks.
 - **Pre-Flight Transcript Sync**: Runs non-blocking `rsync` pulling remote agent transcripts into local telemetry before launching.
 - **Zero-Close Shell Fallback**: If the remote host is offline, falls back to local execution without closing the terminal window.
 
@@ -139,9 +139,9 @@ Pure Go PDF rendering engine powered by Chrome DevTools Protocol (`chromedp`). E
 Engineered for developers who use separate hardware for work and personal engineering:
 
 - **`machine_role = "work" | "personal" | "hybrid"`**: Enforces 100% account attribution on dedicated laptops without guessing folder paths.
-- **Network Sync (`mesh sync pull <remote>`)**: Syncs transcripts across machines over SSH or Tailscale.
-- **Air-Gapped Export/Import (`mesh sync export` & `mesh sync import`)**: Packages telemetry into compressed `.tar.gz` bundles. Move telemetry across corporate firewalls via AirDrop, Slack, or secure thumbdrives with idempotent SQLite merging.
-- **Networked Handoff (`mesh handoff --push` & `--pull`)**: Bypasses corporate MDM blocks on macOS Universal Clipboard by transferring handoff context directly over SSH.
+- **Network Sync (`staypoint sync pull <remote>`)**: Syncs transcripts across machines over SSH or Tailscale.
+- **Air-Gapped Export/Import (`staypoint sync export` & `staypoint sync import`)**: Packages telemetry into compressed `.tar.gz` bundles. Move telemetry across corporate firewalls via AirDrop, Slack, or secure thumbdrives with idempotent SQLite merging.
+- **Networked Handoff (`staypoint handoff --push` & `--pull`)**: Bypasses corporate MDM blocks on macOS Universal Clipboard by transferring handoff context directly over SSH.
 
 ---
 
@@ -153,28 +153,28 @@ Engineered for developers who use separate hardware for work and personal engine
 
 ```bash
 brew tap VinnyVanGogh/tap
-brew install mesh
+brew install staypoint
 ```
 
 #### From Source (Go 1.23+)
 
 ```bash
-git clone https://github.com/VinnyVanGogh/agent-mesh.git
-cd agent-mesh
-go build -o ~/.local/bin/mesh ./cmd/mesh
-go build -o ~/.local/bin/meshd ./cmd/meshd
+git clone https://github.com/VinnyVanGogh/staypoint.git
+cd staypoint
+go build -o ~/.local/bin/staypoint ./cmd/staypoint
+go build -o ~/.local/bin/staypointd ./cmd/staypointd
 ```
 
 Verify the installation:
 
 ```bash
-mesh version
-# mesh version 0.1.0
+staypoint version
+# staypoint version 0.1.0
 ```
 
 #### macOS Background Daemon Setup
 
-Install `meshd` as a user LaunchAgent:
+Install `staypointd` as a user LaunchAgent:
 
 ```bash
 cat << 'EOF' > ~/Library/LaunchAgents/com.agentmesh.daemon.plist
@@ -186,16 +186,16 @@ cat << 'EOF' > ~/Library/LaunchAgents/com.agentmesh.daemon.plist
     <string>com.agentmesh.daemon</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/opt/homebrew/bin/meshd</string>
+        <string>/opt/homebrew/bin/staypointd</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/meshd.log</string>
+    <string>/tmp/staypointd.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/meshd.err</string>
+    <string>/tmp/staypointd.err</string>
 </dict>
 </plist>
 EOF
@@ -208,7 +208,7 @@ launchctl load ~/Library/LaunchAgents/com.agentmesh.daemon.plist
 Add the shell evaluation hook to your `~/.zshrc` or `~/.bashrc`:
 
 ```bash
-eval "$(mesh init --shell)"
+eval "$(staypoint init --shell)"
 ```
 
 This registers the `ai` command wrapper, auto-routing evaluations, fast statusline rendering, and terminal-safe execution.
@@ -217,7 +217,7 @@ This registers the `ai` command wrapper, auto-routing evaluations, fast statusli
 
 ## Configuration
 
-Configuration is located at `~/.agent-mesh/config.toml` (or `~/.agent-mesh/config.json`):
+Configuration is located at `~/.staypoint/config.toml` (or `~/.staypoint/config.json`):
 
 ```toml
 # ==============================================================================
@@ -253,150 +253,150 @@ remote_host = "company-mbp"
 
 ## CLI Command Reference
 
-### Primary Interactive Launcher (`mesh`)
+### Primary Interactive Launcher (`staypoint`)
 
-Run `mesh` directly to launch the dynamically routed AI session (with Tokyo Night statusline and remote bridge integration):
+Run `staypoint` directly to launch the dynamically routed AI session (with Tokyo Night statusline and remote bridge integration):
 
 ```bash
 # Automatically launches optimal AI (remote Claude tmux, local Claude, or Antigravity agy)
-mesh
+staypoint
 
 # Pass prompts or flags directly to the routed AI
-mesh "implement new authentication flow"
-mesh --claude        # Force route to Claude Code
-mesh --gemini        # Force route to Antigravity Gemini (agy)
-mesh --dry-run       # Preview routed target, model, and bridge status without executing
-mesh --status        # Quick display of fleet status & quota table
+staypoint "implement new authentication flow"
+staypoint --claude        # Force route to Claude Code
+staypoint --gemini        # Force route to Antigravity Gemini (agy)
+staypoint --dry-run       # Preview routed target, model, and bridge status without executing
+staypoint --status        # Quick display of fleet status & quota table
 ```
 
 ### Pacing & Status
 
 ```bash
 # Display live fleet status, quota gauges, active tasks, and routing advice
-mesh status
+staypoint status
 
 # Render instantaneous statusline (<2ms) for prompt integration
-mesh statusline
+staypoint statusline
 
 # Get routing recommendation for current directory (human-readable)
-mesh route
+staypoint route
 
 # Output shell-evaluable routing recommendation
-mesh route --eval
+staypoint route --eval
 ```
 
 ### Reporting & Executive ROI
 
 ```bash
 # Generate Work Justification Memo ("The Boss Card") PDF
-mesh report --pdf --type work
+staypoint report --pdf --type work
 
 # Filter by date range (supports exact dates or relative ranges like 7d, 30d)
-mesh report --pdf --type work --since 2026-08-01 --until 2026-09-01
-mesh report --pdf --type combined --since 30d
+staypoint report --pdf --type work --since 2026-08-01 --until 2026-09-01
+staypoint report --pdf --type combined --since 30d
 
 # Generate Personal Claude Code Value Audit PDF
-mesh report --pdf --type personal
+staypoint report --pdf --type personal
 
 # Generate Antigravity & Gemini Native Report PDF
-mesh report --pdf --type gemini
+staypoint report --pdf --type gemini
 
 # Generate Combined Multi-AI Fleet Executive Report PDF
-mesh report --pdf --type combined
+staypoint report --pdf --type combined
 
 # Batch generate all 4 executive PDF reports to ~/Desktop
-mesh report --pdf --type all
+staypoint report --pdf --type all
 
 # Specify a custom destination path
-mesh report --pdf --type work -o ~/Documents/Boss-Card-Q1.pdf
+staypoint report --pdf --type work -o ~/Documents/Boss-Card-Q1.pdf
 ```
 
 ### Context Handoff
 
 ```bash
 # Generate handoff prompt to Gemini and copy to clipboard
-mesh handoff --to gemini
+staypoint handoff --to gemini
 
 # Generate handoff prompt with specific next step directive
-mesh handoff --to claude --step "Implement modernc.org/sqlite schema migration"
+staypoint handoff --to claude --step "Implement modernc.org/sqlite schema migration"
 
 # Push handoff context directly to remote machine and remote clipboard
-mesh handoff --push company-mbp
+staypoint handoff --push company-mbp
 
 # Pull handoff context from remote machine into local clipboard
-mesh handoff --pull company-mbp
+staypoint handoff --pull company-mbp
 
 # Claude Code hook: evaluates 5h quota, alerts at 85%+ used & stages handoff
-mesh hook prompt
+staypoint hook prompt
 ```
 
 ### Remote Bridge & Sessions
 
 ```bash
 # Check remote SSH connectivity, latency, and path translation
-mesh bridge check ~/Documents/dev/company/partner-center-api
+staypoint bridge check ~/Documents/dev/company/partner-center-api
 
 # Launch interactive Claude session in persistent remote tmux
-mesh bridge launch ~/Documents/dev/company/partner-center-api
+staypoint bridge launch ~/Documents/dev/company/partner-center-api
 
 # Execute remote build command inside remote tmux session
-mesh bridge launch ~/Documents/dev/company/partner-center-api go test ./...
+staypoint bridge launch ~/Documents/dev/company/partner-center-api go test ./...
 ```
 
 ### Multi-Machine Synchronization
 
 ```bash
 # Pull transcripts from remote host over SSH/Tailscale & ingest into local DB
-mesh sync pull company-mbp
+staypoint sync pull company-mbp
 
 # Export local telemetry database into portable compressed bundle
-mesh sync export -o ~/Desktop/work-telemetry.tar.gz
+staypoint sync export -o ~/Desktop/work-telemetry.tar.gz
 
 # Import telemetry bundle into local database (idempotent)
-mesh sync import ~/Desktop/work-telemetry.tar.gz
+staypoint sync import ~/Desktop/work-telemetry.tar.gz
 ```
 
 ### Task Tracking
 
 ```bash
 # List all active tasks
-mesh task list
+staypoint task list
 
 # List all tasks including completed
-mesh task list --all
+staypoint task list --all
 
 # Add a new active task
-mesh task add "Migrate rate-limit notifier to pure Go"
+staypoint task add "Migrate rate-limit notifier to pure Go"
 ```
 
 ---
 
 ## Statusline Integration
 
-Agent-Mesh renders a 5-line recessed Tokyo Night terminal widget in `<2ms` with zero CPU overhead. It dynamically detects whether you are active in Claude Code or Antigravity and switches badges, account indicators, and runway advice in real time.
+StayPoint renders a 5-line recessed Tokyo Night terminal widget in `<2ms` with zero CPU overhead. It dynamically detects whether you are active in Claude Code or Antigravity and switches badges, account indicators, and runway advice in real time.
 
 ### 1. Claude Code Integration
 
-Point `~/.claude/settings.json` statusline command to `mesh statusline`:
+Point `~/.claude/settings.json` statusline command to `staypoint statusline`:
 
 ```json
 {
   "statusline": {
-    "command": "mesh statusline"
+    "command": "staypoint statusline"
   }
 }
 ```
 
 ### 2. Google Antigravity / Gemini CLI Integration
 
-When using Antigravity (`agy`), `mesh statusline` is automatically displayed before agent execution via the shell integration:
+When using Antigravity (`agy`), `staypoint statusline` is automatically displayed before agent execution via the shell integration:
 
 ```bash
 # In ~/.zshrc or ~/.bashrc:
-eval "$(mesh init --shell)"
+eval "$(staypoint init --shell)"
 
 # Or alias directly for standalone agy usage:
-alias agy="mesh statusline && agy"
+alias agy="staypoint statusline && agy"
 ```
 
 The statusline dynamically displays:
@@ -409,15 +409,15 @@ The statusline dynamically displays:
 Display live agent fleet pacing directly in your tmux status bar. Add to `~/.tmux.conf`:
 
 ```tmux
-set -g status-right "#(mesh statusline)"
+set -g status-right "#(staypoint statusline)"
 set -g status-interval 10
 ```
 
 ### Visual Output (Tokyo Night Palette)
 
 ```
-󰛡 Gemini (Native) │ 🪪 personal@gmail.com │ ⚡ mesh:active
-📁 agent-mesh │ 🐙 main │ 🦴 CAVEMAN
+󰛡 Gemini (Native) │ 🪪 personal@gmail.com │ ⚡ staypoint:active
+📁 staypoint │ 🐙 main │ 🦴 CAVEMAN
 ▏███████████████░░░░░▕ session:75% ~25% left @4:12pm
 ▏████████████████░░░░▕ weekly:81% ~19% left @tue 8:11pm
 plan: route ▸ gemini-3.8-flash-high (agy) · fallback: claude-sonnet-4-6 · runway: 16 turns
@@ -431,7 +431,7 @@ Benchmark: **1.8ms** execution time (compiled pure Go, sub-process safe).
 
 ### 1. Pure Go SQLite (Zero CGO)
 
-Agent-Mesh uses `modernc.org/sqlite` rather than `mattn/go-sqlite3`. This allows compiling the binary with `CGO_ENABLED=0`, producing 100% statically linked binaries with zero dynamic library dependencies while retaining full SQLite WAL mode, memory concurrency, and FTS5 full-text search.
+StayPoint uses `modernc.org/sqlite` rather than `mattn/go-sqlite3`. This allows compiling the binary with `CGO_ENABLED=0`, producing 100% statically linked binaries with zero dynamic library dependencies while retaining full SQLite WAL mode, memory concurrency, and FTS5 full-text search.
 
 ### 2. Native Chrome DevTools Protocol (`chromedp`)
 
@@ -439,7 +439,7 @@ Executive PDF generation communicates directly with the local Google Chrome bina
 
 ### 3. Non-Blocking Tail Ingestion
 
-The `meshd` daemon maintains an event-driven file watcher (`fsnotify`) with byte-offset cursors stored in `~/.agent-mesh/ingest-cursors.json`. Transcripts are scanned using 4MB line buffers, extracting token metrics and attributing spend with zero noticeable CPU overhead (<0.1% CPU, 19MB RAM).
+The `staypointd` daemon maintains an event-driven file watcher (`fsnotify`) with byte-offset cursors stored in `~/.staypoint/ingest-cursors.json`. Transcripts are scanned using 4MB line buffers, extracting token metrics and attributing spend with zero noticeable CPU overhead (<0.1% CPU, 19MB RAM).
 
 ### 4. Idempotent Data Model
 
@@ -449,7 +449,7 @@ Every telemetry record generates a deterministic SHA-256 idempotency key based o
 
 ## Cross-Compilation & CI/CD
 
-Agent-Mesh includes full multi-platform release configurations via `.goreleaser.yaml` and automated GitHub Actions (`.github/workflows/ci.yml`):
+StayPoint includes full multi-platform release configurations via `.goreleaser.yaml` and automated GitHub Actions (`.github/workflows/ci.yml`):
 
 Supported build targets:
 
@@ -463,8 +463,8 @@ Supported build targets:
 
 ## Privacy & Local-First Manifesto
 
-- **100% Local**: All SQLite databases, telemetry records, cursors, and reports reside on your machine in `~/.agent-mesh/`.
-- **Zero Telemetry Phone-Home**: Agent-Mesh makes zero outbound network requests to third-party telemetry services, tracking servers, or analytics endpoints.
+- **100% Local**: All SQLite databases, telemetry records, cursors, and reports reside on your machine in `~/.staypoint/`.
+- **Zero Telemetry Phone-Home**: StayPoint makes zero outbound network requests to third-party telemetry services, tracking servers, or analytics endpoints.
 - **Secure Network Bridging**: Network operations only occur across user-configured SSH keys or Tailscale nodes.
 
 ---

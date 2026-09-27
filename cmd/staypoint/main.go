@@ -14,23 +14,23 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
-	meshContext "github.com/VinnyVanGogh/agent-mesh/internal/context"
-	"github.com/VinnyVanGogh/agent-mesh/internal/db"
-	"github.com/VinnyVanGogh/agent-mesh/internal/reporting"
-	"github.com/VinnyVanGogh/agent-mesh/internal/router"
-	meshSync "github.com/VinnyVanGogh/agent-mesh/internal/sync"
-	"github.com/VinnyVanGogh/agent-mesh/internal/telemetry"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
+	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/reporting"
+	"github.com/VinnyVanGogh/staypoint/internal/router"
+	meshSync "github.com/VinnyVanGogh/staypoint/internal/sync"
+	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 )
 
 var (
 	version = "0.1.0"
 	cfg     *config.Config
 	rootCmd = &cobra.Command{
-		Use:     "mesh [command|args...]",
+		Use:     "staypoint [command|args...]",
 		Version: version,
-		Short:   "Agent-Mesh: Autonomous AI Agent Ops, Quota Pacing & Context Platform",
+		Short:   "StayPoint: Autonomous AI Agent Ops, Quota Pacing & Context Platform",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			var err error
 			cfg, err = config.LoadConfig()
@@ -48,9 +48,9 @@ var (
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print the agent-mesh version",
+	Short: "Print the staypoint version",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("mesh version %s\n", version)
+		fmt.Printf("staypoint version %s\n", version)
 	},
 }
 
@@ -58,7 +58,7 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Display real-time quota meters, active task context, and routing recommendations",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("\033[1;36m[Agent-Mesh :: Fleet Status & Pacing Engine]\033[0m")
+		fmt.Println("\033[1;36m[StayPoint :: Fleet Status & Pacing Engine]\033[0m")
 		fmt.Printf("  • Time:                    %s\n", time.Now().Format("03:04 PM MST"))
 
 		pacerState, _ := router.LoadPacerState()
@@ -189,7 +189,7 @@ var routeCmd = &cobra.Command{
 		}
 
 		// Human-readable output
-		fmt.Println("\033[1;36m[Agent-Mesh :: Dynamic Router]\033[0m")
+		fmt.Println("\033[1;36m[StayPoint :: Dynamic Router]\033[0m")
 		fmt.Printf("  • Workspace:          %s\n", decision.Workspace)
 		if decision.IsWorkRepo {
 			fmt.Printf("  • Context Type:       \033[1;32mEnterprise Work Repo\033[0m (%s)\n", decision.WorkRepoSource)
@@ -260,7 +260,7 @@ var reportCmd = &cobra.Command{
 		untilFlag, _ := cmd.Flags().GetString("until")
 
 		if !pdfFlag {
-			fmt.Println("Usage: mesh report --pdf [--type work|personal|gemini|combined|all] [--since <date>] [--until <date>] [--output <path>]")
+			fmt.Println("Usage: staypoint report --pdf [--type work|personal|gemini|combined|all] [--since <date>] [--until <date>] [--output <path>]")
 			fmt.Println("  --type work        Executive Justification Memo (Boss Card)")
 			fmt.Println("  --type personal    Personal Claude Code Value Audit (102k+ turns, $7,500+ value)")
 			fmt.Println("  --type gemini      Antigravity & Gemini Native Report (Flash, Pro, Brain logs, Reviews)")
@@ -284,7 +284,7 @@ var reportCmd = &cobra.Command{
 
 		if strings.ToLower(reportType) == "all" {
 			types := []string{"work", "personal", "gemini", "combined"}
-			fmt.Println("\033[1;36m[Agent-Mesh]\033[0m Generating all 4 executive PDF reports...")
+			fmt.Println("\033[1;36m[StayPoint]\033[0m Generating all 4 executive PDF reports...")
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
 
@@ -306,7 +306,7 @@ var reportCmd = &cobra.Command{
 			outFlag = filepath.Join(home, "Desktop", reporting.DefaultReportFilename(reportType, cfg))
 		}
 
-		fmt.Printf("\033[1;36m[Agent-Mesh]\033[0m Rendering \033[1;33m%s\033[0m report via Chrome CDP...\n", reportType)
+		fmt.Printf("\033[1;36m[StayPoint]\033[0m Rendering \033[1;33m%s\033[0m report via Chrome CDP...\n", reportType)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -323,37 +323,37 @@ var reportCmd = &cobra.Command{
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize agent-mesh directories and SQLite storage engine",
+	Short: "Initialize staypoint directories and SQLite storage engine",
 	Run: func(cmd *cobra.Command, args []string) {
 		shellFlag, _ := cmd.Flags().GetBool("shell")
 		if shellFlag {
-			fmt.Print(`# Agent-Mesh Shell Integration
-# Add to ~/.zshrc or ~/.bashrc: eval "$(mesh init --shell)"
+			fmt.Print(`# StayPoint Shell Integration
+# Add to ~/.zshrc or ~/.bashrc: eval "$(staypoint init --shell)"
 
-alias ai-status="mesh status"
-alias ai-memo="mesh report --pdf --type work"
-alias ai-report="mesh report --pdf --type combined"
-alias ai-personal="mesh report --pdf --type personal"
-alias ai-gemini="mesh report --pdf --type gemini"
-alias ai-all="mesh report --pdf --type all"
-alias agy-status="mesh statusline"
-alias ai-shot="mesh screenshot"
-alias ai-snap="mesh screenshot -i"
-alias ai-pull-shot="mesh screenshot --pull"
-alias ai-scp="mesh scp"
+alias ai-status="staypoint status"
+alias ai-memo="staypoint report --pdf --type work"
+alias ai-report="staypoint report --pdf --type combined"
+alias ai-personal="staypoint report --pdf --type personal"
+alias ai-gemini="staypoint report --pdf --type gemini"
+alias ai-all="staypoint report --pdf --type all"
+alias agy-status="staypoint statusline"
+alias ai-shot="staypoint screenshot"
+alias ai-snap="staypoint screenshot -i"
+alias ai-pull-shot="staypoint screenshot --pull"
+alias ai-scp="staypoint scp"
 
 ai() {
-  eval "$(mesh route "$PWD" --eval 2>/dev/null)"
+  eval "$(staypoint route "$PWD" --eval 2>/dev/null)"
   local TARGET_MODEL="${MESH_ROUTE_MODEL:-gemini-3.8-flash-high}"
   local TARGET_CMD="${MESH_ROUTE_COMMAND:-agy}"
 
-  echo -e "\033[1;36m[Agent-Mesh]\033[0m Target: \033[1;32m$TARGET_MODEL\033[0m ($TARGET_CMD)"
+  echo -e "\033[1;36m[StayPoint]\033[0m Target: \033[1;32m$TARGET_MODEL\033[0m ($TARGET_CMD)"
   echo -e "\033[0;33m[Context]\033[0m $MESH_ROUTE_REASON"
 
-  mesh statusline
+  staypoint statusline
 
   if [[ "$MESH_ROUTE_TARGET" == "remote-claude" ]]; then
-    mesh bridge launch "$PWD" "$@"
+    staypoint bridge launch "$PWD" "$@"
   elif [[ "$TARGET_CMD" == "claude" ]]; then
     command claude "$@"
   else
@@ -375,7 +375,7 @@ claude() {
   if [[ "$force" == true ]]; then
     command claude "${clean_args[@]}"
   else
-    mesh "${clean_args[@]}"
+    staypoint "${clean_args[@]}"
   fi
 }
 
@@ -393,7 +393,7 @@ agy() {
   if [[ "$force" == true ]]; then
     command agy "${clean_args[@]}"
   else
-    mesh "${clean_args[@]}"
+    staypoint "${clean_args[@]}"
   fi
 }
 `)
@@ -407,15 +407,15 @@ agy() {
 
 		store, err := db.Open(cfg.DBPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error initializing mesh.db: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error initializing staypoint.db: %v\n", err)
 			os.Exit(1)
 		}
 		defer store.Close()
 
-		fmt.Printf("\033[1;32m✔ Agent-Mesh initialized at: %s\033[0m\n", cfg.DataDir)
+		fmt.Printf("\033[1;32m✔ StayPoint initialized at: %s\033[0m\n", cfg.DataDir)
 		fmt.Printf("✔ SQLite database active with WAL mode: %s\n", cfg.DBPath)
 		fmt.Println("\nTo install shell aliases & auto-router, add this to your ~/.zshrc:")
-		fmt.Println("  \033[1;36meval \"$(mesh init --shell)\"\033[0m")
+		fmt.Println("  \033[1;36meval \"$(staypoint init --shell)\"\033[0m")
 	},
 }
 
@@ -443,7 +443,7 @@ var bridgeCheckCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Bridge check error: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("\033[1;36m[Agent-Mesh WorkBridge]\033[0m\n")
+		fmt.Printf("\033[1;36m[StayPoint WorkBridge]\033[0m\n")
 		fmt.Printf("  • Local Path:   %s\n", res.LocalPath)
 		fmt.Printf("  • Is Work Repo: %v\n", res.IsWorkRepo)
 		fmt.Printf("  • Remote Host:  %s\n", res.RemoteHost)
@@ -671,7 +671,7 @@ var handoffCmd = &cobra.Command{
 		fmt.Printf("  • Target Model: \033[1;36m%s\033[0m\n", record.TargetModel)
 		fmt.Printf("  • Project:      %s (branch: %s)\n", record.RepoName, record.GitBranch)
 		fmt.Printf("  • Files:        %d modified\n", len(record.ModifiedFiles))
-		fmt.Printf("  • State saved:  ~/.agent-mesh/handoff.json\n")
+		fmt.Printf("  • State saved:  ~/.staypoint/handoff.json\n")
 		fmt.Printf("  • Prompt saved: /tmp/ai-handoff.md\n")
 
 		// If --push is requested, push to remote host
@@ -738,7 +738,7 @@ var syncExportCmd = &cobra.Command{
 		fmt.Printf("  • Archive:     %s\n", dest)
 		fmt.Printf("  • Records:     %d\n", count)
 		fmt.Printf("  • Machine:     %s\n", cfg.MachineRole)
-		fmt.Printf("  • To import:   mesh sync import %s\n", dest)
+		fmt.Printf("  • To import:   staypoint sync import %s\n", dest)
 	},
 }
 
@@ -759,7 +759,7 @@ var syncImportCmd = &cobra.Command{
 
 var taskCmd = &cobra.Command{
 	Use:   "task",
-	Short: "Manage development tasks and context in mesh.db",
+	Short: "Manage development tasks and context in staypoint.db",
 }
 
 var taskListCmd = &cobra.Command{
@@ -778,7 +778,7 @@ var taskListCmd = &cobra.Command{
 			fmt.Fprintf(os.Stderr, "Error listing tasks: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Println("\033[1;36m[Agent-Mesh Tasks]\033[0m")
+		fmt.Println("\033[1;36m[StayPoint Tasks]\033[0m")
 		if len(tasks) == 0 {
 			fmt.Println("  No active tasks found.")
 			return
@@ -822,7 +822,7 @@ var taskAddCmd = &cobra.Command{
 
 var hookCmd = &cobra.Command{
 	Use:   "hook",
-	Short: "Agent-Mesh lifecycle and prompt hooks for Claude Code and Antigravity",
+	Short: "StayPoint lifecycle and prompt hooks for Claude Code and Antigravity",
 }
 
 var hookPromptCmd = &cobra.Command{
@@ -908,7 +908,7 @@ func handleHookPrompt() {
 
 		if triggeredPool != nil {
 			cwd, _ := os.Getwd()
-			debounceFile := filepath.Join(os.TempDir(), fmt.Sprintf("mesh-prelock-warned-u%d.ts", os.Getuid()))
+			debounceFile := filepath.Join(os.TempDir(), fmt.Sprintf("staypoint-prelock-warned-u%d.ts", os.Getuid()))
 			shouldNotify := true
 			if stat, err := os.Stat(debounceFile); err == nil {
 				if time.Since(stat.ModTime()) < 15*time.Minute {
@@ -931,12 +931,12 @@ func handleHookPrompt() {
 				})
 
 				telemetry.SendNotification(
-					"[Agent-Mesh] Quota Limit Warning (15% left)",
+					"[StayPoint] Quota Limit Warning (15% left)",
 					fmt.Sprintf("%s %s. Handoff staged in clipboard. Switch to Gemini (/model gemini-3.8-flash-high or open agy and paste).", triggeredPool.Name, warningReason),
 				)
 			}
 
-			notices = append(notices, fmt.Sprintf("⚠️ [AGENT-MESH QUOTA NOTICE]: %s %s. Agent-Mesh has pre-staged a zero-token context handoff snapshot in your system clipboard and /tmp/ai-handoff.md. Remind the user to prepare to switch to Gemini (/model gemini-3.8-flash-high or open Antigravity 'agy' and paste) before running out of turns.", triggeredPool.Name, warningReason))
+			notices = append(notices, fmt.Sprintf("⚠️ [AGENT-MESH QUOTA NOTICE]: %s %s. StayPoint has pre-staged a zero-token context handoff snapshot in your system clipboard and /tmp/ai-handoff.md. Remind the user to prepare to switch to Gemini (/model gemini-3.8-flash-high or open Antigravity 'agy' and paste) before running out of turns.", triggeredPool.Name, warningReason))
 		}
 	}
 
@@ -1004,7 +1004,7 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 	_ = router.RenderStatusline(os.Stdout, nil)
 
 	if dryRun {
-		fmt.Printf("\n\033[1;36m[Agent-Mesh :: Dry Run]\033[0m\n")
+		fmt.Printf("\n\033[1;36m[StayPoint :: Dry Run]\033[0m\n")
 		fmt.Printf("  • Tool:        %s\n", targetTool)
 		fmt.Printf("  • Model:       %s\n", targetModel)
 		fmt.Printf("  • Remote Work: %t\n", isRemoteWork)

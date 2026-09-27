@@ -21,7 +21,7 @@ type BridgeSession struct {
 
 var bridgeSessionPathOverride string
 
-// DefaultSessionPath returns the path to ~/.agent-mesh/bridge-session.json.
+// DefaultSessionPath returns the path to ~/.staypoint/bridge-session.json.
 func DefaultSessionPath() string {
 	if bridgeSessionPathOverride != "" {
 		return bridgeSessionPathOverride
@@ -30,7 +30,7 @@ func DefaultSessionPath() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".agent-mesh", "bridge-session.json")
+	return filepath.Join(home, ".staypoint", "bridge-session.json")
 }
 
 // SaveBridgeSession saves session metadata locally.

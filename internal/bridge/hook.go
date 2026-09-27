@@ -36,7 +36,7 @@ func ExtractClientPaths(prompt string, clientHome string) []string {
 }
 
 // ProcessPromptForClientPaths checks for active bridge session, extracts any client paths
-// in the prompt, fetches them automatically to /tmp/mesh-cache, and returns context guidance for Claude.
+// in the prompt, fetches them automatically to /tmp/staypoint-cache, and returns context guidance for Claude.
 func ProcessPromptForClientPaths(ctx context.Context, prompt string) (string, []string, error) {
 	session, err := LoadBridgeSession()
 	if err != nil || session == nil || !session.Active || session.ClientHome == "" {

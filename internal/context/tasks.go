@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 )
 
-// Task represents an engineering task tracked within SQLite mesh.db.
+// Task represents an engineering task tracked within SQLite staypoint.db.
 type Task struct {
 	ID          string  `json:"id"`
 	Name        string  `json:"name"`

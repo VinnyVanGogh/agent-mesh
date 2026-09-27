@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 )
 
 type RouteTarget string
@@ -111,13 +111,13 @@ func IsWorkRepo(cwd string) (bool, string, error) {
 }
 
 // CheckSSHConnectivity tests whether the remote host is reachable via SSH.
-// Uses a fast cached result (/tmp/agent-mesh-ssh-<host>.cache) if within 20s.
+// Uses a fast cached result (/tmp/staypoint-ssh-<host>.cache) if within 20s.
 func CheckSSHConnectivity(ctx context.Context, host string) bool {
 	if host == "" {
 		host = "company-mbp"
 	}
 
-	cachePath := filepath.Join(os.TempDir(), fmt.Sprintf("agent-mesh-ssh-%s.cache", host))
+	cachePath := filepath.Join(os.TempDir(), fmt.Sprintf("staypoint-ssh-%s.cache", host))
 	if info, err := os.Stat(cachePath); err == nil {
 		if time.Since(info.ModTime()) < 20*time.Second {
 			content, _ := os.ReadFile(cachePath)

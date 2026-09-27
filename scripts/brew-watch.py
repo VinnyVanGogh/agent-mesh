@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Watch Agent-Mesh's journey through CI/CD, GitHub Release, and Homebrew Tap.
+"""Watch StayPoint's journey through CI/CD, GitHub Release, and Homebrew Tap.
 
 Pipeline Stages:
     1. Tag Pushed       -> v0.1.0 git tag detected
     2. CI/CD Matrix     -> GitHub Actions builds & tests passing
     3. GoReleaser       -> Multi-platform binaries attached to GitHub Release
-    4. Tap Synced       -> Formula/mesh.rb committed to VinnyVanGogh/homebrew-tap
+    4. Tap Synced       -> Formula/staypoint.rb committed to VinnyVanGogh/homebrew-tap
     5. LIVE ON BREW     -> 'brew tap' resolves and formula is installable!
 
 Usage:
@@ -22,7 +22,7 @@ import time
 import urllib.error
 import urllib.request
 
-REPO_MAIN = "VinnyVanGogh/agent-mesh"
+REPO_MAIN = "VinnyVanGogh/staypoint"
 REPO_TAP = "VinnyVanGogh/homebrew-tap"
 TAG = "v0.1.0"
 VERSION = "0.1.0"
@@ -82,7 +82,7 @@ def check_github_release():
         return None
 
 def check_tap_formula():
-    raw = run_cmd(["gh", "api", f"repos/{REPO_TAP}/contents/Formula/mesh.rb"])
+    raw = run_cmd(["gh", "api", f"repos/{REPO_TAP}/contents/Formula/staypoint.rb"])
     if not raw:
         return False
     try:
@@ -93,13 +93,13 @@ def check_tap_formula():
 
 def check_brew_live():
     # Test if brew can see the formula in the tap
-    info = run_cmd(["brew", "info", f"{REPO_TAP}/mesh"])
-    if info and "mesh" in info and VERSION in info:
+    info = run_cmd(["brew", "info", f"{REPO_TAP}/staypoint"])
+    if info and "staypoint" in info and VERSION in info:
         return True
     return False
 
 def render_status():
-    print("\033[1;36m[Agent-Mesh :: Release & Homebrew Pipeline Monitor]\033[0m")
+    print("\033[1;36m[StayPoint :: Release & Homebrew Pipeline Monitor]\033[0m")
     print(f"  • Target Tag:    \033[1;33m{TAG}\033[0m")
     print(f"  • Source Repo:   https://github.com/{REPO_MAIN}")
     print(f"  • Tap Repo:      https://github.com/{REPO_TAP}")
@@ -134,7 +134,7 @@ def render_status():
     # Stage 4: Live on Brew
     brew_ok = check_brew_live()
     if brew_ok:
-        brew_icon = "\033[1;32m🚀 LIVE ON BREW! ('brew install mesh')\033[0m"
+        brew_icon = "\033[1;32m🚀 LIVE ON BREW! ('brew install staypoint')\033[0m"
     else:
         brew_icon = "\033[1;33m⏳ PROPAGATING\033[0m"
     print(f"  4. Homebrew Install: {brew_icon}")
@@ -147,7 +147,7 @@ def main():
         render_status()
         return
 
-    print("\033[1;32mWatching release pipeline until Agent-Mesh is live on Homebrew...\033[0m")
+    print("\033[1;32mWatching release pipeline until StayPoint is live on Homebrew...\033[0m")
     last_stage = 0
 
     while True:
@@ -155,19 +155,19 @@ def main():
         ci, rel, tap_ok, brew_ok = render_status()
 
         if ci.get("conclusion") == "success" and last_stage < 1:
-            notify("Agent-Mesh CI Passed", "GitHub Actions test matrix passed 100%!")
+            notify("StayPoint CI Passed", "GitHub Actions test matrix passed 100%!")
             last_stage = 1
 
         if rel and rel.get("count", 0) > 0 and last_stage < 2:
-            notify("Agent-Mesh Release Built", f"v0.1.0 release published with {rel['count']} binaries!")
+            notify("StayPoint Release Built", f"v0.1.0 release published with {rel['count']} binaries!")
             last_stage = 2
 
         if brew_ok:
-            notify("Agent-Mesh is LIVE!", "Run 'brew install mesh' now!")
-            print("\033[1;32m🎉 Pipeline Complete! Agent-Mesh is live on Homebrew.\033[0m")
+            notify("StayPoint is LIVE!", "Run 'brew install staypoint' now!")
+            print("\033[1;32m🎉 Pipeline Complete! StayPoint is live on Homebrew.\033[0m")
             print("To install:")
             print(f"  \033[1;36mbrew tap {REPO_TAP}\033[0m")
-            print("  \033[1;36mbrew install mesh\033[0m\n")
+            print("  \033[1;36mbrew install staypoint\033[0m\n")
             break
 
         time.sleep(8)

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const DefaultMeshCacheDir = "/tmp/mesh-cache"
+const DefaultMeshCacheDir = "/tmp/staypoint-cache"
 
 // FetchClientFile downloads a file from the client machine over the reverse bridge tunnel.
 func FetchClientFile(ctx context.Context, clientPath string, targetDest string) (string, error) {

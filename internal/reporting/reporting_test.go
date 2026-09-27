@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 	_ "modernc.org/sqlite"
 )
 
@@ -294,7 +294,7 @@ func createMockTelemetryDB(t *testing.T) string {
 	}
 
 	// Insert review outcomes & subagent runs
-	_, _ = db.Exec(`INSERT INTO review_outcomes (repo, severity) VALUES ('agent-mesh', 1), ('agent-mesh', 0), ('vps-hr', 2)`)
+	_, _ = db.Exec(`INSERT INTO review_outcomes (repo, severity) VALUES ('staypoint', 1), ('staypoint', 0), ('vps-hr', 2)`)
 	_, _ = db.Exec(`INSERT INTO subagent_runs (task_id) VALUES ('task-101'), ('task-102'), ('task-103')`)
 
 	return dbPath

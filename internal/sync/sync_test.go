@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 	_ "modernc.org/sqlite"
 )
 
 func TestExportAndImportBundle(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "mesh-sync-test-*")
+	tempDir, err := os.MkdirTemp("", "staypoint-sync-test-*")
 	if err != nil {
 		t.Fatalf("failed to create temp dir: %v", err)
 	}

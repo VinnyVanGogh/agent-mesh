@@ -6,7 +6,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 	"github.com/spf13/cobra"
 )
 
@@ -17,9 +17,9 @@ var tunnelCmd = &cobra.Command{
 	Long: `Establish dev server port forwarding from the remote enterprise host to local machine.
 
 Examples:
-  mesh tunnel 3000                 # forwards remote 3000 -> localhost:3000
-  mesh tunnel 5173 5173 --open     # forwards Vite and opens browser
-  mesh tunnel 8080 --host workbox  # forwards custom remote host 8080 -> 8080`,
+  staypoint tunnel 3000                 # forwards remote 3000 -> localhost:3000
+  staypoint tunnel 5173 5173 --open     # forwards Vite and opens browser
+  staypoint tunnel 8080 --host workbox  # forwards custom remote host 8080 -> 8080`,
 	Args: cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
 		remotePort, err := strconv.Atoi(args[0])

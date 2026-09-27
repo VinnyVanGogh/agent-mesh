@@ -109,7 +109,7 @@ func TestCheckRemoteGitGuard_CleanRepo(t *testing.T) {
 	}
 
 	out := captureStdout(func() {
-		err := CheckRemoteGitGuard(context.Background(), "company-mbp", "/Users/remote/work/agent-mesh", "/Users/local/work/agent-mesh")
+		err := CheckRemoteGitGuard(context.Background(), "company-mbp", "/Users/remote/work/staypoint", "/Users/local/work/staypoint")
 		if err != nil {
 			t.Errorf("expected nil error on clean repo, got: %v", err)
 		}
@@ -172,14 +172,14 @@ func TestCheckRemoteGitGuard_Uncommitted_Push(t *testing.T) {
 	pushCalled := false
 	RunRemoteGitPushFunc = func(ctx context.Context, host, remoteDir string) error {
 		pushCalled = true
-		if host != "company-mbp" || remoteDir != "/Users/remote/work/agent-mesh" {
+		if host != "company-mbp" || remoteDir != "/Users/remote/work/staypoint" {
 			t.Errorf("unexpected push args: host=%s, remoteDir=%s", host, remoteDir)
 		}
 		return nil
 	}
 
 	out := captureStdout(func() {
-		err := CheckRemoteGitGuard(context.Background(), "company-mbp", "/Users/remote/work/agent-mesh", "/Users/local/work/agent-mesh")
+		err := CheckRemoteGitGuard(context.Background(), "company-mbp", "/Users/remote/work/staypoint", "/Users/local/work/staypoint")
 		if err != nil {
 			t.Errorf("expected nil error, got: %v", err)
 		}
@@ -193,7 +193,7 @@ func TestCheckRemoteGitGuard_Uncommitted_Push(t *testing.T) {
 	if !strings.Contains(out, "⚠️  [bridge]") {
 		t.Errorf("expected alert box header in output, got: %s", out)
 	}
-	if !strings.Contains(out, "Remote repo 'agent-mesh' on company-mbp has uncommitted/unpushed changes!") {
+	if !strings.Contains(out, "Remote repo 'staypoint' on company-mbp has uncommitted/unpushed changes!") {
 		t.Errorf("expected repo alert in output, got: %s", out)
 	}
 	if !strings.Contains(out, "Branch:") || !strings.Contains(out, "feature/cool") {
@@ -237,14 +237,14 @@ func TestCheckRemoteGitGuard_Unpushed_Sync(t *testing.T) {
 	syncCalled := false
 	RunGitGuardSyncFunc = func(ctx context.Context, host, remoteDir, localDir string) error {
 		syncCalled = true
-		if host != "company-mbp" || remoteDir != "/Users/remote/work/agent-mesh" || localDir != "/Users/local/work/agent-mesh" {
+		if host != "company-mbp" || remoteDir != "/Users/remote/work/staypoint" || localDir != "/Users/local/work/staypoint" {
 			t.Errorf("unexpected sync args: host=%s, remoteDir=%s, localDir=%s", host, remoteDir, localDir)
 		}
 		return nil
 	}
 
 	out := captureStdout(func() {
-		err := CheckRemoteGitGuard(context.Background(), "company-mbp", "/Users/remote/work/agent-mesh", "/Users/local/work/agent-mesh")
+		err := CheckRemoteGitGuard(context.Background(), "company-mbp", "/Users/remote/work/staypoint", "/Users/local/work/staypoint")
 		if err != nil {
 			t.Errorf("expected nil error, got: %v", err)
 		}
@@ -285,7 +285,7 @@ func TestCheckRemoteGitGuard_Ignore(t *testing.T) {
 	}
 
 	out := captureStdout(func() {
-		err := CheckRemoteGitGuard(context.Background(), "company-mbp", "/Users/remote/work/agent-mesh", "/Users/local/work/agent-mesh")
+		err := CheckRemoteGitGuard(context.Background(), "company-mbp", "/Users/remote/work/staypoint", "/Users/local/work/staypoint")
 		if err != nil {
 			t.Errorf("expected nil error, got: %v", err)
 		}
@@ -317,7 +317,7 @@ func TestCheckRemoteGitGuard_NonInteractive(t *testing.T) {
 	}
 
 	out := captureStdout(func() {
-		err := CheckRemoteGitGuard(context.Background(), "company-mbp", "/Users/remote/work/agent-mesh", "/Users/local/work/agent-mesh")
+		err := CheckRemoteGitGuard(context.Background(), "company-mbp", "/Users/remote/work/staypoint", "/Users/local/work/staypoint")
 		if err != nil {
 			t.Errorf("expected nil error, got: %v", err)
 		}

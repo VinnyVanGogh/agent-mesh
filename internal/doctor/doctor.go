@@ -16,12 +16,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 	_ "modernc.org/sqlite"
 )
 
-// CurrentVersion is the default local version of agent-mesh.
+// CurrentVersion is the default local version of staypoint.
 var CurrentVersion = "0.1.0"
 
 // Status represents the health status of a check.
@@ -155,12 +155,12 @@ func NewFleetDoctor(opts DoctorOptions) *FleetDoctor {
 
 	d.RemoteVersionFunc = func(ctx context.Context, host string) (string, time.Duration, error) {
 		start := time.Now()
-		out, err := d.execSSH(ctx, host, "~/.local/bin/mesh version")
+		out, err := d.execSSH(ctx, host, "~/.local/bin/staypoint version")
 		dur := time.Since(start)
 		if err != nil {
 			return "", dur, err
 		}
-		// Expect e.g. "mesh version 0.1.0"
+		// Expect e.g. "staypoint version 0.1.0"
 		fields := strings.Fields(strings.TrimSpace(out))
 		if len(fields) > 0 {
 			return fields[len(fields)-1], dur, nil
@@ -182,7 +182,7 @@ func NewFleetDoctor(opts DoctorOptions) *FleetDoctor {
 			body, _ := io.ReadAll(resp.Body)
 			dur := time.Since(start)
 			if strings.TrimSpace(string(body)) == "pong" {
-				return true, "Loopback port 4119 active (mesh reverse bridge server running)", dur, nil
+				return true, "Loopback port 4119 active (staypoint reverse bridge server running)", dur, nil
 			}
 		}
 
@@ -326,7 +326,7 @@ func (d *FleetDoctor) Run(ctx context.Context) (*Report, error) {
 
 	runAll := !d.opts.ClaudeOnly && !d.opts.GeminiOnly && !d.opts.RemoteOnly
 
-	// Section 1: Agent-Mesh Infrastructure
+	// Section 1: StayPoint Infrastructure
 	if runAll {
 		report.Sections = append(report.Sections, d.checkInfrastructure(ctx))
 	}
@@ -368,11 +368,11 @@ func (d *FleetDoctor) Run(ctx context.Context) (*Report, error) {
 	return report, nil
 }
 
-// checkInfrastructure runs Section a) Agent-Mesh Infrastructure diagnostics.
+// checkInfrastructure runs Section a) StayPoint Infrastructure diagnostics.
 func (d *FleetDoctor) checkInfrastructure(ctx context.Context) SectionResult {
 	sec := SectionResult{
 		ID:     "infrastructure",
-		Name:   "Agent-Mesh Infrastructure",
+		Name:   "StayPoint Infrastructure",
 		Status: StatusOK,
 		Checks: make([]CheckResult, 0),
 	}
@@ -392,12 +392,12 @@ func (d *FleetDoctor) checkInfrastructure(ctx context.Context) SectionResult {
 			chkVersion.Latency = lat
 			if err != nil {
 				chkVersion.Status = StatusWarn
-				chkVersion.Message = fmt.Sprintf("Remote mesh version unavailable on %s: %v", d.remoteHost, err)
-				chkVersion.Remediation = fmt.Sprintf("Ensure mesh is installed at %s:~/.local/bin/mesh", d.remoteHost)
+				chkVersion.Message = fmt.Sprintf("Remote staypoint version unavailable on %s: %v", d.remoteHost, err)
+				chkVersion.Remediation = fmt.Sprintf("Ensure staypoint is installed at %s:~/.local/bin/staypoint", d.remoteHost)
 			} else if localVer != remoteVer {
 				chkVersion.Status = StatusWarn
 				chkVersion.Message = fmt.Sprintf("Version mismatch: local v%s != remote v%s", localVer, remoteVer)
-				chkVersion.Remediation = fmt.Sprintf("Update remote binary: scp bin/mesh %s:~/.local/bin/mesh", d.remoteHost)
+				chkVersion.Remediation = fmt.Sprintf("Update remote binary: scp bin/staypoint %s:~/.local/bin/staypoint", d.remoteHost)
 			} else {
 				chkVersion.Status = StatusOK
 				chkVersion.Message = fmt.Sprintf("Parity verified: v%s (local == remote)", localVer)
@@ -484,7 +484,7 @@ func (d *FleetDoctor) checkInfrastructure(ctx context.Context) SectionResult {
 	if dbErr != nil {
 		chkDB.Status = StatusError
 		chkDB.Message = fmt.Sprintf("Telemetry DB unreadable (%s): %v", telemetryPath, dbErr)
-		chkDB.Remediation = "Initialize token telemetry database or run `mesh init`"
+		chkDB.Remediation = "Initialize token telemetry database or run `staypoint init`"
 	} else if stateErr != nil {
 		chkDB.Status = StatusWarn
 		chkDB.Message = fmt.Sprintf("Telemetry DB readable, but rate limits state missing: %v", stateErr)
@@ -492,7 +492,7 @@ func (d *FleetDoctor) checkInfrastructure(ctx context.Context) SectionResult {
 	} else if stateAge > 24*time.Hour {
 		chkDB.Status = StatusWarn
 		chkDB.Message = fmt.Sprintf("Telemetry DB readable; rate limits state is stale (%s old)", formatDuration(stateAge))
-		chkDB.Remediation = "Run `mesh statusline` or trigger prompt hook to refresh telemetry"
+		chkDB.Remediation = "Run `staypoint statusline` or trigger prompt hook to refresh telemetry"
 	} else {
 		chkDB.Status = StatusOK
 		chkDB.Message = fmt.Sprintf("Telemetry DB readable, state.json fresh (%s old)", formatDuration(stateAge))
@@ -582,7 +582,7 @@ func (d *FleetDoctor) checkClaudeCode(ctx context.Context) SectionResult {
 	if err != nil {
 		chkSettings.Status = StatusError
 		chkSettings.Message = fmt.Sprintf("~/.claude/settings.json not found: %v", err)
-		chkSettings.Remediation = "Create ~/.claude/settings.json or run `mesh init`"
+		chkSettings.Remediation = "Create ~/.claude/settings.json or run `staypoint init`"
 	} else {
 		var settings struct {
 			Hooks map[string][]struct {
@@ -601,7 +601,7 @@ func (d *FleetDoctor) checkClaudeCode(ctx context.Context) SectionResult {
 			if promptHooks, ok := settings.Hooks["UserPromptSubmit"]; ok {
 				for _, wrapper := range promptHooks {
 					for _, h := range wrapper.Hooks {
-						if strings.Contains(h.Command, "mesh hook prompt") {
+						if strings.Contains(h.Command, "staypoint hook prompt") {
 							hasMeshHook = true
 							break
 						}
@@ -614,11 +614,11 @@ func (d *FleetDoctor) checkClaudeCode(ctx context.Context) SectionResult {
 
 			if hasMeshHook {
 				chkSettings.Status = StatusOK
-				chkSettings.Message = "settings.json valid, 'mesh hook prompt' hook registered"
+				chkSettings.Message = "settings.json valid, 'staypoint hook prompt' hook registered"
 			} else {
 				chkSettings.Status = StatusWarn
-				chkSettings.Message = "settings.json valid, but 'mesh hook prompt' hook is not registered"
-				chkSettings.Remediation = "Add 'mesh hook prompt' to UserPromptSubmit hooks in ~/.claude/settings.json"
+				chkSettings.Message = "settings.json valid, but 'staypoint hook prompt' hook is not registered"
+				chkSettings.Remediation = "Add 'staypoint hook prompt' to UserPromptSubmit hooks in ~/.claude/settings.json"
 			}
 		}
 	}
@@ -819,7 +819,7 @@ func (d *FleetDoctor) checkRemoteNode(ctx context.Context) SectionResult {
 			if promptHooks, ok := settings.Hooks["UserPromptSubmit"]; ok {
 				for _, wrapper := range promptHooks {
 					for _, h := range wrapper.Hooks {
-						if strings.Contains(h.Command, "mesh hook prompt") {
+						if strings.Contains(h.Command, "staypoint hook prompt") {
 							hasHook = true
 							break
 						}
@@ -832,11 +832,11 @@ func (d *FleetDoctor) checkRemoteNode(ctx context.Context) SectionResult {
 
 			if hasHook {
 				chkSettings.Status = StatusOK
-				chkSettings.Message = "settings.json valid, 'mesh hook prompt' hook active"
+				chkSettings.Message = "settings.json valid, 'staypoint hook prompt' hook active"
 			} else {
 				chkSettings.Status = StatusWarn
-				chkSettings.Message = "settings.json valid, but 'mesh hook prompt' hook missing"
-				chkSettings.Remediation = fmt.Sprintf("Add 'mesh hook prompt' to UserPromptSubmit on %s:~/.claude/settings.json", d.remoteHost)
+				chkSettings.Message = "settings.json valid, but 'staypoint hook prompt' hook missing"
+				chkSettings.Remediation = fmt.Sprintf("Add 'staypoint hook prompt' to UserPromptSubmit on %s:~/.claude/settings.json", d.remoteHost)
 			}
 		}
 	}
@@ -907,7 +907,7 @@ func (d *FleetDoctor) checkRemoteNode(ctx context.Context) SectionResult {
 				chkRepos.Status = StatusWarn
 				chkRepos.Message = fmt.Sprintf("%d/%d mapped repositories verified on %s (missing: %s)",
 					foundCount, total, d.remoteHost, strings.Join(missingNames, ", "))
-				chkRepos.Remediation = fmt.Sprintf("Clone or sync missing repos on %s: `mesh bridge` or git clone", d.remoteHost)
+				chkRepos.Remediation = fmt.Sprintf("Clone or sync missing repos on %s: `staypoint bridge` or git clone", d.remoteHost)
 			} else {
 				chkRepos.Status = StatusWarn
 				chkRepos.Message = fmt.Sprintf("0/%d mapped repositories found on %s", total, d.remoteHost)
@@ -954,7 +954,7 @@ func aggregateStatus(checks []CheckResult) Status {
 func (d *FleetDoctor) FormatReport(report *Report) string {
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("%s%s[Agent-Mesh :: Fleet Doctor Engine]%s\n", ColorBold, ColorCyan, ColorReset))
+	b.WriteString(fmt.Sprintf("%s%s[StayPoint :: Fleet Doctor Engine]%s\n", ColorBold, ColorCyan, ColorReset))
 	b.WriteString(fmt.Sprintf("  • Target Remote Node:  %s%s%s\n", ColorPurple, report.RemoteHost, ColorReset))
 	if report.Fast {
 		b.WriteString(fmt.Sprintf("  • Execution Mode:      %s⚡ Fast (Remote network checks skipped)%s\n", ColorYellow, ColorReset))

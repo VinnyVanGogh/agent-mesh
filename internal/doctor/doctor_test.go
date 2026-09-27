@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 )
 
 type mockFileInfo struct {
@@ -65,7 +65,7 @@ func newHealthyDoctor() *FleetDoctor {
 			"UserPromptSubmit": [
 				{
 					"hooks": [
-						{"type": "command", "command": "mesh hook prompt"}
+						{"type": "command", "command": "staypoint hook prompt"}
 					]
 				}
 			]

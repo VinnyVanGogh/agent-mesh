@@ -235,10 +235,10 @@ func GenerateHandoff(opts HandoffOptions) (*HandoffRecord, error) {
 		HandoffPrompt:     promptText,
 	}
 
-	// 1. Serialize to ~/.agent-mesh/handoff.json
+	// 1. Serialize to ~/.staypoint/handoff.json
 	home, err := os.UserHomeDir()
 	if err == nil {
-		meshDir := filepath.Join(home, ".agent-mesh")
+		meshDir := filepath.Join(home, ".staypoint")
 		_ = os.MkdirAll(meshDir, 0755)
 		jsonPath := filepath.Join(meshDir, "handoff.json")
 		if jsonData, err := json.MarshalIndent(record, "", "  "); err == nil {

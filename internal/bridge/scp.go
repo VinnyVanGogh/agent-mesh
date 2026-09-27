@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 )
 
 // TransferOptions configures arbitrary file and directory SCP transfers.

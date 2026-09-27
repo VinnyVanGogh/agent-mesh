@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
-	meshContext "github.com/VinnyVanGogh/agent-mesh/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
+	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	_ "modernc.org/sqlite"
 )
 
@@ -231,7 +231,7 @@ func ExportBundle(outputPath string, cfg *config.Config) (string, int64, error) 
 		if hostname == "" {
 			hostname = "node"
 		}
-		outputPath = filepath.Join(home, "Desktop", fmt.Sprintf("agent-mesh-telemetry-%s-%s.tar.gz", hostname, time.Now().Format("20060102-150405")))
+		outputPath = filepath.Join(home, "Desktop", fmt.Sprintf("staypoint-telemetry-%s-%s.tar.gz", hostname, time.Now().Format("20060102-150405")))
 	}
 
 	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)", cfg.TelemetryDBPath)
@@ -434,10 +434,10 @@ func PushHandoff(ctx context.Context, host string, record *meshContext.HandoffRe
 		return err
 	}
 
-	// 1. Write to remote ~/.agent-mesh/handoff.json and /tmp/ai-handoff.md
+	// 1. Write to remote ~/.staypoint/handoff.json and /tmp/ai-handoff.md
 	remoteScript := fmt.Sprintf(`
-mkdir -p ~/.agent-mesh
-cat << 'EOF' > ~/.agent-mesh/handoff.json
+mkdir -p ~/.staypoint
+cat << 'EOF' > ~/.staypoint/handoff.json
 %s
 EOF
 cat << 'EOF' > /tmp/ai-handoff.md
@@ -464,7 +464,7 @@ func PullHandoff(ctx context.Context, host string) (*meshContext.HandoffRecord, 
 		return nil, fmt.Errorf("remote host '%s' unreachable (%s)", host, probe.Error)
 	}
 
-	cmd := exec.CommandContext(ctx, "ssh", host, "cat ~/.agent-mesh/handoff.json 2>/dev/null || cat /tmp/ai-handoff.md")
+	cmd := exec.CommandContext(ctx, "ssh", host, "cat ~/.staypoint/handoff.json 2>/dev/null || cat /tmp/ai-handoff.md")
 	out, err := cmd.Output()
 	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
 		return nil, fmt.Errorf("no active handoff record found on %s", host)
@@ -475,7 +475,7 @@ func PullHandoff(ctx context.Context, host string) (*meshContext.HandoffRecord, 
 		// Save locally
 		home, _ := os.UserHomeDir()
 		if home != "" {
-			_ = os.WriteFile(filepath.Join(home, ".agent-mesh", "handoff.json"), out, 0644)
+			_ = os.WriteFile(filepath.Join(home, ".staypoint", "handoff.json"), out, 0644)
 		}
 		_ = os.WriteFile("/tmp/ai-handoff.md", []byte(record.HandoffPrompt), 0644)
 		_ = meshContext.CopyToClipboard(record.HandoffPrompt)

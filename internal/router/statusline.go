@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 )
 
 // Tokyo Night Palette
@@ -296,7 +296,7 @@ func RenderStatusline(w io.Writer, r io.Reader) error {
 	if costBadge != "" {
 		line1Parts = append(line1Parts, costBadge)
 	}
-	line1Parts = append(line1Parts, fmt.Sprintf("%s⚡ mesh:active%s", Teal, Reset))
+	line1Parts = append(line1Parts, fmt.Sprintf("%s⚡ staypoint:active%s", Teal, Reset))
 
 	// 9. Git info & badges for Line 2
 	branch, dirty, sync := fastGitInfo(dir)

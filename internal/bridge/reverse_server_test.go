@@ -78,7 +78,7 @@ func TestReverseBridgeServerAndFetch(t *testing.T) {
 	defer shutdown()
 
 	// Mock session on disk
-	sessionDir := filepath.Join(tmpDir, ".agent-mesh")
+	sessionDir := filepath.Join(tmpDir, ".staypoint")
 	_ = os.MkdirAll(sessionDir, 0755)
 	sessionPath := filepath.Join(sessionDir, "bridge-session.json")
 
