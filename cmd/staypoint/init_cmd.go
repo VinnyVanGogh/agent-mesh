@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/config"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/spf13/cobra"
 )
 
 var initCmd = &cobra.Command{

@@ -186,7 +186,7 @@ if (-not (Get-Variable -Name _StaypointHookLoaded -Scope Global -ErrorAction Sil
     . (staypoint init --powershell | Out-String | Invoke-Expression)
 }
 # --- end Staypoint hook ---
-`, )
+`)
 	_ = snippet // snippet written below
 
 	existing := ""

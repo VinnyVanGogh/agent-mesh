@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/checkpoint"
+	"github.com/spf13/cobra"
 )
 
 var checkpointCmd = &cobra.Command{
@@ -169,7 +169,6 @@ var checkpointsListCmd = &cobra.Command{
 		}
 	},
 }
-
 
 func init() {
 	rootCmd.AddCommand(checkpointCmd)

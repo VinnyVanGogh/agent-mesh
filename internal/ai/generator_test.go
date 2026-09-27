@@ -147,8 +147,8 @@ func TestGenerator_FallbackToClaudeOnGeminiFailure(t *testing.T) {
 				},
 			},
 			"usage": map[string]interface{}{
-				"input_tokens":             180,
-				"output_tokens":            250,
+				"input_tokens":            180,
+				"output_tokens":           250,
 				"cache_read_input_tokens": 10,
 			},
 		}

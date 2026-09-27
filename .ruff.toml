@@ -1,0 +1,66 @@
+# Ruff Configuration for StayPoint & Managed Solution Repositories
+# Zero-Token Quality Gate - Fast, deterministic Python linting and formatting.
+
+target-version = "py311"
+line-length = 100
+
+[lint]
+# Selected rule sets:
+# E, W: pycodestyle errors and warnings
+# F: Pyflakes (undefined vars, unused imports, logic defects)
+# I: isort (deterministic import order)
+# B: flake8-bugbear (common design traps, mutable defaults, except shadows)
+# UP: pyupgrade (modernize Python syntax to 3.11+)
+# S: flake8-bandit (security checks: eval, insecure bindings, subprocess, credentials)
+# SIM: flake8-simplify (code simplification)
+# ASYNC: flake8-async (asyncio deadlocks, missing awaits)
+# C4: flake8-comprehensions
+# T20: flake8-print (disallow leftover print statements in library code)
+# RUF: Ruff-specific rules
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "B",
+    "UP",
+    "S",
+    "SIM",
+    "ASYNC",
+    "C4",
+    "T20",
+    "RUF"
+]
+
+# Targeted ignores:
+# E501: Line length handled by formatter
+# B008: Do not perform function call in argument defaults (required for FastAPI Depends)
+# S101: Use of assert detected (allow in tests)
+# S104: Possible binding to all interfaces (0.0.0.0 is standard in container apps)
+ignore = [
+    "E501",
+    "B008",
+    "S104"
+]
+
+# Allow autofix for all enabled rules (when safe)
+fixable = ["ALL"]
+unfixable = []
+
+[lint.per-file-ignores]
+# Allow print statements, asserts, and mock credentials in tests, scratch scripts, and CLI entry points
+"tests/**/*" = ["S101", "T201", "S105", "S106"]
+"test/**/*" = ["S101", "T201", "S105", "S106"]
+"scripts/**/*" = ["T201"]
+"cmd/**/*" = ["T201"]
+
+[lint.isort]
+combine-as-imports = true
+known-first-party = ["staypoint", "partner_center", "mansol"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true

@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/router"
+	"github.com/spf13/cobra"
 )
 
 var statusCmd = &cobra.Command{
@@ -83,7 +83,6 @@ var statusCmd = &cobra.Command{
 		}
 	},
 }
-
 
 var statuslineCmd = &cobra.Command{
 	Use:   "statusline",

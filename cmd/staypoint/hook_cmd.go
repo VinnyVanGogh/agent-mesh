@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/router"
 	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 	"github.com/VinnyVanGogh/staypoint/internal/wire"
+	"github.com/spf13/cobra"
 )
 
 var hookCmd = &cobra.Command{

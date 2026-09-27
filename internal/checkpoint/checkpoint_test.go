@@ -226,9 +226,9 @@ func TestUndoCleanIgnored(t *testing.T) {
 
 	// 4. Test Undo with CleanIgnored: false (ignored files must be retained)
 	resRetained, err := Undo(ctx, UndoOptions{
-		WorkDir:       dir,
-		CheckpointID:  cp.ID,
-		CleanIgnored:  false,
+		WorkDir:      dir,
+		CheckpointID: cp.ID,
+		CleanIgnored: false,
 	})
 	if err != nil {
 		t.Fatalf("Undo with CleanIgnored: false failed: %v", err)

@@ -18,7 +18,7 @@ func ExtractClientPaths(prompt string, clientHome string) []string {
 	escapedHome := regexp.QuoteMeta(cleanHome)
 
 	// Match: <clientHome>/[non-whitespace]+
-	pattern := regexp.MustCompile(fmt.Sprintf(`(%s/[^\s"'\` + "`" + `<>]+)`, escapedHome))
+	pattern := regexp.MustCompile(fmt.Sprintf(`(%s/[^\s"'\`+"`"+`<>]+)`, escapedHome))
 	matches := pattern.FindAllString(prompt, -1)
 
 	var results []string

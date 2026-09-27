@@ -255,7 +255,7 @@ func FetchTelemetryWithRange(cfg *config.Config, rangeOpts DateRangeOptions) (
 	if sinceBound != "" || untilBound != "" {
 		var matchedRows int64
 		_ = conn.QueryRow(`
-			SELECT COUNT(*) FROM requests 
+			SELECT COUNT(*) FROM requests
 			WHERE (ts >= ? OR ? = '') AND (ts <= ? OR ? = '')`,
 			sinceBound, sinceBound, untilBound, untilBound).Scan(&matchedRows)
 		if matchedRows == 0 {

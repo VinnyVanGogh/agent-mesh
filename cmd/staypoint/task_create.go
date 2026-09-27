@@ -8,15 +8,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/glamour"
-	"github.com/mattn/go-isatty"
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/ai"
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/paperclip"
 	"github.com/VinnyVanGogh/staypoint/internal/ui"
+	"github.com/charmbracelet/glamour"
+	"github.com/mattn/go-isatty"
+	"github.com/spf13/cobra"
 )
 
 var taskCreateCmd = &cobra.Command{

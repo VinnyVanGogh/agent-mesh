@@ -1,3 +1,4 @@
+# ruff: noqa: S603, S607, S110, SIM103, RUF059
 #!/usr/bin/env python3
 """Watch Agent-Mesh's journey through CI/CD, GitHub Release, and Homebrew Tap.
 
@@ -14,13 +15,10 @@ Usage:
 """
 
 import json
-import os
 import shutil
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 
 REPO_MAIN = "VinnyVanGogh/agent-mesh"
 REPO_TAP = "VinnyVanGogh/homebrew-tap"
@@ -29,12 +27,14 @@ VERSION = "0.1.0"
 
 PEEK = "--peek" in sys.argv
 
+
 def run_cmd(args, timeout=30):
     try:
         out = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
         return out.stdout.strip() if out.returncode == 0 else None
     except Exception:
         return None
+
 
 def notify(title, message):
     # 1. macOS native notification
@@ -43,10 +43,25 @@ def notify(title, message):
         subprocess.run(["osascript", "-e", script], capture_output=True)
     # 2. terminal-notifier fallback
     if shutil.which("terminal-notifier"):
-        subprocess.run(["terminal-notifier", "-title", title, "-message", message], capture_output=True)
+        subprocess.run(
+            ["terminal-notifier", "-title", title, "-message", message], capture_output=True
+        )
+
 
 def check_ci_status():
-    raw = run_cmd(["gh", "run", "list", "--repo", REPO_MAIN, "--limit", "1", "--json", "status,conclusion,databaseId,headBranch,headSha"])
+    raw = run_cmd(
+        [
+            "gh",
+            "run",
+            "list",
+            "--repo",
+            REPO_MAIN,
+            "--limit",
+            "1",
+            "--json",
+            "status,conclusion,databaseId,headBranch,headSha",
+        ]
+    )
     if not raw:
         return {"state": "unknown", "id": None}
     try:
@@ -59,14 +74,26 @@ def check_ci_status():
                 "id": r.get("databaseId"),
                 "status": status,
                 "conclusion": conclusion,
-                "branch": r.get("headBranch")
+                "branch": r.get("headBranch"),
             }
     except Exception:
         pass
     return {"state": "unknown", "id": None}
 
+
 def check_github_release():
-    raw = run_cmd(["gh", "release", "view", TAG, "--repo", REPO_MAIN, "--json", "assets,isDraft,isPrerelease,tagName,url"])
+    raw = run_cmd(
+        [
+            "gh",
+            "release",
+            "view",
+            TAG,
+            "--repo",
+            REPO_MAIN,
+            "--json",
+            "assets,isDraft,isPrerelease,tagName,url",
+        ]
+    )
     if not raw:
         return None
     try:
@@ -76,10 +103,11 @@ def check_github_release():
             "tag": data.get("tagName"),
             "url": data.get("url"),
             "assets": assets,
-            "count": len(assets)
+            "count": len(assets),
         }
     except Exception:
         return None
+
 
 def check_tap_formula():
     raw = run_cmd(["gh", "api", f"repos/{REPO_TAP}/contents/Formula/mesh.rb"])
@@ -91,12 +119,14 @@ def check_tap_formula():
     except Exception:
         return False
 
+
 def check_brew_live():
     # Test if brew can see the formula in the tap
     info = run_cmd(["brew", "info", f"{REPO_TAP}/mesh"])
     if info and "mesh" in info and VERSION in info:
         return True
     return False
+
 
 def render_status():
     print("\033[1;36m[Agent-Mesh :: Release & Homebrew Pipeline Monitor]\033[0m")
@@ -142,6 +172,7 @@ def render_status():
 
     return ci, rel, tap_ok, brew_ok
 
+
 def main():
     if PEEK:
         render_status()
@@ -151,7 +182,7 @@ def main():
     last_stage = 0
 
     while True:
-        os.system("clear")
+        print("\033[H\033[J", end="")
         ci, rel, tap_ok, brew_ok = render_status()
 
         if ci.get("conclusion") == "success" and last_stage < 1:
@@ -159,7 +190,10 @@ def main():
             last_stage = 1
 
         if rel and rel.get("count", 0) > 0 and last_stage < 2:
-            notify("Agent-Mesh Release Built", f"v0.1.0 release published with {rel['count']} binaries!")
+            notify(
+                "Agent-Mesh Release Built",
+                f"v0.1.0 release published with {rel['count']} binaries!",
+            )
             last_stage = 2
 
         if brew_ok:
@@ -171,6 +205,7 @@ def main():
             break
 
         time.sleep(8)
+
 
 if __name__ == "__main__":
     main()

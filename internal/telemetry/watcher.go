@@ -17,12 +17,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 	"github.com/VinnyVanGogh/staypoint/internal/config"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/wire"
+	"github.com/fsnotify/fsnotify"
 	_ "modernc.org/sqlite"
 )
 

@@ -1,0 +1,169 @@
+# Opengrep SAST Security & Quality Rules
+# Tailored for StayPoint (Go + Python + Bash) and Managed Solution (FastAPI + Azure + Cloud Automation)
+# Zero-token local vulnerability gate - eliminates remote AI repair cycles.
+
+rules:
+  # =========================================================================
+  # Python Rules (Managed Solution & StayPoint Automation)
+  # =========================================================================
+
+  - id: python-hardcoded-secret-or-key
+    languages: [python]
+    severity: ERROR
+    message: "Hardcoded secret, API key, or JWT detected. Use environment variables or Azure Key Vault."
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      owasp: "A07:2021 - Identification and Authentication Failures"
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $VAR = "=~/(?i)(secret|apikey|api_key|token|password|client_secret)\s*=\s*['\"][A-Za-z0-9+/=_\-]{16,}['\"]/"
+          - pattern: |
+              $SECRET = "=~/^eyJ[A-Za-z0-9-_=]+\.[A-Za-z0-9-_=]+\.?[A-Za-z0-9-_.+/=]*$/"
+          - pattern: |
+              os.environ.get(..., "=~/[A-Za-z0-9+/=_\-]{20,}/")
+      - pattern-not: |
+          $VAR = "=~/(?i)(test|example|mock|dummy|sample|none|default|placeholder)/"
+
+  - id: python-sql-injection-fstring
+    languages: [python]
+    severity: ERROR
+    message: "Potential SQL Injection: Formatted string (f-string or %) used in SQL query execution. Use parameterized queries."
+    metadata:
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      owasp: "A03:2021 - Injection"
+    patterns:
+      - pattern-either:
+          - pattern: |
+              $CURSOR.execute(f"... {$VAR} ...", ...)
+          - pattern: |
+              $CURSOR.execute("... %s ..." % $VAR, ...)
+          - pattern: |
+              $CONN.execute(f"... {$VAR} ...", ...)
+          - pattern: |
+              $SESSION.execute(f"... {$VAR} ...", ...)
+
+  - id: python-unsafe-subprocess-shell
+    languages: [python]
+    severity: ERROR
+    message: "Unsafe subprocess invocation with shell=True. This allows arbitrary command injection."
+    metadata:
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      owasp: "A03:2021 - Injection"
+    patterns:
+      - pattern-either:
+          - pattern: subprocess.$FUNC(..., shell=True, ...)
+          - pattern: os.system(...)
+          - pattern: os.popen(...)
+
+  - id: python-insecure-eval-exec
+    languages: [python]
+    severity: ERROR
+    message: "Use of eval() or exec() detected. Dynamic code execution leads to critical remote code execution risks."
+    metadata:
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code ('Eval Injection')"
+      owasp: "A03:2021 - Injection"
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: exec(...)
+
+  - id: python-insecure-tls-verification-disabled
+    languages: [python]
+    severity: WARNING
+    message: "Insecure TLS verification disabled (verify=False). This exposes traffic to Man-in-the-Middle attacks."
+    metadata:
+      cwe: "CWE-295: Improper Certificate Validation"
+      owasp: "A02:2021 - Cryptographic Failures"
+    patterns:
+      - pattern-either:
+          - pattern: requests.$METHOD(..., verify=False, ...)
+          - pattern: httpx.$METHOD(..., verify=False, ...)
+          - pattern: httpx.Client(..., verify=False, ...)
+          - pattern: httpx.AsyncClient(..., verify=False, ...)
+
+  - id: python-unsafe-deserialization
+    languages: [python]
+    severity: ERROR
+    message: "Insecure deserialization detected via pickle or unsafe YAML loader."
+    metadata:
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp: "A08:2021 - Software and Data Integrity Failures"
+    patterns:
+      - pattern-either:
+          - pattern: pickle.loads(...)
+          - pattern: pickle.load(...)
+          - pattern: yaml.load(..., Loader=yaml.Loader)
+          - pattern: yaml.load(..., Loader=yaml.CLoader)
+          - pattern: yaml.load(..., Loader=yaml.UnsafeLoader)
+
+  - id: python-debug-mode-enabled
+    languages: [python]
+    severity: WARNING
+    message: "Debug mode explicitly enabled in application framework. Never run debug=True in production."
+    metadata:
+      cwe: "CWE-489: Active Debug Code"
+      owasp: "A05:2021 - Security Misconfiguration"
+    patterns:
+      - pattern-either:
+          - pattern: FastAPI(..., debug=True, ...)
+          - pattern: Flask(..., debug=True, ...)
+          - pattern: app.run(..., debug=True, ...)
+          - pattern: uvicorn.run(..., reload=True, ...)
+
+  # =========================================================================
+  # Go Rules (StayPoint agent-mesh Core)
+  # =========================================================================
+
+  - id: go-command-injection-shell
+    languages: [go]
+    severity: ERROR
+    message: "Command execution passing input to shell directly via exec.Command('sh', '-c', ...). Pass direct arguments instead."
+    metadata:
+      cwe: "CWE-78: OS Command Injection"
+      owasp: "A03:2021 - Injection"
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command("sh", "-c", fmt.Sprintf(...))
+          - pattern: exec.Command("bash", "-c", fmt.Sprintf(...))
+          - pattern: exec.Command("cmd.exe", "/C", fmt.Sprintf(...))
+
+  - id: go-sql-formatted-string
+    languages: [go]
+    severity: ERROR
+    message: "SQL query constructed via string formatting in Go. Use parameterized SQL queries ($1, ?)."
+    metadata:
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 - Injection"
+    patterns:
+      - pattern-either:
+          - pattern: $DB.Query(fmt.Sprintf(...), ...)
+          - pattern: $DB.QueryRow(fmt.Sprintf(...), ...)
+          - pattern: $DB.Exec(fmt.Sprintf(...), ...)
+
+  - id: go-hardcoded-secret
+    languages: [go]
+    severity: ERROR
+    message: "Hardcoded secret or authentication token detected in Go source."
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      owasp: "A07:2021 - Identification and Authentication Failures"
+    patterns:
+      - pattern: |
+          const $VAR = "=~/(?i)(secret|token|apikey|password).*['\"][A-Za-z0-9+/=_\-]{20,}['\"]/"
+      - pattern-not: |
+          const $VAR = "=~/(?i)(mock|test|dummy)/"
+
+  - id: go-insecure-file-permissions
+    languages: [go]
+    severity: WARNING
+    message: "Overly permissive file permissions (0777 or 0666). Restrict to 0600 or 0700 for sensitive databases/keys."
+    metadata:
+      cwe: "CWE-732: Incorrect Permission Assignment for Critical Resource"
+      owasp: "A01:2021 - Broken Access Control"
+    patterns:
+      - pattern-either:
+          - pattern: os.WriteFile($PATH, $DATA, 0777)
+          - pattern: os.WriteFile($PATH, $DATA, 0666)
+          - pattern: os.OpenFile($PATH, $FLAG, 0777)
+          - pattern: os.OpenFile($PATH, $FLAG, 0666)

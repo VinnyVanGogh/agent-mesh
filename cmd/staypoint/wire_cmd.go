@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/wire"
+	"github.com/spf13/cobra"
 )
 
 var wireCmd = &cobra.Command{
@@ -107,7 +107,6 @@ var wirePruneCmd = &cobra.Command{
 		fmt.Printf("\033[1;32m✔ Pruned %d expired wire messages\033[0m\n", count)
 	},
 }
-
 
 func init() {
 	rootCmd.AddCommand(wireCmd)

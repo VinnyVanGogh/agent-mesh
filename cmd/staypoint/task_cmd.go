@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/spf13/cobra"
 )
 
 var taskCmd = &cobra.Command{
@@ -143,7 +143,6 @@ var taskBudgetCmd = &cobra.Command{
 		fmt.Printf("\033[1;32m✔ Task %q budget updated to $%.2f USD / %d turns\033[0m\n", args[0], budget, turns)
 	},
 }
-
 
 func init() {
 	rootCmd.AddCommand(taskCmd)

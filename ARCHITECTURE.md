@@ -4,7 +4,7 @@ Staypoint is a local-first autonomous AI agent operations harness, quota pacer, 
 
 ```
                                   SYSTEM DATA FLOW
-                                  
+
    [Agent Transcripts]           [Developer / Shell]          [Remote Enterprise Host]
   Claude: ~/.claude/projects     staypoint status / route     SSH Reverse Tunnel (:42124)
   Gemini: ~/.gemini/brain        staypoint checkpoint / undo  Persistent Remote tmux

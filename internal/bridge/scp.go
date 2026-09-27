@@ -26,11 +26,11 @@ type TransferOptions struct {
 
 // TransferResult captures transfer outcome and paths.
 type TransferResult struct {
-	Host       string `json:"host"`
-	Source     string `json:"source"`
-	Dest       string `json:"dest"`
-	Action     string `json:"action"` // "pushed" or "pulled"
-	IsDirectory bool  `json:"is_directory"`
+	Host        string `json:"host"`
+	Source      string `json:"source"`
+	Dest        string `json:"dest"`
+	Action      string `json:"action"` // "pushed" or "pulled"
+	IsDirectory bool   `json:"is_directory"`
 }
 
 // Transfer handles pushing or pulling files across the bridge with smart path translation.

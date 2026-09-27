@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/google/uuid"
 )
 
 // Task represents an engineering task tracked within SQLite mesh.db.
@@ -18,7 +18,7 @@ type Task struct {
 	Name         string  `json:"name"`
 	RepoPath     string  `json:"repo_path"`
 	GitBranch    string  `json:"git_branch"`
-	Status       string  `json:"status"` // active, done, soft_deleted
+	Status       string  `json:"status"`       // active, done, soft_deleted
 	AccountRole  string  `json:"account_role"` // work, personal, other
 	MaxBudgetUSD float64 `json:"max_budget_usd"`
 	MaxTurns     int     `json:"max_turns"`

@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/spf13/cobra"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/spf13/cobra"
 )
 
 var continueCmd = &cobra.Command{
@@ -245,7 +245,6 @@ func handleResumeFlow(cmd *cobra.Command, args []string, handoffOnly bool) {
 		_ = syscall.Exec(binPath, []string{"agy", "--conversation", selectedSess.ID}, os.Environ())
 	}
 }
-
 
 func init() {
 	rootCmd.AddCommand(continueCmd)

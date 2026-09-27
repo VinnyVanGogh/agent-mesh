@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/spf13/cobra"
 	meshSync "github.com/VinnyVanGogh/staypoint/internal/sync"
+	"github.com/spf13/cobra"
 )
 
 var syncCmd = &cobra.Command{
@@ -76,7 +76,6 @@ var syncImportCmd = &cobra.Command{
 		fmt.Printf("\033[1;32m✔ Successfully imported %d new records into telemetry database!\033[0m\n", count)
 	},
 }
-
 
 func init() {
 	rootCmd.AddCommand(syncCmd)

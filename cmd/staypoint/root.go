@@ -9,13 +9,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mattn/go-isatty"
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 	"github.com/VinnyVanGogh/staypoint/internal/config"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/router"
+	"github.com/mattn/go-isatty"
+	"github.com/spf13/cobra"
 )
 
 var (
@@ -41,8 +41,6 @@ var (
 		Run: runSmartLaunch,
 	}
 )
-
-
 
 func runSmartLaunch(cmd *cobra.Command, args []string) {
 	statusFlag, _ := cmd.Flags().GetBool("status")

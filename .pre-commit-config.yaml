@@ -1,0 +1,45 @@
+# Pre-commit configuration for StayPoint repository
+# Zero-Token Quality & Security Gates
+default_language_version:
+  python: python3.11
+
+repos:
+  # Fast filesystem & hygiene checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--unsafe]
+      - id: check-json
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Ultra-fast Python Linter & Formatter (for StayPoint scripts & bridges)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.9
+    hooks:
+      - id: ruff
+        args: [--fix, --config, .ruff.toml]
+      - id: ruff-format
+        args: [--config, .ruff.toml]
+
+  # Opengrep SAST Vulnerability & Security Scanner (Local zero-token gate)
+  - repo: local
+    hooks:
+      - id: opengrep-local-scan
+        name: Opengrep SAST Security Gate
+        entry: bash -c 'output=$(opengrep scan --config .opengrep.yaml --error 2>&1); status=$?; echo "$output"; if [ $status -ne 0 ]; then go run ./cmd/staypoint wire post -c "#appsec" "Opengrep SAST Security Gate Failed. Run pre-commit to view details." >/dev/null 2>&1 || true; fi; exit $status'
+        language: system
+        types_or: [python, go, yaml, json, bash]
+        pass_filenames: false
+
+  # Go formatting check
+  - repo: local
+    hooks:
+      - id: go-fmt
+        name: Go Format (gofmt)
+        entry: gofmt -l -w
+        language: system
+        files: '\.go$'

@@ -201,4 +201,3 @@ func TestShellPathForDir(t *testing.T) {
 		}
 	}
 }
-

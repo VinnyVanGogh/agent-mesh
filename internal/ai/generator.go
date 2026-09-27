@@ -100,24 +100,12 @@ func NewGenerator(cfg GeneratorConfig) *TaskGenerator {
 
 // BuildPrompt creates the system instruction and context wrapper for the raw comment.
 func BuildPrompt(comment string) string {
-	return fmt.Sprintf(`You are an expert autonomous software engineer and task coordinator for the Paperclip & StayPoint ecosystem.
-Analyze the following natural language task request or dictated comment and synthesize a structured engineering issue.
-
-Task Input:
+	return fmt.Sprintf(`Task Input:
 """
 %s
 """
 
-Respond ONLY with a valid JSON object matching this schema:
-{
-  "organization": "Target Organization (e.g. StayPoint, Managed Solution, RuneLite, Maintenance, Research)",
-  "project": "Target Project name (e.g. StayPoint Core Engine & Telemetry Fleet)",
-  "title": "Crisp, concise issue title in imperative mood (e.g. 'Implement dynamic quota router')",
-  "description": "Structured Markdown description with sections: ## Objectives, ## Core Specs, ## Next Steps",
-  "priority": "low | medium | high | urgent",
-  "labels": ["array", "of", "lowercase", "tags"],
-  "assigneeRole": "Recommended assignee role (e.g. CLI & Statusline Presentation Specialist, Architecture Lead, Senior PR Reviewer)"
-}`, strings.TrimSpace(comment))
+Respond ONLY with a valid JSON object matching the requested schema. Ensure the title is a crisp, concise summary of the task in imperative mood, NOT a copy-paste of the input.`, strings.TrimSpace(comment))
 }
 
 // CalculateCost estimates the USD cost for a generation run based on token counts.
@@ -247,9 +235,49 @@ func (g *TaskGenerator) CallGemini(ctx context.Context, prompt string) (*Generat
 				},
 			},
 		},
+		"systemInstruction": map[string]interface{}{
+			"parts": []map[string]interface{}{
+				{"text": "You are an expert autonomous software engineer and task coordinator for the Paperclip & StayPoint ecosystem. Analyze the following natural language task request or dictated comment and synthesize a structured engineering issue."},
+			},
+		},
 		"generationConfig": map[string]interface{}{
 			"temperature":      0.2,
 			"responseMimeType": "application/json",
+			"responseSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"organization": map[string]interface{}{
+						"type":        "string",
+						"description": "Target Organization (e.g. StayPoint, Managed Solution, RuneLite, Maintenance, Research)",
+					},
+					"project": map[string]interface{}{
+						"type":        "string",
+						"description": "Target Project name (e.g. StayPoint Core Engine & Telemetry Fleet)",
+					},
+					"title": map[string]interface{}{
+						"type":        "string",
+						"description": "Crisp, concise issue title in imperative mood (e.g. 'Implement dynamic quota router')",
+					},
+					"description": map[string]interface{}{
+						"type":        "string",
+						"description": "Structured Markdown description with sections: ## Objectives, ## Core Specs, ## Next Steps",
+					},
+					"priority": map[string]interface{}{
+						"type": "string",
+						"enum": []string{"low", "medium", "high", "urgent"},
+					},
+					"labels": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "array of lowercase tags",
+					},
+					"assigneeRole": map[string]interface{}{
+						"type":        "string",
+						"description": "Recommended assignee role (e.g. CLI & Statusline Presentation Specialist, Architecture Lead, Senior PR Reviewer)",
+					},
+				},
+				"required": []string{"organization", "project", "title", "description", "priority", "labels", "assigneeRole"},
+			},
 		},
 	}
 
@@ -375,8 +403,8 @@ func (g *TaskGenerator) CallClaude(ctx context.Context, prompt string) (*Generat
 			Text string `json:"text"`
 		} `json:"content"`
 		Usage struct {
-			InputTokens        int `json:"input_tokens"`
-			OutputTokens       int `json:"output_tokens"`
+			InputTokens          int `json:"input_tokens"`
+			OutputTokens         int `json:"output_tokens"`
 			CacheReadInputTokens int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 	}
