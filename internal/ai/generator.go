@@ -100,24 +100,22 @@ func NewGenerator(cfg GeneratorConfig) *TaskGenerator {
 
 // BuildPrompt creates the system instruction and context wrapper for the raw comment.
 func BuildPrompt(comment string) string {
-	return fmt.Sprintf(`You are an expert autonomous software engineer and task coordinator for the Paperclip & StayPoint ecosystem.
-Analyze the following natural language task request or dictated comment and synthesize a structured engineering issue.
+	return fmt.Sprintf(`You are the CTO's autonomous AI parsing engine. A user has dictated or written a raw thought, complaint, or request.
 
 Task Input:
 """
 %s
 """
 
-Respond ONLY with a valid JSON object matching this schema:
-{
-  "organization": "Target Organization (e.g. StayPoint, Managed Solution, RuneLite, Maintenance, Research)",
-  "project": "Target Project name (e.g. StayPoint Core Engine & Telemetry Fleet)",
-  "title": "Crisp, concise issue title in imperative mood (e.g. 'Implement dynamic quota router')",
-  "description": "Structured Markdown description with sections: ## Objectives, ## Core Specs, ## Next Steps",
-  "priority": "low | medium | high | urgent",
-  "labels": ["array", "of", "lowercase", "tags"],
-  "assigneeRole": "Recommended assignee role (e.g. CLI & Statusline Presentation Specialist, Architecture Lead, Senior PR Reviewer)"
-}`, strings.TrimSpace(comment))
+Your job is to read this raw input and convert it into a highly structured, professional engineering issue.
+1. DO NOT just copy and paste the input as the title or description. You MUST synthesize a crisp, concise title in imperative mood (e.g. "Implement dynamic quota router", "Fix layout bug on settings page").
+2. Carefully infer the target Organization (e.g. StayPoint, Managed Solution, RuneLite, Research) and Project from context clues in the text.
+3. Write a professional markdown description that includes:
+   ## Objectives (what needs to be achieved based on the user's intent)
+   ## Core Specs (technical details, constraints, questions asked by user)
+   ## Next Steps (concrete actions to take)
+
+Respond ONLY with a valid JSON object matching the requested schema. No markdown wrapping.`, strings.TrimSpace(comment))
 }
 
 // CalculateCost estimates the USD cost for a generation run based on token counts.
@@ -247,9 +245,49 @@ func (g *TaskGenerator) CallGemini(ctx context.Context, prompt string) (*Generat
 				},
 			},
 		},
+		"systemInstruction": map[string]interface{}{
+			"parts": []map[string]interface{}{
+				{"text": "You are an expert autonomous software engineer and task coordinator for the Paperclip & StayPoint ecosystem. Analyze the following natural language task request or dictated comment and synthesize a structured engineering issue."},
+			},
+		},
 		"generationConfig": map[string]interface{}{
 			"temperature":      0.2,
 			"responseMimeType": "application/json",
+			"responseSchema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"organization": map[string]interface{}{
+						"type":        "string",
+						"description": "Target Organization (e.g. StayPoint, Managed Solution, RuneLite, Maintenance, Research)",
+					},
+					"project": map[string]interface{}{
+						"type":        "string",
+						"description": "Target Project name (e.g. StayPoint Core Engine & Telemetry Fleet)",
+					},
+					"title": map[string]interface{}{
+						"type":        "string",
+						"description": "Crisp, concise issue title in imperative mood (e.g. 'Implement dynamic quota router')",
+					},
+					"description": map[string]interface{}{
+						"type":        "string",
+						"description": "Structured Markdown description with sections: ## Objectives, ## Core Specs, ## Next Steps",
+					},
+					"priority": map[string]interface{}{
+						"type": "string",
+						"enum": []string{"low", "medium", "high", "urgent"},
+					},
+					"labels": map[string]interface{}{
+						"type":        "array",
+						"items":       map[string]interface{}{"type": "string"},
+						"description": "array of lowercase tags",
+					},
+					"assigneeRole": map[string]interface{}{
+						"type":        "string",
+						"description": "Recommended assignee role (e.g. CLI & Statusline Presentation Specialist, Architecture Lead, Senior PR Reviewer)",
+					},
+				},
+				"required": []string{"organization", "project", "title", "description", "priority", "labels", "assigneeRole"},
+			},
 		},
 	}
 
@@ -375,8 +413,8 @@ func (g *TaskGenerator) CallClaude(ctx context.Context, prompt string) (*Generat
 			Text string `json:"text"`
 		} `json:"content"`
 		Usage struct {
-			InputTokens        int `json:"input_tokens"`
-			OutputTokens       int `json:"output_tokens"`
+			InputTokens          int `json:"input_tokens"`
+			OutputTokens         int `json:"output_tokens"`
 			CacheReadInputTokens int `json:"cache_read_input_tokens"`
 		} `json:"usage"`
 	}
@@ -414,53 +452,234 @@ func (g *TaskGenerator) CallClaude(ctx context.Context, prompt string) (*Generat
 
 // GenerateHeuristicTask provides a deterministic fallback task synthesis when remote AI APIs are offline.
 func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
-	lines := strings.Split(strings.TrimSpace(comment), "\n")
-	title := lines[0]
-	if len(title) > 72 {
-		title = title[:69] + "..."
-	}
-	if !strings.HasPrefix(strings.ToLower(title), "implement") &&
-		!strings.HasPrefix(strings.ToLower(title), "fix") &&
-		!strings.HasPrefix(strings.ToLower(title), "add") &&
-		!strings.HasPrefix(strings.ToLower(title), "refactor") {
-		title = "Implement: " + title
+	cleanComment := strings.TrimSpace(comment)
+
+	// Correct common phonetic STT artifacts
+	replacer := strings.NewReplacer(
+		"sharepoint", "StayPoint",
+		"SharePoint", "StayPoint",
+		"share point", "StayPoint",
+		"grab ", "grep ",
+		"length ", "lint ",
+		"batch ", "bash ",
+	)
+	normalized := replacer.Replace(cleanComment)
+	lowerNorm := strings.ToLower(normalized)
+
+	// 1. Infer Organization
+	org := "StayPoint"
+	switch {
+	case strings.Contains(lowerNorm, "managed solution") || strings.Contains(lowerNorm, "mansol") ||
+		strings.Contains(lowerNorm, "azure") || strings.Contains(lowerNorm, "m365") ||
+		strings.Contains(lowerNorm, "client portal") || strings.Contains(lowerNorm, "client acme") ||
+		strings.Contains(lowerNorm, "msp"):
+		org = "Managed Solution"
+	case strings.Contains(lowerNorm, "runelite") || strings.Contains(lowerNorm, "osrs") ||
+		strings.Contains(lowerNorm, "runescape") || strings.Contains(lowerNorm, "prayer flick") ||
+		strings.Contains(lowerNorm, "tile indicator"):
+		org = "RuneLite"
+	case strings.Contains(lowerNorm, "dotfile") || strings.Contains(lowerNorm, "zshrc") ||
+		strings.Contains(lowerNorm, "homebrew") || strings.Contains(lowerNorm, "prune") ||
+		strings.Contains(lowerNorm, "maintenance") || strings.Contains(lowerNorm, "cleanup my") ||
+		strings.Contains(lowerNorm, "clean up my"):
+		org = "Maintenance"
+	case strings.Contains(lowerNorm, "arxiv") || strings.Contains(lowerNorm, "paper") ||
+		strings.Contains(lowerNorm, "benchmark") || strings.Contains(lowerNorm, "research") ||
+		strings.Contains(lowerNorm, "eval") || strings.Contains(lowerNorm, "needle retrieval"):
+		org = "Research"
 	}
 
+	// 2. Infer Project
+	project := "StayPoint Core Engine & Telemetry Fleet"
+	switch org {
+	case "Managed Solution":
+		if strings.Contains(lowerNorm, "migration") || strings.Contains(lowerNorm, "cloud") {
+			project = "Managed Solution Cloud Migration"
+		} else {
+			project = "Managed Solution Client Services"
+		}
+	case "RuneLite":
+		project = "RuneLite Plugin Suite"
+	case "Maintenance":
+		project = "System Maintenance & Infrastructure"
+	case "Research":
+		project = "AI Model Benchmarking & Research"
+	case "StayPoint":
+		if strings.Contains(lowerNorm, "statusline") || strings.Contains(lowerNorm, "tui") ||
+			strings.Contains(lowerNorm, "bubbletea") || strings.Contains(lowerNorm, "textarea") ||
+			strings.Contains(lowerNorm, "glamour") {
+			project = "StayPoint Statusline & TUI Presentation"
+		} else if strings.Contains(lowerNorm, "wire") || strings.Contains(lowerNorm, "daemon") ||
+			strings.Contains(lowerNorm, "socket") || strings.Contains(lowerNorm, "ipc") {
+			project = "StayPoint Wire Protocol & Daemon"
+		} else if strings.Contains(lowerNorm, "quota") || strings.Contains(lowerNorm, "pacing") ||
+			strings.Contains(lowerNorm, "rate limit") {
+			project = "StayPoint Dynamic Quota & Fleet Engine"
+		}
+	}
+
+	// 3. Infer Priority
 	priority := "medium"
-	lowerComment := strings.ToLower(comment)
-	if strings.Contains(lowerComment, "urgent") || strings.Contains(lowerComment, "asap") || strings.Contains(lowerComment, "critical") {
+	if strings.Contains(lowerNorm, "urgent") || strings.Contains(lowerNorm, "asap") ||
+		strings.Contains(lowerNorm, "critical") || strings.Contains(lowerNorm, "blocker") ||
+		strings.Contains(lowerNorm, "outage") {
 		priority = "urgent"
-	} else if strings.Contains(lowerComment, "bug") || strings.Contains(lowerComment, "broken") || strings.Contains(lowerComment, "fix") {
+	} else if strings.Contains(lowerNorm, "bug") || strings.Contains(lowerNorm, "broken") ||
+		strings.Contains(lowerNorm, "fix") || strings.Contains(lowerNorm, "failure") ||
+		strings.Contains(lowerNorm, "race condition") || strings.Contains(lowerNorm, "leak") {
 		priority = "high"
+	} else if strings.Contains(lowerNorm, "doc") || strings.Contains(lowerNorm, "readme") ||
+		strings.Contains(lowerNorm, "typo") || strings.Contains(lowerNorm, "minor") {
+		priority = "low"
 	}
 
+	// 4. Synthesize Crisp Imperative Title (strip conversational filler)
+	title := cleanImperativeTitle(normalized, org)
+
+	// 5. Infer Labels
 	labels := []string{"cli", "task"}
-	if strings.Contains(lowerComment, "tui") || strings.Contains(lowerComment, "bubbletea") {
-		labels = append(labels, "tui")
+	switch org {
+	case "Managed Solution":
+		labels = []string{"managed-solution", "client"}
+		if strings.Contains(lowerNorm, "azure") {
+			labels = append(labels, "azure")
+		}
+		if strings.Contains(lowerNorm, "portal") {
+			labels = append(labels, "portal")
+		}
+	case "RuneLite":
+		labels = []string{"runelite", "plugin", "osrs"}
+	case "Maintenance":
+		labels = []string{"maintenance", "infrastructure"}
+		if strings.Contains(lowerNorm, "dotfile") || strings.Contains(lowerNorm, "zshrc") {
+			labels = append(labels, "dotfiles")
+		}
+	case "Research":
+		labels = []string{"research", "ai", "benchmark"}
+	case "StayPoint":
+		labels = []string{"staypoint"}
+		if strings.Contains(lowerNorm, "tui") || strings.Contains(lowerNorm, "bubbletea") {
+			labels = append(labels, "tui")
+		}
+		if strings.Contains(lowerNorm, "wire") || strings.Contains(lowerNorm, "daemon") {
+			labels = append(labels, "wire")
+		}
+		if strings.Contains(lowerNorm, "quota") || strings.Contains(lowerNorm, "pacing") {
+			labels = append(labels, "pacing")
+		}
 	}
-	if strings.Contains(lowerComment, "api") || strings.Contains(lowerComment, "paperclip") {
-		labels = append(labels, "api")
+	if priority == "urgent" || priority == "high" {
+		labels = append(labels, "bug")
 	}
 
+	// 6. Assignee Role
+	role := "CLI & Statusline Presentation Specialist"
+	switch {
+	case strings.Contains(lowerNorm, "security") || strings.Contains(lowerNorm, "auth") || strings.Contains(lowerNorm, "secret"):
+		role = "Security & Deep Remediation Fixer"
+	case strings.Contains(lowerNorm, "review") || strings.Contains(lowerNorm, "audit"):
+		role = "Senior PR Reviewer"
+	case strings.Contains(lowerNorm, "wire") || strings.Contains(lowerNorm, "architecture") || strings.Contains(lowerNorm, "rfc") || strings.Contains(lowerNorm, "daemon"):
+		role = "Architecture Lead"
+	case strings.Contains(lowerNorm, "ci") || strings.Contains(lowerNorm, "lint") || strings.Contains(lowerNorm, "hook") || strings.Contains(lowerNorm, "test"):
+		role = "CI/CD Engineer"
+	case strings.Contains(lowerNorm, "release") || strings.Contains(lowerNorm, "deploy") || strings.Contains(lowerNorm, "package") || strings.Contains(lowerNorm, "homebrew"):
+		role = "DevOps & Release Engineer"
+	}
+
+	// 7. Synthesize Markdown Description
 	description := fmt.Sprintf(`## Objectives
-%s
+- Synthesize requirements and deliver engineering solution for %s.
+- Address specifications and prevent regressions.
 
 ## Core Specs
-- Source Comment: "%s"
-- Auto-synthesized via StayPoint task generator
+- **Target Organization:** %s
+- **Target Project:** %s
+- **Priority Tier:** %s
+- **Scope Summary:** %s
 
 ## Next Steps
-1. Triage and inspect repository codebase.
-2. Formulate implementation plan.
-3. Validate against Definition of Done.`, strings.TrimSpace(comment), strings.ReplaceAll(strings.TrimSpace(comment), "\n", " "))
+1. Triage codebase and inspect relevant source files.
+2. Implement solution following architectural specifications.
+3. Validate against StayPoint Definition of Done under race detection.
+
+## Original Request
+> %s`, title, org, project, strings.ToUpper(priority), title, cleanComment)
 
 	return InferredTask{
-		Organization: "StayPoint",
-		Project:      "StayPoint Core Engine & Telemetry Fleet",
+		Organization: org,
+		Project:      project,
 		Title:        title,
 		Description:  description,
 		Priority:     priority,
 		Labels:       labels,
-		AssigneeRole: "CLI & Statusline Presentation Specialist",
+		AssigneeRole: role,
 	}
+}
+
+// cleanImperativeTitle strips conversational dictation filler and ensures imperative mood under 72 chars.
+func cleanImperativeTitle(input, org string) string {
+	raw := strings.TrimSpace(input)
+	if idx := strings.Index(raw, "\n"); idx != -1 {
+		raw = raw[:idx]
+	}
+
+	// Repeatedly strip conversational preambles from the beginning
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)^(?:hey|yo|hi|hello)\s+(?:vinny\s+|there\s+|assistant\s+)?`),
+		regexp.MustCompile(`(?i)^(?:so\s+)?basically\s+`),
+		regexp.MustCompile(`(?i)^(?:can\s+you|could\s+you|would\s+you)\s+`),
+		regexp.MustCompile(`(?i)^please\s+`),
+		regexp.MustCompile(`(?i)^(?:um+|uh+|er+|ah+)\s+`),
+		regexp.MustCompile(`(?i)^(?:in|for)\s+(?:sharepoint|staypoint|runelite|managed\s+solution)\s+`),
+		regexp.MustCompile(`(?i)^(?:we\s+(?:need\s+to|gotta|should|have\s+to)|i\s+(?:need\s+to|want\s+to|would\s+like\s+to))\s+`),
+	}
+
+	stripped := raw
+	changed := true
+	for changed {
+		changed = false
+		for _, re := range patterns {
+			if loc := re.FindStringIndex(stripped); loc != nil && loc[0] == 0 {
+				stripped = strings.TrimSpace(stripped[loc[1]:])
+				changed = true
+			}
+		}
+	}
+
+	// Strip conversational trailing clauses
+	if idx := strings.Index(strings.ToLower(stripped), " because "); idx != -1 {
+		stripped = strings.TrimSpace(stripped[:idx])
+	}
+	reTrailing := regexp.MustCompile(`(?i)\s+(?:asap|urgently|please|right now)$`)
+	stripped = reTrailing.ReplaceAllString(stripped, "")
+	stripped = strings.TrimSpace(stripped)
+
+	// Capitalize first character
+	if len(stripped) > 0 {
+		stripped = strings.ToUpper(stripped[:1]) + stripped[1:]
+	}
+
+	// Ensure imperative verb prefix if missing
+	verbs := []string{"Fix", "Implement", "Add", "Update", "Refactor", "Clean", "Prune", "Run", "Resolve", "Audit", "Remove"}
+	hasVerb := false
+	for _, v := range verbs {
+		if strings.HasPrefix(stripped, v) {
+			hasVerb = true
+			break
+		}
+	}
+	if !hasVerb {
+		stripped = "Implement " + stripped
+	}
+
+	// Remove trailing punctuation
+	stripped = strings.TrimRight(stripped, ".!? \t\r\n")
+
+	// Limit to 72 characters
+	if len(stripped) > 72 {
+		stripped = strings.TrimSpace(stripped[:69]) + "..."
+	}
+
+	return stripped
 }
