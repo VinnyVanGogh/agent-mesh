@@ -45,7 +45,31 @@ archives:
     files:
       - README.md
       - LICENSE*
-      - templates/*
+
+nfpms:
+  - id: staypoint
+    package_name: staypoint
+    vendor: VinnyVanGogh
+    homepage: https://github.com/VinnyVanGogh/staypoint
+    maintainer: Vince Vasile <stylesbyvinny@gmail.com>
+    description: |-
+      Staypoint AI agent ops: quota routing, checkpoints, circuit breaker, and daemon telemetry.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    builds:
+      - staypoint
+      - staypointd
+    contents:
+      - src: dist/linux/staypointd.service
+        dst: /usr/lib/systemd/user/staypointd.service
+        file_info:
+          mode: 0644
+    scripts:
+      postinstall: dist/linux/postinstall.sh
+      preremove: dist/linux/preremove.sh
 
 checksum:
   name_template: "checksums.txt"
