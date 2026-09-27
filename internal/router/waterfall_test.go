@@ -207,8 +207,8 @@ func TestDynamicQuotaAwareFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Route failed: %v", err)
 	}
-	if decSonnet.Tool != "agy" || decSonnet.Model != "gemini-3.8-flash-high" {
-		t.Errorf("expected agy / gemini-3.8-flash-high for locked Claude Sonnet, got tool=%s, model=%s", decSonnet.Tool, decSonnet.Model)
+	if decSonnet.Tool != "agy" || decSonnet.Model != "gemini-3.8-flash" {
+		t.Errorf("expected agy / gemini-3.8-flash for locked Claude Sonnet, got tool=%s, model=%s", decSonnet.Tool, decSonnet.Model)
 	}
 
 	// 4. When Claude lock resets -> routes back to primary Claude model
@@ -236,6 +236,24 @@ func TestDynamicQuotaAwareFallback(t *testing.T) {
 	}
 	if decReset.Tool != "claude" || decReset.Model != "claude-sonnet-4-6" {
 		t.Errorf("expected route to return to primary Claude model on reset, got tool=%s, model=%s", decReset.Tool, decReset.Model)
+	}
+
+	// 5. Work repo with Claude Work NOT locked -> routes to Claude Code (work seat / SSH)
+	unlockedWorkPacer := &PacerState{
+		Pools: map[PoolID]*QuotaPool{
+			PoolWorkClaude: {
+				IsLocked: false,
+			},
+		},
+	}
+	decWorkUnchecked, err := Route(ctx, "/Users/vincevasile/Documents/dev/mansol-apps-server/github_repo-prod", unlockedWorkPacer, RouteOptions{
+		CheckSSH: false,
+	})
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+	if decWorkUnchecked.Tool != "claude" || decWorkUnchecked.Target != TargetLocalClaudeWork {
+		t.Errorf("expected local claude work seat when ssh not checked, got %s / %s", decWorkUnchecked.Tool, decWorkUnchecked.Target)
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 )
 
 type RouteTarget string
@@ -253,9 +255,10 @@ func FallbackPairingMatrix(claudeModel, effort string) (geminiModel, geminiEffor
 
 // Route executes the dynamic waterfall routing engine:
 // 1. Check if cwd is an enterprise work repo.
-// 2. If work repo: check SSH connectivity to remote node -> route to remote Claude.
-// 3. If personal repo: compare quota headroom, preferring Gemini Native as primary daily driver,
-//    falling back to 3P Claude / personal Claude when Gemini is locked out.
+// 2. If work repo: check if Claude Work is locked (falls back to Gemini 3.1 Pro per STA-12);
+//    otherwise check SSH connectivity to remote node -> route to remote Claude, or fallback to local Claude work seat.
+// 3. If personal repo: balanced peer pacing between Claude Code and Antigravity,
+//    with dynamic quota-aware fallback to Gemini 3.1 Pro (Opus) / Gemini 3.8 Flash (Sonnet) when Claude is locked out.
 func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOptions) (*RouteDecision, error) {
 	if cwd == "" || cwd == "." {
 		if cur, err := os.Getwd(); err == nil {
@@ -305,11 +308,32 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 			decision.Warnings = append(decision.Warnings, fmt.Sprintf("Claude Work locked out until %s; routed to Gemini 3.1 Pro", poolWork.LockoutUntil.Format("03:04pm")))
 			return decision, nil
 		}
+
+		sshOk := false
+		if opts.CheckSSH {
+			sshOk = CheckSSHConnectivity(ctx, opts.RemoteHost)
+		}
+		decision.SSHReachable = sshOk
+
+		if sshOk {
+			remoteCwd := bridge.ToRemotePath(absCwd)
+			decision.Target = TargetRemoteClaude
+			decision.Tool = "ssh"
+			decision.Model = "claude-opus-5"
+			decision.Command = fmt.Sprintf("ssh -t %s \"export PATH=\\\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:\\$PATH\\\"; cd %s && claude\"", opts.RemoteHost, bridge.ShellPathForDir(remoteCwd))
+			decision.Reason = fmt.Sprintf("Enterprise work repo (%s); remote node %s reachable via SSH (Highest Priority)", workSrc, opts.RemoteHost)
+			return decision, nil
+		}
+
+		// Work repo but remote not reachable
 		decision.Target = TargetLocalClaudeWork
 		decision.Tool = "claude"
 		decision.Model = "claude-opus-5"
 		decision.Command = "CLAUDE_CONFIG_DIR=~/.claude-work claude"
-		decision.Reason = fmt.Sprintf("Enterprise work repo (%s); routing to local Claude Code with Managed Solution work seat", workSrc)
+		decision.Reason = fmt.Sprintf("Enterprise work repo (%s); remote node %s unreachable via SSH, routing to local Claude Code with Managed Solution work seat", workSrc, opts.RemoteHost)
+		if opts.CheckSSH {
+			decision.Warnings = append(decision.Warnings, fmt.Sprintf("Remote node %s unreachable via SSH; falling back to local Claude", opts.RemoteHost))
+		}
 		return decision, nil
 	}
 
@@ -326,16 +350,8 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 	routeToGemini := func(reason string) (*RouteDecision, error) {
 		decision.Target = TargetGeminiNative
 		decision.Tool = "agy"
-		// Dynamic Quota-Aware Fallback (STA-12):
-		// Check requested Claude tier: Opus -> Gemini 3.1 Pro; Sonnet -> Gemini 3.8 Flash
-		targetModel, effort, cmd := FallbackPairingMatrix(opts.PreferredModel, opts.PreferredEffort)
-		if strings.Contains(strings.ToLower(opts.PreferredModel), "opus") {
-			decision.Model = "gemini-3.1-pro"
-		} else if strings.Contains(strings.ToLower(opts.PreferredModel), "sonnet") {
-			decision.Model = fmt.Sprintf("gemini-3.8-flash-%s", effort)
-		} else {
-			decision.Model = fmt.Sprintf("%s-%s", targetModel, effort)
-		}
+		targetModel, _, cmd := FallbackPairingMatrix(opts.PreferredModel, opts.PreferredEffort)
+		decision.Model = targetModel
 		decision.Command = cmd
 		decision.Reason = reason
 		return decision, nil
