@@ -1,0 +1,17 @@
+language: "en-US"
+tone_instructions: "Focus on AST-grounded analysis, architectural consistency, and security. Be direct, objective, and concise."
+reviews:
+  profile: "assertive"
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  path_excludes:
+    - "**/*.md"
+    - "docs/**"
+    - "**/*.lock"
+    - "node_modules/**"
+    - "dist/**"
+chat:
+  auto_reply: true
