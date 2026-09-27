@@ -138,7 +138,7 @@ func NewFleetDoctor(opts DoctorOptions) *FleetDoctor {
 		remoteHost = cfg.RemoteHost
 	}
 	if remoteHost == "" {
-		remoteHost = "mansol-mbp"
+		remoteHost = "company-mbp"
 	}
 
 	d := &FleetDoctor{

@@ -37,19 +37,19 @@ func TestFormatRsyncRemotePath(t *testing.T) {
 		expected  string
 	}{
 		{
-			host:      "mansol-mbp",
+			host:      "company-mbp",
 			remoteDir: "~/Documents/dev/repo",
-			expected:  "mansol-mbp:Documents/dev/repo",
+			expected:  "company-mbp:Documents/dev/repo",
 		},
 		{
-			host:      "mansol-mbp",
+			host:      "company-mbp",
 			remoteDir: "/Users/mansolvv/Documents/dev/repo",
-			expected:  "mansol-mbp:/Users/mansolvv/Documents/dev/repo",
+			expected:  "company-mbp:/Users/mansolvv/Documents/dev/repo",
 		},
 		{
-			host:      "mansol-mbp",
+			host:      "company-mbp",
 			remoteDir: "~",
-			expected:  "mansol-mbp:",
+			expected:  "company-mbp:",
 		},
 	}
 
