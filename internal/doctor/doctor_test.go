@@ -115,6 +115,16 @@ func newHealthyDoctor() *FleetDoctor {
 		return "FOUND\nFOUND\nFOUND", 30 * time.Millisecond, nil
 	}
 
+	doc.LoadScanReposFunc = func(path string) (*bridge.ScanReposConfig, error) {
+		return &bridge.ScanReposConfig{
+			Repos: []bridge.RepoMapping{
+				{Name: "repo1", Path: "~/Documents/dev/work/repo1"},
+				{Name: "repo2", Path: "~/Documents/dev/work/repo2"},
+				{Name: "repo3", Path: "~/Documents/dev/work/repo3"},
+			},
+		}, nil
+	}
+
 	validBrewInfoJSON := `{
 		"formulae": [{
 			"versions": {"stable": "0.1.0"},
@@ -148,6 +158,13 @@ func TestDoctor_AllHealthy(t *testing.T) {
 		t.Errorf("expected 0 errors, got %d", report.Summary.Errors)
 	}
 	if report.Summary.Warnings != 0 {
+		for _, sec := range report.Sections {
+			for _, chk := range sec.Checks {
+				if chk.Status == StatusWarn {
+					t.Logf("WARN in [%s] %s: %s (remediation: %s)", sec.Name, chk.Name, chk.Message, chk.Remediation)
+				}
+			}
+		}
 		t.Errorf("expected 0 warnings, got %d", report.Summary.Warnings)
 	}
 	if report.Summary.Passed == 0 {

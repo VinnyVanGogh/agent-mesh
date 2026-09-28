@@ -124,6 +124,7 @@ type FleetDoctor struct {
 	StatFileFunc         func(name string) (os.FileInfo, error)
 	RemoteCommandFunc    func(ctx context.Context, host string, cmd string) (string, time.Duration, error)
 	RunBrewCommandFunc   func(ctx context.Context, args ...string) (string, time.Duration, error)
+	LoadScanReposFunc    func(path string) (*bridge.ScanReposConfig, error)
 }
 
 // NewFleetDoctor initializes a FleetDoctor with production defaults.
@@ -146,9 +147,10 @@ func NewFleetDoctor(opts DoctorOptions) *FleetDoctor {
 		localVersion: CurrentVersion,
 		remoteHost:   remoteHost,
 		cfg:          cfg,
-		LookPathFunc: exec.LookPath,
-		ReadFileFunc: os.ReadFile,
-		StatFileFunc: os.Stat,
+		LookPathFunc:      exec.LookPath,
+		ReadFileFunc:      os.ReadFile,
+		StatFileFunc:      os.Stat,
+		LoadScanReposFunc: bridge.LoadScanRepos,
 	}
 
 	d.LocalVersionFunc = func() (string, error) {
@@ -864,7 +866,7 @@ func (d *FleetDoctor) checkRemoteNode(ctx context.Context) SectionResult {
 
 	// 2. Mapped Repositories from scan-repos.json
 	chkRepos := CheckResult{Name: "Mapped Repositories"}
-	scanCfg, err := bridge.LoadScanRepos("")
+	scanCfg, err := d.LoadScanReposFunc("")
 	if err != nil || scanCfg == nil || len(scanCfg.Repos) == 0 {
 		chkRepos.Status = StatusWarn
 		chkRepos.Message = "No mapped repositories found in scan-repos.json"
