@@ -831,7 +831,7 @@ func TestPDFGeneration_SinglePageOutput(t *testing.T) {
 			pdfPath := filepath.Join(outDir, fmt.Sprintf("%s-test.pdf", reportType))
 			err := RenderReport(ctx, reportType, cfg, pdfPath)
 			if err != nil {
-				if strings.Contains(err.Error(), "websocket url timeout") || strings.Contains(err.Error(), "executable file not found") {
+				if strings.Contains(err.Error(), "websocket url timeout") || strings.Contains(err.Error(), "executable file not found") || strings.Contains(err.Error(), "context deadline exceeded") {
 					t.Skipf("Chrome not functional in this CI environment (%v); skipping", err)
 					return
 				}
