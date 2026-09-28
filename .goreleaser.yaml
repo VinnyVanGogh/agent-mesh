@@ -3,6 +3,7 @@
 version: 2
 
 project_name: staypoint
+dist: build-dist
 
 before:
   hooks:
