@@ -484,3 +484,182 @@ func TestTaskCreate_BacklogDisposition_DispatchesUnassigned(t *testing.T) {
 	}
 }
 
+func TestTaskCreate_ExplicitBacklogFlag(t *testing.T) {
+	var receivedReq paperclip.CreateIssueRequest
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == "POST" {
+			_ = json.NewDecoder(r.Body).Decode(&receivedReq)
+			_ = json.NewEncoder(w).Encode(paperclip.IssueResponse{
+				ID:       "mock-backlog-flag-issue",
+				Status:   "backlog",
+				CompanyID: "sta-comp-id",
+			})
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/companies/sta-comp-id") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode(paperclip.CompanyResponse{
+				ID:          "sta-comp-id",
+				Name:        "StayPoint",
+				IssuePrefix: "STA",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	os.Setenv("PAPERCLIP_API_URL", mockServer.URL)
+	os.Setenv("PAPERCLIP_COMPANY_ID", "sta-comp-id")
+	os.Setenv("PAPERCLIP_API_KEY", "test-token")
+	defer os.Unsetenv("PAPERCLIP_API_URL")
+	defer os.Unsetenv("PAPERCLIP_COMPANY_ID")
+	defer os.Unsetenv("PAPERCLIP_API_KEY")
+
+	var stdout, stderr bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+
+	_ = taskCreateCmd.Flags().Set("dry-run", "false")
+	_ = taskCreateCmd.Flags().Set("backlog", "false")
+	_ = taskCreateCmd.Flags().Set("start", "false")
+	_ = taskCreateCmd.Flags().Set("yes", "false")
+	rootCmd.SetArgs([]string{
+		"task", "create",
+		"passing thought: explore sqlite vector extensions for memory search",
+		"--backlog",
+	})
+
+	if err := rootCmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("task create with --backlog failed: %v", err)
+	}
+
+	if receivedReq.Status != "backlog" {
+		t.Errorf("expected status 'backlog', got %q", receivedReq.Status)
+	}
+	if receivedReq.AssigneeAgentId != "" {
+		t.Errorf("expected empty AssigneeAgentId for --backlog, got %q", receivedReq.AssigneeAgentId)
+	}
+}
+
+func TestTaskCreate_ExplicitStartFlag(t *testing.T) {
+	var receivedReq paperclip.CreateIssueRequest
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == "POST" {
+			_ = json.NewDecoder(r.Body).Decode(&receivedReq)
+			_ = json.NewEncoder(w).Encode(paperclip.IssueResponse{
+				ID:       "mock-start-flag-issue",
+				Status:   "todo",
+				CompanyID: "sta-comp-id",
+			})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/agents") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode([]paperclip.AgentResponse{
+				{ID: "e7c896e8-2d4f-4e21-a7a9-2c8e47f78976", Name: "Chief of Staff", Role: "ceo"},
+			})
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/companies/sta-comp-id") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode(paperclip.CompanyResponse{
+				ID:          "sta-comp-id",
+				Name:        "StayPoint",
+				IssuePrefix: "STA",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	os.Setenv("PAPERCLIP_API_URL", mockServer.URL)
+	os.Setenv("PAPERCLIP_COMPANY_ID", "sta-comp-id")
+	os.Setenv("PAPERCLIP_API_KEY", "test-token")
+	defer os.Unsetenv("PAPERCLIP_API_URL")
+	defer os.Unsetenv("PAPERCLIP_COMPANY_ID")
+	defer os.Unsetenv("PAPERCLIP_API_KEY")
+
+	var stdout, stderr bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+
+	_ = taskCreateCmd.Flags().Set("dry-run", "false")
+	_ = taskCreateCmd.Flags().Set("backlog", "false")
+	_ = taskCreateCmd.Flags().Set("start", "false")
+	_ = taskCreateCmd.Flags().Set("yes", "false")
+	rootCmd.SetArgs([]string{
+		"task", "create",
+		"urgent: fix high cpu usage in background quota poller",
+		"--start",
+	})
+
+	if err := rootCmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("task create with --start failed: %v", err)
+	}
+
+	if receivedReq.Status != "todo" {
+		t.Errorf("expected status 'todo', got %q", receivedReq.Status)
+	}
+	if receivedReq.AssigneeAgentId != "e7c896e8-2d4f-4e21-a7a9-2c8e47f78976" {
+		t.Errorf("expected AssigneeAgentId 'e7c896e8-2d4f-4e21-a7a9-2c8e47f78976', got %q", receivedReq.AssigneeAgentId)
+	}
+}
+
+func TestTaskCreate_ClarificationBypassRecordsAssumptions(t *testing.T) {
+	var receivedReq paperclip.CreateIssueRequest
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == "POST" {
+			_ = json.NewDecoder(r.Body).Decode(&receivedReq)
+			_ = json.NewEncoder(w).Encode(paperclip.IssueResponse{
+				ID:          "mock-clarify-issue",
+				Title:       receivedReq.Title,
+				Description: receivedReq.Description,
+				Status:      receivedReq.Status,
+				CompanyID:   "sta-comp-id",
+			})
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/companies/sta-comp-id") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode(paperclip.CompanyResponse{
+				ID:          "sta-comp-id",
+				Name:        "StayPoint",
+				IssuePrefix: "STA",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	os.Setenv("PAPERCLIP_API_URL", mockServer.URL)
+	os.Setenv("PAPERCLIP_COMPANY_ID", "sta-comp-id")
+	os.Setenv("PAPERCLIP_API_KEY", "test-token")
+	defer os.Unsetenv("PAPERCLIP_API_URL")
+	defer os.Unsetenv("PAPERCLIP_COMPANY_ID")
+	defer os.Unsetenv("PAPERCLIP_API_KEY")
+
+	var stdout, stderr bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+
+	_ = taskCreateCmd.Flags().Set("dry-run", "false")
+	_ = taskCreateCmd.Flags().Set("backlog", "false")
+	_ = taskCreateCmd.Flags().Set("start", "false")
+	_ = taskCreateCmd.Flags().Set("yes", "false")
+	rootCmd.SetArgs([]string{
+		"task", "create",
+		"ambiguous brief: maybe do something with tokens?",
+		"--yes",
+	})
+
+	if err := rootCmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("task create failed: %v", err)
+	}
+
+	if !strings.Contains(receivedReq.Description, "## Assumptions Made") {
+		t.Errorf("expected description to contain '## Assumptions Made', got: %s", receivedReq.Description)
+	}
+}
+

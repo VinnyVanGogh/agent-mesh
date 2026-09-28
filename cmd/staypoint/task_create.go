@@ -39,6 +39,9 @@ func init() {
 	taskCreateCmd.Flags().Bool("dry-run", false, "Infer task and render summary without dispatching to Paperclip API")
 	taskCreateCmd.Flags().BoolP("yes", "y", false, "Skip interactive confirmation/action card and dispatch immediately")
 	taskCreateCmd.Flags().BoolP("interactive", "i", false, "Force interactive disposition and clarification prompters")
+	taskCreateCmd.Flags().BoolP("backlog", "b", false, "Park task unassigned in backlog (zero prompts)")
+	taskCreateCmd.Flags().BoolP("start", "s", false, "Assign task immediately to Chief of Staff and schedule active execution")
+	taskCreateCmd.Flags().Bool("assign", false, "Alias for --start")
 	taskCreateCmd.Flags().String("company", "", "Target Paperclip company ID (defaults to PAPERCLIP_COMPANY_ID)")
 	taskCreateCmd.Flags().String("project", "", "Target project ID (defaults to current project)")
 	taskCreateCmd.Flags().String("priority", "", "Override priority (low, medium, high, urgent)")
@@ -140,6 +143,20 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	if interactiveFlag {
 		interactive = true
 	}
+	backlogFlag, _ := cmd.Flags().GetBool("backlog")
+	startFlag, _ := cmd.Flags().GetBool("start")
+	assignFlag, _ := cmd.Flags().GetBool("assign")
+	if assignFlag {
+		startFlag = true
+	}
+
+	if backlogFlag {
+		genResult.Task.Status = "backlog"
+		interactive = false
+	} else if startFlag {
+		genResult.Task.Status = "todo"
+		interactive = false
+	}
 
 	// 3. Dispatch to Paperclip API
 	companyID := companyFlag
@@ -178,7 +195,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 
 	var assigneeID string
 	var assigneeName string
-	if companyID != "" {
+	if companyID != "" && genResult.Task.Status != "backlog" {
 		if agents, agentErr := paperclipClient.ListAgents(ctx, companyID); agentErr == nil {
 			if roleOverride != "" {
 				lowerRole := strings.ToLower(roleOverride)
@@ -200,6 +217,9 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 				}
 			}
 		}
+	} else if genResult.Task.Status == "backlog" {
+		assigneeID = ""
+		assigneeName = "Unassigned"
 	}
 
 	for interactive {
@@ -217,14 +237,41 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 			interactive = false
 		case ui.ActionDispatchBacklog:
 			genResult.Task.Status = "backlog"
+			assigneeID = ""
+			assigneeName = "Unassigned"
 			interactive = false
 		case ui.ActionDispatchActive:
 			genResult.Task.Status = "todo"
+			if (assigneeID == "" || assigneeName == "Unassigned") && companyID != "" {
+				if agents, agentErr := paperclipClient.ListAgents(ctx, companyID); agentErr == nil {
+					for _, agent := range agents {
+						if strings.Contains(strings.ToLower(agent.Name), "chief of staff") || strings.EqualFold(agent.Role, "ceo") {
+							assigneeID = agent.ID
+							assigneeName = agent.Name
+							break
+						}
+					}
+				}
+			}
 			interactive = false
 		case ui.ActionPromptDisposition:
 			selectedDisp, err := ui.RunDispositionPrompter(genResult.Task.Status)
 			if err == nil && selectedDisp != "" {
 				genResult.Task.Status = selectedDisp
+				if selectedDisp == "backlog" {
+					assigneeID = ""
+					assigneeName = "Unassigned"
+				} else if (assigneeID == "" || assigneeName == "Unassigned") && companyID != "" {
+					if agents, agentErr := paperclipClient.ListAgents(ctx, companyID); agentErr == nil {
+						for _, agent := range agents {
+							if strings.Contains(strings.ToLower(agent.Name), "chief of staff") || strings.EqualFold(agent.Role, "ceo") {
+								assigneeID = agent.ID
+								assigneeName = agent.Name
+								break
+							}
+						}
+					}
+				}
 			}
 		case ui.ActionClarify:
 			clarificationText, err := ui.RunClarificationModal(genResult.Task.AskClarification)
@@ -250,6 +297,16 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 				genResult.Task.Description = editedDesc
 			}
 		}
+	}
+
+	if !interactive && genResult.Task.AskClarification != "" {
+		if !strings.Contains(genResult.Task.Description, "## Assumptions Made") {
+			genResult.Task.Description += fmt.Sprintf("\n\n## Assumptions Made\n- %s (clarification bypassed in non-interactive mode)", genResult.Task.AskClarification)
+		}
+		if genResult.Task.Status == "" {
+			genResult.Task.Status = "backlog"
+		}
+		genResult.Task.AskClarification = ""
 	}
 
 	if genResult.Task.AskClarification != "" {

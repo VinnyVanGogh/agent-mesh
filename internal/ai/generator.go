@@ -636,12 +636,27 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 	}
 
 	status := "todo"
-	if strings.Contains(lowerNorm, "idea") || strings.Contains(lowerNorm, "someday") || strings.Contains(lowerNorm, "look into later") {
+	if strings.Contains(lowerNorm, "idea") || strings.Contains(lowerNorm, "someday") || strings.Contains(lowerNorm, "look into later") || strings.Contains(lowerNorm, "passing thought") || strings.Contains(lowerNorm, "note to self") || strings.Contains(lowerNorm, "backlog") {
 		status = "backlog"
 	}
 
-	// 7. Synthesize Markdown Description
-	description := fmt.Sprintf(`## Objectives
+	// 7. Synthesize Markdown Description with Dynamic Task Sizing
+	var description string
+	if status == "backlog" || strings.Contains(lowerNorm, "idea") || strings.Contains(lowerNorm, "passing thought") {
+		labels = append(labels, "idea")
+		description = fmt.Sprintf(`## Concept Overview
+- **Passing Thought / Research Idea:** %s
+- **Target Subsystem:** %s (%s)
+
+## Open Research Questions
+- What are the architectural tradeoffs and runtime performance implications?
+- How does this integrate with the existing database and indexing schema?
+
+<details><summary>Original Voice Dictation</summary>
+%s
+</details>`, cleanComment, project, org, cleanComment)
+	} else {
+		description = fmt.Sprintf(`## Objectives
 - Synthesize requirements and deliver engineering solution for %s.
 - Address specifications and prevent regressions.
 
@@ -652,23 +667,30 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 - **Scope Summary:** %s%s
 
 ## Boundaries & Acceptance Criteria
-1. Triage codebase and inspect relevant source files.
-2. Implement solution following architectural specifications.
-3. Validate against StayPoint Definition of Done under race detection.
+- [ ] Triage codebase and inspect relevant source files.
+- [ ] Implement solution following architectural specifications.
+- [ ] Validate against StayPoint Definition of Done under race detection.
 
 <details><summary>Original Voice Dictation</summary>
 %s
 </details>`, title, org, project, strings.ToUpper(priority), title, questionBlock, cleanComment)
+	}
+
+	var askClarification string
+	if strings.Contains(lowerNorm, "ambiguous") || strings.Contains(lowerNorm, "maybe") || strings.Contains(lowerNorm, "not sure") || strings.Contains(lowerNorm, "vague") || (strings.Contains(lowerNorm, " or ") && strings.Contains(lowerNorm, "?")) {
+		askClarification = "The brief is ambiguous. Which specific subsystem or implementation approach should be prioritized?"
+	}
 
 	return InferredTask{
-		Organization: org,
-		Project:      project,
-		Title:        title,
-		Description:  description,
-		Priority:     priority,
-		Labels:       labels,
-		AssigneeRole: role,
-		Status:       status,
+		Organization:     org,
+		Project:          project,
+		Title:            title,
+		Description:      description,
+		Priority:         priority,
+		Labels:           labels,
+		AssigneeRole:     role,
+		Status:           status,
+		AskClarification: askClarification,
 	}
 }
 
@@ -687,6 +709,8 @@ func cleanImperativeTitle(input, org string) string {
 		regexp.MustCompile(`(?i)^(?:in|for)\s+(?:sharepoint|staypoint|runelite|managed\s+solution|research)\s+`),
 		regexp.MustCompile(`(?i)^(?:we\s+(?:need\s+to|gotta|should|have\s+to)|i\s+(?:need\s+to|want\s+to|would\s+like\s+to))\s+`),
 		regexp.MustCompile(`(?i)^(?:the\s+)?task\s+(?:is\s+to|should\s+be\s+to|is)\s+`),
+		regexp.MustCompile(`(?i)^(?:urgent|asap|critical):\s*`),
+		regexp.MustCompile(`(?i)^(?:passing\s+thought|idea|note\s+to\s+self):\s*`),
 	}
 
 	stripped := raw
@@ -732,11 +756,16 @@ func cleanImperativeTitle(input, org string) string {
 		}
 	}
 	if !hasPrefix {
-		if strings.Contains(strings.ToLower(stripped), "bug") || strings.Contains(strings.ToLower(stripped), "fix") {
-			stripped = "Fix: " + stripped
-		} else if strings.Contains(strings.ToLower(stripped), "idea") {
+		lowerStripped := strings.ToLower(stripped)
+		if strings.HasPrefix(lowerStripped, "fix ") || strings.Contains(lowerStripped, "bug") || strings.Contains(lowerStripped, "fix") {
+			if strings.HasPrefix(lowerStripped, "fix ") {
+				stripped = "Fix: " + strings.TrimSpace(stripped[4:])
+			} else {
+				stripped = "Fix: " + stripped
+			}
+		} else if strings.Contains(lowerStripped, "idea") || strings.Contains(lowerStripped, "passing thought") || strings.Contains(lowerStripped, "note to self") {
 			stripped = "Idea: " + stripped
-		} else if strings.Contains(strings.ToLower(stripped), "refactor") {
+		} else if strings.Contains(lowerStripped, "refactor") {
 			stripped = "Refactor: " + stripped
 		} else if org == "Maintenance" {
 			stripped = "Infra: " + stripped
