@@ -107,6 +107,12 @@ brews:
         staypoint init
     test: |
       assert_match version.to_s, shell_output("#{bin}/staypoint version")
+    custom_block: |
+      bottle do
+        root_url "https://github.com/VinnyVanGogh/staypoint/releases/download/PLACEHOLDER_VERSION"
+        sha256 cellar: :any_skip_relocation, arm64_sequoia: "BOTTLE_ARM64_SHA256"
+        sha256 cellar: :any_skip_relocation, ventura: "BOTTLE_AMD64_SHA256"
+      end
 
 checksum:
   name_template: "checksums.txt"
