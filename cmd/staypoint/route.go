@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/router"
+	"github.com/spf13/cobra"
 )
 
 var routeCmd = &cobra.Command{
@@ -130,7 +130,6 @@ var routeCmd = &cobra.Command{
 		}
 	},
 }
-
 
 func init() {
 	rootCmd.AddCommand(routeCmd)

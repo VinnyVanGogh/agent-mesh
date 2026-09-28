@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/reporting"
+	"github.com/spf13/cobra"
 )
 
 var reportCmd = &cobra.Command{
@@ -84,7 +84,6 @@ var reportCmd = &cobra.Command{
 		_ = exec.Command("open", outFlag).Start()
 	},
 }
-
 
 func init() {
 	rootCmd.AddCommand(reportCmd)

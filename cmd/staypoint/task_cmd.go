@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"time"
 
-	"github.com/spf13/cobra"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/paperclip"
+	"github.com/spf13/cobra"
 )
 
 var taskCmd = &cobra.Command{
@@ -148,12 +149,208 @@ var taskBudgetCmd = &cobra.Command{
 	},
 }
 
+var taskShowCmd = &cobra.Command{
+	Use:     "show [id|name]",
+	Aliases: []string{"view", "info"},
+	Short:   "Show details of a task",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+
+		task, err := meshContext.GetTask(store.DB(), args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting task: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Task ID: %s\n", task.ID)
+		fmt.Printf("Name: %s\n", task.Name)
+		fmt.Printf("Status: %s\n", task.Status)
+		if task.IsBlocked {
+			fmt.Printf("Blocked: YES (Reason: %s)\n", task.BlockReason)
+		}
+		fmt.Printf("Repository: %s (Branch: %s)\n", task.RepoPath, task.GitBranch)
+		if task.Organization != "" {
+			fmt.Printf("Organization: %s\n", task.Organization)
+		}
+		if task.Project != "" {
+			fmt.Printf("Project: %s\n", task.Project)
+		}
+
+		comments, err := meshContext.GetTaskComments(store.DB(), task.ID)
+		if err == nil && len(comments) > 0 {
+			fmt.Println("\nComments:")
+			for _, c := range comments {
+				fmt.Printf("  [%s] %s: %s\n", c.CreatedAt, c.Author, c.Message)
+			}
+		}
+	},
+}
+
+var taskCheckoutCmd = &cobra.Command{
+	Use:     "checkout [id|name]",
+	Aliases: []string{"switch"},
+	Short:   "Set the active task and checkout its git branch",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+
+		task, err := meshContext.GetTask(store.DB(), args[0])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error getting task: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Set as active repository task by touching the updated_at
+		if err := meshContext.TouchTask(store.DB(), task.ID); err != nil {
+			fmt.Fprintf(os.Stderr, "Error updating task: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Switch or create corresponding git branch
+		branch := task.GitBranch
+		if branch == "" {
+			branch = fmt.Sprintf("feature/%s", task.ID)
+
+			// Update the DB with the new branch name
+			updateQuery := "UPDATE tasks SET git_branch = ? WHERE id = ?"
+			_, _ = store.DB().Exec(updateQuery, branch, task.ID)
+		}
+
+		if task.RepoPath != "" {
+			gitCmd := exec.Command("git", "checkout", branch)
+			gitCmd.Dir = task.RepoPath
+			if err := gitCmd.Run(); err != nil {
+				// Try to create the branch
+				gitCmd = exec.Command("git", "checkout", "-b", branch)
+				gitCmd.Dir = task.RepoPath
+				if err := gitCmd.Run(); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to checkout branch %s: %v\n", branch, err)
+				}
+			}
+		}
+
+		fmt.Printf("\033[1;32m✔ Task %q checked out\033[0m\n", task.ID)
+	},
+}
+
+var taskBlockCmd = &cobra.Command{
+	Use:   "block [id|name]",
+	Short: "Flag a task as blocked",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+
+		reason, _ := cmd.Flags().GetString("reason")
+		if err := meshContext.BlockTask(store.DB(), args[0], reason); err != nil {
+			fmt.Fprintf(os.Stderr, "Error blocking task: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("\033[1;33m✔ Task %q marked as blocked\033[0m\n", args[0])
+	},
+}
+
+var taskUnblockCmd = &cobra.Command{
+	Use:   "unblock [id|name]",
+	Short: "Unflag a task as blocked",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+
+		if err := meshContext.UnblockTask(store.DB(), args[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error unblocking task: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("\033[1;32m✔ Task %q unblocked\033[0m\n", args[0])
+	},
+}
+
+var taskCommentCmd = &cobra.Command{
+	Use:   "comment [id|name] [message]",
+	Short: "Append a structured comment/audit log note to the task",
+	Args:  cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+
+		author := os.Getenv("USER")
+		if author == "" {
+			author = "staypoint-user"
+		}
+
+		if err := meshContext.AddTaskComment(store.DB(), args[0], author, args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error adding comment: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("\033[1;32m✔ Comment added to task %q\033[0m\n", args[0])
+	},
+}
+
+var taskCancelCmd = &cobra.Command{
+	Use:     "cancel [id|name]",
+	Aliases: []string{"archive"},
+	Short:   "Transition task to cancelled/archived state",
+	Args:    cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+
+		if err := meshContext.ArchiveTask(store.DB(), args[0]); err != nil {
+			fmt.Fprintf(os.Stderr, "Error canceling task: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("\033[1;32m✔ Task %q cancelled/archived\033[0m\n", args[0])
+	},
+}
+
 func init() {
+
 	rootCmd.AddCommand(taskCmd)
 	taskCmd.AddCommand(taskListCmd)
 	taskCmd.AddCommand(taskAddCmd)
 	taskCmd.AddCommand(taskDoneCmd)
 	taskCmd.AddCommand(taskBudgetCmd)
+	taskCmd.AddCommand(taskShowCmd)
+	taskCmd.AddCommand(taskCheckoutCmd)
+	taskCmd.AddCommand(taskBlockCmd)
+	taskCmd.AddCommand(taskUnblockCmd)
+	taskCmd.AddCommand(taskCommentCmd)
+	taskCmd.AddCommand(taskCancelCmd)
+
+	taskBlockCmd.Flags().String("reason", "", "Reason for blocking the task")
+
 	taskListCmd.Flags().BoolP("all", "a", false, "Include done and soft-deleted tasks")
 	taskAddCmd.Flags().Float64("budget", 0.0, "Maximum budget limit in USD")
 	taskAddCmd.Flags().Int("max-turns", 0, "Maximum allowed turns")
@@ -167,4 +364,3 @@ func init() {
 	taskBudgetCmd.Flags().Float64("usd", 0.0, "Budget limit in USD")
 	taskBudgetCmd.Flags().Int("turns", 0, "Maximum allowed turns")
 }
-

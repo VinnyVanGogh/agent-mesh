@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "modernc.org/sqlite"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
+	_ "modernc.org/sqlite"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {
@@ -204,4 +204,3 @@ func TestTaskBudget(t *testing.T) {
 		t.Errorf("expected unblocked after increasing budget to $10.00")
 	}
 }
-

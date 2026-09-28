@@ -487,4 +487,3 @@ func TestGenerator_RoleInferenceAndMapping(t *testing.T) {
 		}
 	}
 }
-

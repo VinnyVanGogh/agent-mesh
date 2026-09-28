@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/spf13/cobra"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/spf13/cobra"
 )
 
 var whereCmd = &cobra.Command{
@@ -90,6 +90,9 @@ var whereCmd = &cobra.Command{
 			fmt.Printf("  • Active Task:  (No active task registered in staypoint.db)\n")
 		}
 
+		if activeTask != nil && activeTask.IsBlocked {
+			fmt.Printf("  • Blocker:      \033[1;31mYES\033[0m (%s)\n", activeTask.BlockReason)
+		}
 		fmt.Printf("  • Next Step:    \033[1;35m%s\033[0m\n", nextStep)
 
 		if len(gitCtx.ModifiedFiles) > 0 {
@@ -114,7 +117,6 @@ var whereCmd = &cobra.Command{
 		}
 	},
 }
-
 
 func init() {
 	rootCmd.AddCommand(whereCmd)

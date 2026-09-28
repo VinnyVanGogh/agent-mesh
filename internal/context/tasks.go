@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/google/uuid"
 )
 
 // Task represents an engineering task tracked within SQLite mesh.db.
@@ -18,7 +18,7 @@ type Task struct {
 	Name         string  `json:"name"`
 	RepoPath     string  `json:"repo_path"`
 	GitBranch    string  `json:"git_branch"`
-	Status       string  `json:"status"` // active, done, soft_deleted
+	Status       string  `json:"status"`       // active, done, soft_deleted
 	AccountRole  string  `json:"account_role"` // work, personal, other
 	MaxBudgetUSD float64 `json:"max_budget_usd"`
 	MaxTurns     int     `json:"max_turns"`
@@ -30,6 +30,8 @@ type Task struct {
 	CreatedAt    string  `json:"created_at"`
 	UpdatedAt    string  `json:"updated_at"`
 	DeletedAt    *string `json:"deleted_at,omitempty"`
+	IsBlocked    bool    `json:"is_blocked"`
+	BlockReason  string  `json:"block_reason"`
 }
 
 // TaskCreateOptions holds configuration for creating a task with budgets.
@@ -223,7 +225,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		query = `
 			SELECT id, name, repo_path, git_branch, status, account_role,
 			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-			       organization, project, created_at, updated_at, deleted_at
+			       organization, project, is_blocked, block_reason, created_at, updated_at, deleted_at
 			FROM tasks
 			WHERE status != 'soft_deleted'
 			ORDER BY created_at DESC
@@ -232,7 +234,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		query = `
 			SELECT id, name, repo_path, git_branch, status, account_role,
 			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-			       organization, project, created_at, updated_at, deleted_at
+			       organization, project, is_blocked, block_reason, created_at, updated_at, deleted_at
 			FROM tasks
 			WHERE status = 'active'
 			ORDER BY created_at DESC
@@ -248,7 +250,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 	var tasks []Task
 	for rows.Next() {
 		var t Task
-		var deletedAt, org, proj sql.NullString
+		var deletedAt, org, proj, blockReason sql.NullString
 		if err := rows.Scan(
 			&t.ID,
 			&t.Name,
@@ -263,11 +265,16 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 			&t.SpentTurns,
 			&org,
 			&proj,
+			&t.IsBlocked,
+			&blockReason,
 			&t.CreatedAt,
 			&t.UpdatedAt,
 			&deletedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan task row: %w", err)
+		}
+		if blockReason.Valid {
+			t.BlockReason = blockReason.String
 		}
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
@@ -296,7 +303,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-		       organization, project, created_at, updated_at, deleted_at
+		       organization, project, is_blocked, block_reason, created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE id = ? OR id = ? OR id LIKE ?
 		ORDER BY created_at DESC
@@ -310,7 +317,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 
 	row := db.QueryRow(query, id, fullID, prefixMatch)
 	var t Task
-	var deletedAt, org, proj sql.NullString
+	var deletedAt, org, proj, blockReason sql.NullString
 	if err := row.Scan(
 		&t.ID,
 		&t.Name,
@@ -325,6 +332,8 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 		&t.SpentTurns,
 		&org,
 		&proj,
+		&t.IsBlocked,
+		&blockReason,
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,
@@ -333,6 +342,9 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 			return nil, fmt.Errorf("task not found: %s", id)
 		}
 		return nil, fmt.Errorf("failed to get task: %w", err)
+	}
+	if blockReason.Valid {
+		t.BlockReason = blockReason.String
 	}
 	if deletedAt.Valid {
 		t.DeletedAt = &deletedAt.String
@@ -348,7 +360,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	query := `
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-		       organization, project, created_at, updated_at, deleted_at
+		       organization, project, is_blocked, block_reason, created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE status = 'active' AND (repo_path = ? OR repo_path LIKE ?)
 		ORDER BY updated_at DESC
@@ -356,7 +368,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	`
 	row := db.QueryRow(query, cleanPath, cleanPath+"/%")
 	var t Task
-	var deletedAt, org, proj sql.NullString
+	var deletedAt, org, proj, blockReason sql.NullString
 	err := row.Scan(
 		&t.ID,
 		&t.Name,
@@ -371,11 +383,16 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.SpentTurns,
 		&org,
 		&proj,
+		&t.IsBlocked,
+		&blockReason,
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,
 	)
 	if err == nil {
+		if blockReason.Valid {
+			t.BlockReason = blockReason.String
+		}
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
 		}
@@ -398,7 +415,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	fallbackQuery := `
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-		       organization, project, created_at, updated_at, deleted_at
+		       organization, project, is_blocked, block_reason, created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE status = 'active'
 		ORDER BY updated_at DESC
@@ -418,12 +435,17 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.SpentUSD,
 		&t.SpentTurns,
 		&org,
-		&proj,
+		&proj, proj,
+		&t.IsBlocked,
+		&blockReason,
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,
 	)
 	if err == nil {
+		if blockReason.Valid {
+			t.BlockReason = blockReason.String
+		}
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
 		}
@@ -491,4 +513,90 @@ func DeleteTask(db *sql.DB, id string) error {
 		return fmt.Errorf("task not found: %s", id)
 	}
 	return nil
+}
+
+type TaskComment struct {
+	ID        int    `json:"id"`
+	TaskID    string `json:"task_id"`
+	Author    string `json:"author"`
+	Message   string `json:"message"`
+	CreatedAt string `json:"created_at"`
+}
+
+func AddTaskComment(db *sql.DB, taskID, author, message string) error {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return err
+	}
+	query := `INSERT INTO task_comments (task_id, author, message) VALUES (?, ?, ?)`
+	_, err = db.Exec(query, task.ID, author, message)
+	return err
+}
+
+func GetTaskComments(db *sql.DB, taskID string) ([]TaskComment, error) {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT id, task_id, author, message, created_at FROM task_comments WHERE task_id = ? ORDER BY created_at ASC`
+	rows, err := db.Query(query, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var comments []TaskComment
+	for rows.Next() {
+		var c TaskComment
+		if err := rows.Scan(&c.ID, &c.TaskID, &c.Author, &c.Message, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		comments = append(comments, c)
+	}
+	return comments, rows.Err()
+}
+
+func BlockTask(db *sql.DB, taskID, reason string) error {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return err
+	}
+	query := `UPDATE tasks SET is_blocked = 1, block_reason = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
+	_, err = db.Exec(query, reason, task.ID)
+	return err
+}
+
+func UnblockTask(db *sql.DB, taskID string) error {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return err
+	}
+	query := `UPDATE tasks SET is_blocked = 0, block_reason = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
+	_, err = db.Exec(query, task.ID)
+	return err
+}
+
+func ArchiveTask(db *sql.DB, taskID string) error {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return err
+	}
+	// "cancel" / "archive" transitions to soft_deleted according to scope? Or maybe "cancelled" / "archived"?
+	// scope says: "Transitions task to cancelled/archived state cleanly"
+	// In the DB constraint: status IN ('active', 'done', 'soft_deleted').
+	// Let's just use 'soft_deleted' and soft-delete it or change DB schema to allow 'cancelled' and 'archived'?
+	// The CLI code says: if iss.Status == "done" || iss.Status == "cancelled"
+	// Wait, the DB check constraint is: status IN ('active', 'done', 'soft_deleted'). So cancelled could just be 'soft_deleted'.
+	query := `UPDATE tasks SET status = 'soft_deleted', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
+	_, err = db.Exec(query, task.ID)
+	return err
+}
+
+func TouchTask(db *sql.DB, taskID string) error {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return err
+	}
+	query := `UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
+	_, err = db.Exec(query, task.ID)
+	return err
 }

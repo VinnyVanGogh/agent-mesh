@@ -213,4 +213,3 @@ func TestClient_CreateIssue_WithAssigneeAgentId(t *testing.T) {
 		t.Errorf("expected payload assigneeAgentId to be 'agent-cos-1', got %v", capturedPayload["assigneeAgentId"])
 	}
 }
-

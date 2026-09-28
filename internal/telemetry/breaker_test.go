@@ -197,4 +197,3 @@ func TestCircuitBreakerDistinguishVariedFromIdentical(t *testing.T) {
 		t.Errorf("expected reason to cite 'Repeating failure loop: 3 consecutive', got: %s", reason2)
 	}
 }
-

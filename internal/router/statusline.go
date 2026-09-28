@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/VinnyVanGogh/staypoint/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"io"
 	"math"
 	"os"
@@ -403,6 +405,19 @@ func RenderStatusline(w io.Writer, r io.Reader) error {
 	}
 
 	// Print Line 1 & Line 2
+
+	// 4.5. Get Active Task and Blocker Status
+	activeTaskStr := ""
+	if store, err := db.Open(config.DefaultConfig().DBPath); err == nil {
+		if t, err := context.GetActiveTaskForRepo(store.DB(), dir); err == nil && t != nil {
+			activeTaskStr = fmt.Sprintf(" %s[%s]%s", Dim, t.ID, Reset)
+			if t.IsBlocked {
+				activeTaskStr += fmt.Sprintf(" %s[BLOCKED]%s", Red, Reset)
+			}
+		}
+		store.Close()
+	}
+
 	fmt.Fprintln(w, strings.Join(line1Parts, Sep))
 	fmt.Fprintln(w, strings.Join(line2Parts, Sep))
 

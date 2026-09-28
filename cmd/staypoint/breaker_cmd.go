@@ -5,9 +5,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
+	"github.com/spf13/cobra"
 )
 
 var breakerCmd = &cobra.Command{
@@ -91,7 +91,6 @@ func cleanGitStatusFile(line string) string {
 	}
 	return line
 }
-
 
 func init() {
 	rootCmd.AddCommand(breakerCmd)

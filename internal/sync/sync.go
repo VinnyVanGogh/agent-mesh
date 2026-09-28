@@ -23,11 +23,11 @@ import (
 
 // SyncResult captures the summary of a sync operation.
 type SyncResult struct {
-	Host             string        `json:"host"`
-	Duration         time.Duration `json:"duration"`
-	ClaudeTranscripts int          `json:"claude_transcripts"`
-	BrainLogs        int           `json:"brain_logs"`
-	RecordsIngested  int64         `json:"records_ingested"`
+	Host              string        `json:"host"`
+	Duration          time.Duration `json:"duration"`
+	ClaudeTranscripts int           `json:"claude_transcripts"`
+	BrainLogs         int           `json:"brain_logs"`
+	RecordsIngested   int64         `json:"records_ingested"`
 }
 
 // PullTranscripts pulls remote transcripts from host over rsync/SSH and triggers local DB ingestion.

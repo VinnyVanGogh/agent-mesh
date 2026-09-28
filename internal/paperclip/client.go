@@ -15,12 +15,12 @@ import (
 
 // CreateIssueRequest represents the JSON payload dispatched to Paperclip.
 type CreateIssueRequest struct {
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Priority    string   `json:"priority,omitempty"` // low, medium, high, urgent, critical
-	ProjectId   string   `json:"projectId,omitempty"`
-	AssigneeAgentId  string   `json:"assigneeAgentId,omitempty"`
-	Labels      []string `json:"labels,omitempty"`
+	Title           string   `json:"title"`
+	Description     string   `json:"description"`
+	Priority        string   `json:"priority,omitempty"` // low, medium, high, urgent, critical
+	ProjectId       string   `json:"projectId,omitempty"`
+	AssigneeAgentId string   `json:"assigneeAgentId,omitempty"`
+	Labels          []string `json:"labels,omitempty"`
 }
 
 // IssueResponse represents the issue returned by the Paperclip API.
@@ -398,7 +398,6 @@ func (c *Client) ListActiveIssues(ctx context.Context, companyID string) ([]Issu
 	}
 	return issues, nil
 }
-
 
 // AgentResponse represents an agent returned by the Paperclip API.
 type AgentResponse struct {
