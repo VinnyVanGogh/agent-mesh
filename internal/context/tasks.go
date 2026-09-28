@@ -9,20 +9,35 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 )
 
 // Task represents an engineering task tracked within SQLite mesh.db.
 type Task struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	RepoPath    string  `json:"repo_path"`
-	GitBranch   string  `json:"git_branch"`
-	Status      string  `json:"status"` // active, done, soft_deleted
-	AccountRole string  `json:"account_role"` // work, personal, other
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
-	DeletedAt   *string `json:"deleted_at,omitempty"`
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	RepoPath     string  `json:"repo_path"`
+	GitBranch    string  `json:"git_branch"`
+	Status       string  `json:"status"` // active, done, soft_deleted
+	AccountRole  string  `json:"account_role"` // work, personal, other
+	MaxBudgetUSD float64 `json:"max_budget_usd"`
+	MaxTurns     int     `json:"max_turns"`
+	SpentTokens  int64   `json:"spent_tokens"`
+	SpentUSD     float64 `json:"spent_usd"`
+	SpentTurns   int     `json:"spent_turns"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
+	DeletedAt    *string `json:"deleted_at,omitempty"`
+}
+
+// TaskCreateOptions holds configuration for creating a task with budgets.
+type TaskCreateOptions struct {
+	Name         string
+	RepoPath     string
+	GitBranch    string
+	AccountRole  string
+	MaxBudgetUSD float64
+	MaxTurns     int
 }
 
 // GetCurrentGitBranch returns the current active git branch for a directory.
@@ -42,11 +57,22 @@ func GetCurrentGitBranch(dir string) string {
 
 // CreateTask inserts a new active task into the database.
 func CreateTask(db *sql.DB, name, repoPath, gitBranch, role string) (*Task, error) {
-	name = strings.TrimSpace(name)
+	return CreateTaskWithOptions(db, TaskCreateOptions{
+		Name:        name,
+		RepoPath:    repoPath,
+		GitBranch:   gitBranch,
+		AccountRole: role,
+	})
+}
+
+// CreateTaskWithOptions inserts a new task with budget and turn limit configurations.
+func CreateTaskWithOptions(db *sql.DB, opts TaskCreateOptions) (*Task, error) {
+	name := strings.TrimSpace(opts.Name)
 	if name == "" {
 		return nil, fmt.Errorf("task name cannot be empty")
 	}
 
+	repoPath := opts.RepoPath
 	if repoPath == "" {
 		var err error
 		repoPath, err = os.Getwd()
@@ -59,10 +85,12 @@ func CreateTask(db *sql.DB, name, repoPath, gitBranch, role string) (*Task, erro
 		repoPath = absRepoPath
 	}
 
+	gitBranch := opts.GitBranch
 	if gitBranch == "" {
 		gitBranch = GetCurrentGitBranch(repoPath)
 	}
 
+	role := opts.AccountRole
 	if role == "" {
 		if bridge.IsWorkRepo(repoPath) {
 			role = "work"
@@ -74,15 +102,113 @@ func CreateTask(db *sql.DB, name, repoPath, gitBranch, role string) (*Task, erro
 	taskID := fmt.Sprintf("task-%s", uuid.New().String()[:8])
 
 	query := `
-		INSERT INTO tasks (id, name, repo_path, git_branch, status, account_role, created_at, updated_at)
-		VALUES (?, ?, ?, ?, 'active', ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		INSERT INTO tasks (
+			id, name, repo_path, git_branch, status, account_role,
+			max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
+			created_at, updated_at
+		)
+		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 0, 0.0, 0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 	`
 
-	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role); err != nil {
+	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns); err != nil {
 		return nil, fmt.Errorf("failed to insert task: %w", err)
 	}
 
 	return GetTask(db, taskID)
+}
+
+// RecordTaskSpend updates the cumulative token, dollar, and turn spend on a task.
+func RecordTaskSpend(db *sql.DB, taskID string, tokens int64, costUSD float64, turns int) error {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return err
+	}
+
+	query := `
+		UPDATE tasks
+		SET spent_tokens = spent_tokens + ?,
+		    spent_usd = spent_usd + ?,
+		    spent_turns = spent_turns + ?,
+		    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		WHERE id = ?
+	`
+	res, err := db.Exec(query, tokens, costUSD, turns, task.ID)
+	if err != nil {
+		return fmt.Errorf("failed to record task spend: %w", err)
+	}
+
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("task not found: %s", taskID)
+	}
+	return nil
+}
+
+// UpdateTaskBudget updates the budget limits for an existing task.
+func UpdateTaskBudget(db *sql.DB, taskID string, maxUSD float64, maxTurns int) error {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return err
+	}
+
+	query := `
+		UPDATE tasks
+		SET max_budget_usd = ?, max_turns = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		WHERE id = ?
+	`
+	res, err := db.Exec(query, maxUSD, maxTurns, task.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update task budget: %w", err)
+	}
+
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("task not found: %s", taskID)
+	}
+	return nil
+}
+
+// BudgetEvaluation encapsulates the status of a task's spending limits.
+type BudgetEvaluation struct {
+	IsBlocked bool
+	IsWarning bool
+	Reason    string
+	PctBudget float64
+	PctTurns  float64
+}
+
+// EvaluateTaskBudget determines whether a task is approaching or has exceeded its limits.
+func EvaluateTaskBudget(task *Task) BudgetEvaluation {
+	var eval BudgetEvaluation
+	if task == nil {
+		return eval
+	}
+
+	if task.MaxBudgetUSD > 0 {
+		eval.PctBudget = (task.SpentUSD / task.MaxBudgetUSD) * 100.0
+		if task.SpentUSD >= task.MaxBudgetUSD {
+			eval.IsBlocked = true
+			eval.Reason = fmt.Sprintf("Dollar budget exhausted ($%.2f spent / $%.2f limit)", task.SpentUSD, task.MaxBudgetUSD)
+			return eval
+		} else if eval.PctBudget >= 80.0 {
+			eval.IsWarning = true
+			eval.Reason = fmt.Sprintf("Dollar budget at %.0f%% ($%.2f spent / $%.2f limit)", eval.PctBudget, task.SpentUSD, task.MaxBudgetUSD)
+		}
+	}
+
+	if task.MaxTurns > 0 {
+		eval.PctTurns = (float64(task.SpentTurns) / float64(task.MaxTurns)) * 100.0
+		if task.SpentTurns >= task.MaxTurns {
+			eval.IsBlocked = true
+			eval.Reason = fmt.Sprintf("Turn limit exhausted (%d turns spent / %d turn limit)", task.SpentTurns, task.MaxTurns)
+			return eval
+		} else if eval.PctTurns >= 80.0 {
+			eval.IsWarning = true
+			eval.Reason = fmt.Sprintf("Turn limit at %.0f%% (%d turns spent / %d turn limit)", eval.PctTurns, task.SpentTurns, task.MaxTurns)
+		}
+	}
+
+	return eval
 }
 
 // ListTasks queries active tasks, or all non-deleted tasks if includeAll is true.
@@ -90,14 +216,18 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 	var query string
 	if includeAll {
 		query = `
-			SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at
+			SELECT id, name, repo_path, git_branch, status, account_role,
+			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
+			       created_at, updated_at, deleted_at
 			FROM tasks
 			WHERE status != 'soft_deleted'
 			ORDER BY created_at DESC
 		`
 	} else {
 		query = `
-			SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at
+			SELECT id, name, repo_path, git_branch, status, account_role,
+			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
+			       created_at, updated_at, deleted_at
 			FROM tasks
 			WHERE status = 'active'
 			ORDER BY created_at DESC
@@ -121,6 +251,11 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 			&t.GitBranch,
 			&t.Status,
 			&t.AccountRole,
+			&t.MaxBudgetUSD,
+			&t.MaxTurns,
+			&t.SpentTokens,
+			&t.SpentUSD,
+			&t.SpentTurns,
 			&t.CreatedAt,
 			&t.UpdatedAt,
 			&deletedAt,
@@ -140,7 +275,9 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	id = strings.TrimSpace(id)
 	query := `
-		SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at
+		SELECT id, name, repo_path, git_branch, status, account_role,
+		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
+		       created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE id = ? OR id = ? OR id LIKE ?
 		ORDER BY created_at DESC
@@ -162,6 +299,11 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 		&t.GitBranch,
 		&t.Status,
 		&t.AccountRole,
+		&t.MaxBudgetUSD,
+		&t.MaxTurns,
+		&t.SpentTokens,
+		&t.SpentUSD,
+		&t.SpentTurns,
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,
@@ -183,7 +325,9 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 
 	// First try exact or prefix match on repo_path
 	query := `
-		SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at
+		SELECT id, name, repo_path, git_branch, status, account_role,
+		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
+		       created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE status = 'active' AND (repo_path = ? OR repo_path LIKE ?)
 		ORDER BY updated_at DESC
@@ -199,6 +343,11 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.GitBranch,
 		&t.Status,
 		&t.AccountRole,
+		&t.MaxBudgetUSD,
+		&t.MaxTurns,
+		&t.SpentTokens,
+		&t.SpentUSD,
+		&t.SpentTurns,
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,
@@ -212,7 +361,9 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 
 	// Fallback to most recent active task in any repo
 	fallbackQuery := `
-		SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at
+		SELECT id, name, repo_path, git_branch, status, account_role,
+		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
+		       created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE status = 'active'
 		ORDER BY updated_at DESC
@@ -226,6 +377,11 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.GitBranch,
 		&t.Status,
 		&t.AccountRole,
+		&t.MaxBudgetUSD,
+		&t.MaxTurns,
+		&t.SpentTokens,
+		&t.SpentUSD,
+		&t.SpentTurns,
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,

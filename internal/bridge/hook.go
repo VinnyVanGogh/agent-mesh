@@ -64,7 +64,7 @@ func ProcessPromptForClientPaths(ctx context.Context, prompt string) (string, []
 	}
 
 	guidance := fmt.Sprintf(
-		"📂 [AGENT-MESH AUTO-FETCH]: Detected client machine path(s) in prompt:\n%s\nPlease read and inspect the local cached file(s) on this system.",
+		"📂 [STAYPOINT AUTO-FETCH]: Detected client machine path(s) in prompt:\n%s\nPlease read and inspect the local cached file(s) on this system.",
 		strings.Join(notices, "\n"),
 	)
 

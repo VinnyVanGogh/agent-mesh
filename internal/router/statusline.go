@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 )
 
 // Tokyo Night Palette
@@ -296,7 +296,7 @@ func RenderStatusline(w io.Writer, r io.Reader) error {
 	if costBadge != "" {
 		line1Parts = append(line1Parts, costBadge)
 	}
-	line1Parts = append(line1Parts, fmt.Sprintf("%s⚡ mesh:active%s", Teal, Reset))
+	line1Parts = append(line1Parts, fmt.Sprintf("%s⚡ staypoint:active%s", Teal, Reset))
 
 	// 9. Git info & badges for Line 2
 	branch, dirty, sync := fastGitInfo(dir)
@@ -322,6 +322,22 @@ func RenderStatusline(w io.Writer, r io.Reader) error {
 			vimColor = Blue
 		}
 		line2Parts = append(line2Parts, fmt.Sprintf("%s%s%s%s", vimColor, Bold, payload.VimMode, Reset))
+	}
+
+	// Pending code review badge for Claude
+	if rev := getPendingReviewForClaude(dir); rev != nil {
+		vCol := Green
+		switch rev.Verdict {
+		case "FAIL", "DEFECT", "REJECT":
+			vCol = Red
+		case "WARN", "WARNING", "CONCERN":
+			vCol = Yellow
+		}
+		shaStr := ""
+		if rev.SHA != "" {
+			shaStr = fmt.Sprintf(" (%s)", rev.SHA)
+		}
+		line2Parts = append(line2Parts, fmt.Sprintf("%s%s⚖️ REVIEW: %s%s%s", vCol, Bold, rev.Verdict, shaStr, Reset))
 	}
 
 	// Check Caveman mode
@@ -483,4 +499,119 @@ func readPipedInput(r io.Reader, timeout time.Duration) []byte {
 	case <-time.After(timeout):
 		return nil
 	}
+}
+
+type pendingReviewInfo struct {
+	SHA     string
+	Verdict string
+}
+
+func matchRepoPath(dir, recRepoPath, recRepo string) bool {
+	if recRepoPath != "" {
+		cleanDir := filepath.Clean(dir)
+		cleanRP := filepath.Clean(recRepoPath)
+		if cleanDir == cleanRP || strings.HasPrefix(cleanDir, cleanRP+string(filepath.Separator)) {
+			return true
+		}
+		// When repo_path is explicitly set but does not match, do not fall back to basename.
+		return false
+	}
+	// Fall back to repo basename only when repo_path is empty.
+	if recRepo != "" {
+		return strings.EqualFold(filepath.Base(dir), recRepo)
+	}
+	// If both are empty, never match.
+	return false
+}
+
+func getPendingReviewFromDir(dir string, pendingDir string) *pendingReviewInfo {
+	entries, err := os.ReadDir(pendingDir)
+	if err != nil {
+		return nil
+	}
+
+	var newestTime time.Time
+	var bestMatch *pendingReviewInfo
+
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+
+		filePath := filepath.Join(pendingDir, e.Name())
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		var rec struct {
+			Repo      string      `json:"repo"`
+			RepoPath  string      `json:"repo_path"`
+			SHA       string      `json:"sha"`
+			Verdict   string      `json:"verdict"`
+			Severity  interface{} `json:"severity"`
+			Mismatch  string      `json:"mismatch"`
+			SessionID string      `json:"session_id"`
+		}
+
+		if err := json.Unmarshal(data, &rec); err != nil {
+			continue
+		}
+
+		// session_id is intentionally not filtered here: any pending review for this
+		// repository is surfaced on the statusline so the user sees it immediately.
+		if !matchRepoPath(dir, rec.RepoPath, rec.Repo) {
+			continue
+		}
+
+		if bestMatch == nil || fi.ModTime().After(newestTime) {
+			verdict := strings.ToUpper(rec.Verdict)
+			if verdict == "" {
+				sev := 0
+				switch v := rec.Severity.(type) {
+				case float64:
+					sev = int(v)
+				case int:
+					sev = v
+				}
+
+				if sev >= 3 {
+					verdict = "FAIL"
+				} else if sev >= 2 || strings.EqualFold(rec.Mismatch, "yes") {
+					verdict = "WARN"
+				} else if sev == 1 {
+					verdict = "NIT"
+				} else {
+					verdict = "PASS"
+				}
+			}
+
+			sha := rec.SHA
+			if len(sha) > 7 {
+				sha = sha[:7]
+			}
+
+			newestTime = fi.ModTime()
+			bestMatch = &pendingReviewInfo{
+				SHA:     sha,
+				Verdict: verdict,
+			}
+		}
+	}
+
+	return bestMatch
+}
+
+func getPendingReviewForClaude(dir string) *pendingReviewInfo {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	pendingDir := filepath.Join(home, ".claude", "reviews", "pending")
+	return getPendingReviewFromDir(dir, pendingDir)
 }

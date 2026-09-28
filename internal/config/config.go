@@ -25,6 +25,8 @@ type Config struct {
 	MachineRole     string  `json:"machine_role" toml:"machine_role"` // "hybrid" (default), "work", or "personal"
 	GooglePlanTier  string  `json:"google_plan_tier" toml:"google_plan_tier"` // e.g. "Google AI Ultra" or "Ultra"
 	ClaudePlanTier  string  `json:"claude_plan_tier" toml:"claude_plan_tier"` // e.g. "Max 5x" or "Pro"
+	MaxHandoffsPerRepo    int     `json:"max_handoffs_per_repo" toml:"max_handoffs_per_repo"`
+	PreferredPersonalTool string  `json:"preferred_personal_tool" toml:"preferred_personal_tool"` // "auto" (default), "claude", or "agy"
 }
 
 // DefaultConfig returns the default configuration.
@@ -34,26 +36,29 @@ func DefaultConfig() *Config {
 		home = "."
 	}
 
-	dataDir := filepath.Join(home, ".agent-mesh")
+	dataDir := filepath.Join(home, ".staypoint")
 	return &Config{
-		DataDir:         dataDir,
-		DBPath:          filepath.Join(dataDir, "mesh.db"),
-		TelemetryDBPath: filepath.Join(home, ".config", "token-telemetry", "telemetry.db"),
-		CompanyName:     "",
-		EngineerName:    "",
-		HourlyRate:      0.0,
-		WorkEmail:       "engineer@company.com",
-		PersonalEmail:   "personal@gmail.com",
-		WorkRepoRoot:    filepath.Join(home, "Documents", "dev", "work"),
-		RemoteHost:      "company-mbp",
-		RemoteRepoRoot:  "~/Documents/dev/work",
-		MachineRole:     "hybrid",
-		GooglePlanTier:  "Google AI Ultra",
-		ClaudePlanTier:  "Pro",
+		DataDir:            dataDir,
+		DBPath:             filepath.Join(dataDir, "staypoint.db"),
+		TelemetryDBPath:    filepath.Join(home, ".config", "token-telemetry", "telemetry.db"),
+		CompanyName:        "",
+		EngineerName:       "",
+		HourlyRate:         0.0,
+		WorkEmail:          "engineer@company.com",
+		PersonalEmail:      "personal@gmail.com",
+		WorkRepoRoot:       filepath.Join(home, "Documents", "dev", "work"),
+		RemoteHost:         "company-mbp",
+		RemoteRepoRoot:     "~/Documents/dev/work",
+		MachineRole:        "hybrid",
+		GooglePlanTier:     "Google AI Ultra",
+		ClaudePlanTier:        "Pro",
+		MaxHandoffsPerRepo:    3,
+		PreferredPersonalTool: "auto",
 	}
 }
 
-// LoadConfig loads configuration from ~/.agent-mesh/config.toml, then config.json if toml does not exist.
+// LoadConfig loads configuration from ~/.staypoint/config.toml, then config.json if toml does not exist.
+// Automatically falls back to legacy ~/.agent-mesh/ if ~/.staypoint does not exist.
 // If neither exists, DefaultConfig() is returned.
 func LoadConfig() (*Config, error) {
 	home, err := os.UserHomeDir()
@@ -62,7 +67,7 @@ func LoadConfig() (*Config, error) {
 	}
 
 	cfg := DefaultConfig()
-	dataDir := filepath.Join(home, ".agent-mesh")
+	dataDir := filepath.Join(home, ".staypoint")
 	tomlPath := filepath.Join(dataDir, "config.toml")
 	jsonPath := filepath.Join(dataDir, "config.json")
 
@@ -76,7 +81,19 @@ func LoadConfig() (*Config, error) {
 		raw = data
 		isTOML = false
 	} else {
-		return cfg, nil
+		// Check legacy ~/.agent-mesh directory
+		legacyDir := filepath.Join(home, ".agent-mesh")
+		legacyTOML := filepath.Join(legacyDir, "config.toml")
+		legacyJSON := filepath.Join(legacyDir, "config.json")
+		if data, err := os.ReadFile(legacyTOML); err == nil {
+			raw = data
+			isTOML = true
+		} else if data, err := os.ReadFile(legacyJSON); err == nil {
+			raw = data
+			isTOML = false
+		} else {
+			return cfg, nil
+		}
 	}
 
 	if isTOML {
@@ -116,6 +133,42 @@ func expandPath(path, home string) string {
 	return path
 }
 
+// EnsureDataDir creates cfg.DataDir and automatically migrates legacy ~/.agent-mesh data.
 func EnsureDataDir(cfg *Config) error {
-	return os.MkdirAll(cfg.DataDir, 0755)
+	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+		return err
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	legacyDir := filepath.Join(home, ".agent-mesh")
+	if _, err := os.Stat(legacyDir); err == nil && legacyDir != cfg.DataDir {
+		// Migrate legacy mesh.db to staypoint.db if staypoint.db does not exist
+		legacyDB := filepath.Join(legacyDir, "mesh.db")
+		newDB := filepath.Join(cfg.DataDir, "staypoint.db")
+		if _, err := os.Stat(newDB); os.IsNotExist(err) {
+			if _, err := os.Stat(legacyDB); err == nil {
+				_ = copyFileContents(legacyDB, newDB)
+			}
+		}
+		// Migrate legacy cursor file if new cursor file does not exist
+		legacyCursor := filepath.Join(legacyDir, "ingest-cursors.json")
+		newCursor := filepath.Join(cfg.DataDir, "ingest-cursors.json")
+		if _, err := os.Stat(newCursor); os.IsNotExist(err) {
+			if _, err := os.Stat(legacyCursor); err == nil {
+				_ = copyFileContents(legacyCursor, newCursor)
+			}
+		}
+	}
+	return nil
+}
+
+func copyFileContents(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0644)
 }

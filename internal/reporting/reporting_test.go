@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 	_ "modernc.org/sqlite"
 )
 
@@ -502,7 +502,7 @@ func TestFetchTelemetryWithRange_CompanyAndEngineerFields(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to render work HTML: %v", err)
 		}
-		if !strings.Contains(workHTML, "Acme Corp —") {
+		if !strings.Contains(workHTML, "Acme Corp:") {
 			t.Errorf("expected company title prefix in work HTML")
 		}
 		if !strings.Contains(workHTML, "<div class=\"org\">Acme Corp</div>") {

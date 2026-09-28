@@ -1,0 +1,24 @@
+[Unit]
+Description=Staypoint Background Daemon
+Documentation=https://github.com/VinnyVanGogh/staypoint
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/staypointd
+Restart=on-failure
+RestartSec=5s
+RuntimeDirectory=staypoint
+RuntimeDirectoryMode=0700
+Environment=STAYPOINT_LOG_FORMAT=json
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=staypointd
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.staypoint
+
+[Install]
+WantedBy=default.target

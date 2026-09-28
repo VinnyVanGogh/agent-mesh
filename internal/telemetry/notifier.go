@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/router"
+	"github.com/VinnyVanGogh/staypoint/internal/router"
 )
 
 type RateLimitNotifier struct {
@@ -77,7 +77,7 @@ func (n *RateLimitNotifier) check() {
 			resetStr = poolPers.LockoutUntil.Format("3:04pm")
 		}
 		SendNotification(
-			"[Agent-Mesh] Claude 5h Limit Warning (15% left)",
+			"[Staypoint] Claude 5h Limit Warning (15% left)",
 			fmt.Sprintf("Claude Code 5-hour quota at %.0f%% (resets @%s). Handoff to Gemini staged in clipboard. Switch via /model gemini-3.8-flash-high or open agy.", poolPers.FiveHour.UsedPct, resetStr),
 		)
 		n.warnedPersPreLock = true
@@ -92,7 +92,7 @@ func (n *RateLimitNotifier) check() {
 			resetStr = pool3P.LockoutUntil.Format("3:04pm")
 		}
 		SendNotification(
-			"[Agent-Mesh] 5h Quota Warning (15% left)",
+			"[Staypoint] 5h Quota Warning (15% left)",
 			fmt.Sprintf("3P Claude quota at %.0f%% (resets @%s). Handoff to Gemini staged in clipboard. Switch via /model gemini-3.8-flash-high or paste prompt.", pool3P.FiveHour.UsedPct, resetStr),
 		)
 		n.warned3PPreLock = true

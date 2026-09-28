@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/doctor"
+	"github.com/VinnyVanGogh/staypoint/internal/doctor"
 	"github.com/spf13/cobra"
 )
 
@@ -16,24 +16,27 @@ var (
 	doctorClaude bool
 	doctorGemini bool
 	doctorRemote bool
+	doctorBrew   bool
 )
 
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Run comprehensive fleet health diagnostics across local & remote agent environments",
-	Long: `Fleet Doctor Engine performs automated diagnostics across 4 critical subsystems:
-  1. Agent-Mesh Infrastructure (version parity, SSH probe, reverse tunnel, instruction parity, DB & quota)
+	Long: `Fleet Doctor Engine performs automated diagnostics across 5 critical subsystems:
+  1. Staypoint Infrastructure (version parity, SSH probe, reverse tunnel, instruction parity, DB & quota)
   2. Claude Code Health (CLI, doctor check, auth credentials, prompt hooks)
   3. AGY / Gemini Health (config dir, MCP server configs, Google AI Ultra quota, caveman mode)
   4. Remote Node Health (remote Claude settings, prompt hook, mapped scan-repos)
+  5. Homebrew Distribution (tap installed, formula version, binary freshness)
 
 Examples:
-  mesh doctor              # full fleet diagnostic
-  mesh doctor --fast       # offline check skipping remote network round-trips
-  mesh doctor --json       # export structured report for automation
-  mesh doctor --claude     # Claude Code health only
-  mesh doctor --gemini     # AGY / Gemini health only
-  mesh doctor --remote     # Remote node health only`,
+  staypoint doctor              # full fleet diagnostic
+  staypoint doctor --fast       # offline check skipping remote network round-trips
+  staypoint doctor --json       # export structured report for automation
+  staypoint doctor --claude     # Claude Code health only
+  staypoint doctor --gemini     # AGY / Gemini health only
+  staypoint doctor --remote     # Remote node health only
+  staypoint doctor --brew       # Homebrew distribution checks only`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := cmd.Context()
 		if ctx == nil {
@@ -45,6 +48,7 @@ Examples:
 			ClaudeOnly: doctorClaude,
 			GeminiOnly: doctorGemini,
 			RemoteOnly: doctorRemote,
+			BrewOnly:   doctorBrew,
 			Config:     cfg,
 		}
 
@@ -77,6 +81,7 @@ func init() {
 	doctorCmd.Flags().BoolVarP(&doctorClaude, "claude", "c", false, "Run Claude Code health checks only")
 	doctorCmd.Flags().BoolVarP(&doctorGemini, "gemini", "g", false, "Run AGY / Gemini health checks only")
 	doctorCmd.Flags().BoolVarP(&doctorRemote, "remote", "r", false, "Run Remote Node health checks only")
+	doctorCmd.Flags().BoolVarP(&doctorBrew, "brew", "b", false, "Run Homebrew distribution checks only")
 
 	rootCmd.AddCommand(doctorCmd)
 }

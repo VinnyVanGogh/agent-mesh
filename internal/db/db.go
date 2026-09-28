@@ -38,20 +38,128 @@ CREATE TABLE IF NOT EXISTS quota_windows (
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
-    id           TEXT PRIMARY KEY,
-    name         TEXT NOT NULL,
-    repo_path    TEXT NOT NULL,
-    git_branch   TEXT,
-    status       TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'done', 'soft_deleted')),
-    account_role TEXT NOT NULL DEFAULT 'work',
-    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    deleted_at   TEXT
+    id             TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    repo_path      TEXT NOT NULL,
+    git_branch     TEXT,
+    status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'done', 'soft_deleted')),
+    account_role   TEXT NOT NULL DEFAULT 'work',
+    max_budget_usd REAL NOT NULL DEFAULT 0.0,
+    max_turns      INTEGER NOT NULL DEFAULT 0,
+    spent_tokens   INTEGER NOT NULL DEFAULT 0,
+    spent_usd      REAL NOT NULL DEFAULT 0.0,
+    spent_turns    INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    deleted_at     TEXT
 );
+
+CREATE TABLE IF NOT EXISTS wire_messages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel     TEXT NOT NULL DEFAULT 'global',
+    author      TEXT NOT NULL,
+    repo_path   TEXT,
+    content     TEXT NOT NULL,
+    ttl_seconds INTEGER NOT NULL DEFAULT 86400,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    expires_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_wire_messages_channel_expires ON wire_messages (channel, expires_at);
+CREATE INDEX IF NOT EXISTS idx_wire_messages_repo_expires ON wire_messages (repo_path, expires_at);
+CREATE INDEX IF NOT EXISTS idx_wire_messages_id_expires ON wire_messages (id, expires_at);
+
+CREATE TABLE IF NOT EXISTS wire_cursors (
+    consumer_key TEXT PRIMARY KEY,
+    last_read_id INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    id                TEXT PRIMARY KEY,
+    agent_type        TEXT NOT NULL CHECK (agent_type IN ('claude', 'gemini', 'codex', 'other')),
+    repo_path         TEXT NOT NULL,
+    git_branch        TEXT NOT NULL DEFAULT 'main',
+    pid               INTEGER,
+    hostname          TEXT NOT NULL DEFAULT 'local',
+    status            TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'idle', 'closed')),
+    started_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    last_heartbeat_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    metadata_json     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_sessions_repo ON agent_sessions (repo_path, status, last_heartbeat_at);
+
+CREATE TABLE IF NOT EXISTS agent_working_files (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id        TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+    repo_path         TEXT NOT NULL,
+    file_path         TEXT NOT NULL,
+    access_type       TEXT NOT NULL CHECK (access_type IN ('read', 'write', 'lock')),
+    first_touched_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    last_touched_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    expires_at        TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_working_files_sess_path ON agent_working_files (session_id, file_path);
+CREATE INDEX IF NOT EXISTS idx_agent_working_files_repo_path ON agent_working_files (repo_path, expires_at);
+
+CREATE TABLE IF NOT EXISTS agent_circuit_breakers (
+    session_id        TEXT PRIMARY KEY,
+    repo_path         TEXT NOT NULL,
+    agent_type        TEXT NOT NULL,
+    is_tripped        INTEGER NOT NULL DEFAULT 0,
+    trip_count        INTEGER NOT NULL DEFAULT 0,
+    failure_signature TEXT,
+    failing_tool      TEXT,
+    failing_command   TEXT,
+    last_error        TEXT,
+    tripped_at        TEXT,
+    cleared_at        TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_circuit_breakers_active ON agent_circuit_breakers (repo_path, is_tripped);
 `
 
 type Store struct {
 	db *sql.DB
+}
+
+func migrateSchema(conn *sql.DB) error {
+	rows, err := conn.Query("PRAGMA table_info(tasks);")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	existingCols := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dfltValue sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err == nil {
+			existingCols[name] = true
+		}
+	}
+
+	cols := []struct {
+		name string
+		def  string
+	}{
+		{"max_budget_usd", "REAL NOT NULL DEFAULT 0.0"},
+		{"max_turns", "INTEGER NOT NULL DEFAULT 0"},
+		{"spent_tokens", "INTEGER NOT NULL DEFAULT 0"},
+		{"spent_usd", "REAL NOT NULL DEFAULT 0.0"},
+		{"spent_turns", "INTEGER NOT NULL DEFAULT 0"},
+	}
+
+	for _, c := range cols {
+		if !existingCols[c.name] {
+			_, _ = conn.Exec(fmt.Sprintf("ALTER TABLE tasks ADD COLUMN %s %s;", c.name, c.def))
+		}
+	}
+	return nil
 }
 
 func Open(dbPath string) (*Store, error) {
@@ -71,6 +179,11 @@ func Open(dbPath string) (*Store, error) {
 	if _, err := conn.Exec(Schema); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("failed to apply schema: %w", err)
+	}
+
+	if err := migrateSchema(conn); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to migrate schema: %w", err)
 	}
 
 	return &Store{db: conn}, nil

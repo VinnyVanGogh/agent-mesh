@@ -136,7 +136,7 @@ func TestReverseBridgeServerAndFetch(t *testing.T) {
 	if len(cachedPaths) != 1 {
 		t.Fatalf("expected 1 cached path, got %v", cachedPaths)
 	}
-	if !strings.Contains(guidance, "AGENT-MESH AUTO-FETCH") {
+	if !strings.Contains(guidance, "STAYPOINT AUTO-FETCH") {
 		t.Errorf("guidance missing header: %s", guidance)
 	}
 }

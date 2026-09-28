@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/VinnyVanGogh/agent-mesh/internal/bridge"
-	"github.com/VinnyVanGogh/agent-mesh/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 )
 
 type mockFileInfo struct {
@@ -115,6 +115,22 @@ func newHealthyDoctor() *FleetDoctor {
 		return "FOUND\nFOUND\nFOUND", 30 * time.Millisecond, nil
 	}
 
+	validBrewInfoJSON := `{
+		"formulae": [{
+			"versions": {"stable": "0.1.0"},
+			"installed": [{"version": "0.1.0"}]
+		}]
+	}`
+	doc.RunBrewCommandFunc = func(ctx context.Context, args ...string) (string, time.Duration, error) {
+		if len(args) > 0 && args[0] == "tap" {
+			return "vinnyvangogh/tap\nhomebrew/core\n", 10 * time.Millisecond, nil
+		}
+		if len(args) > 0 && args[0] == "info" {
+			return validBrewInfoJSON, 20 * time.Millisecond, nil
+		}
+		return "", 5 * time.Millisecond, nil
+	}
+
 	return doc
 }
 
@@ -125,8 +141,8 @@ func TestDoctor_AllHealthy(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(report.Sections) != 4 {
-		t.Fatalf("expected 4 sections, got %d", len(report.Sections))
+	if len(report.Sections) != 5 {
+		t.Fatalf("expected 5 sections, got %d", len(report.Sections))
 	}
 	if report.Summary.Errors != 0 {
 		t.Errorf("expected 0 errors, got %d", report.Summary.Errors)

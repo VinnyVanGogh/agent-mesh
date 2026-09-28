@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: VinnyVanGogh.staypoint
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: Vince Vasile
+PublisherUrl: https://github.com/VinnyVanGogh
+PublisherSupportUrl: https://github.com/VinnyVanGogh/staypoint/issues
+PackageName: Staypoint
+PackageUrl: https://github.com/VinnyVanGogh/staypoint
+License: Apache-2.0
+LicenseUrl: https://github.com/VinnyVanGogh/staypoint/blob/main/LICENSE
+Copyright: Copyright (c) Vince Vasile
+ShortDescription: Autonomous AI Agent Ops, Quota Pacing & Cross-AI Context Platform
+Description: >-
+  Staypoint is a background daemon and CLI toolkit for AI agent operators.
+  It provides quota-aware model routing, git micro-checkpoints, loop circuit
+  breaking, error condensing, context handoff, named-pipe IPC, and telemetry.
+  Runs as a Windows service (SCM) or interactively.
+Tags:
+  - ai
+  - cli
+  - developer-tools
+  - quota
+  - telemetry
+  - agent
+ReleaseNotesUrl: https://github.com/VinnyVanGogh/staypoint/releases/tag/v0.1.0
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

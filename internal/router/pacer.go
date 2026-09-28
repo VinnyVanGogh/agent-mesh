@@ -176,6 +176,8 @@ func LoadPacerState() (*PacerState, error) {
 	}
 	if q, ok := stateData.Quotas["Claude (Personal)"]; ok {
 		applyStateQuota(state.Pools[PoolPersonalClaude], q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt, q.LastUpdated)
+	} else if q, ok := stateData.Quotas["Claude"]; ok {
+		applyStateQuota(state.Pools[PoolPersonalClaude], q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt, q.LastUpdated)
 	}
 	if q, ok := stateData.Quotas["Claude (Work)"]; ok {
 		applyStateQuota(state.Pools[PoolWorkClaude], q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt, q.LastUpdated)
@@ -217,6 +219,18 @@ func LoadPacerState() (*PacerState, error) {
 			if l, ok := stateData.Lockouts["Claude (Work)"]; ok {
 				lockEntry = &l
 			}
+		}
+
+		// Auto-reset windows whose reset timestamp has passed
+		if !pool.FiveHour.ResetsAt.IsZero() && now.After(pool.FiveHour.ResetsAt) {
+			pool.FiveHour.UsedPct = 0.0
+			pool.FiveHour.RemainingPct = 100.0
+			pool.FiveHour.IsLocked = false
+		}
+		if !pool.Weekly.ResetsAt.IsZero() && now.After(pool.Weekly.ResetsAt) {
+			pool.Weekly.UsedPct = 0.0
+			pool.Weekly.RemainingPct = 100.0
+			pool.Weekly.IsLocked = false
 		}
 
 		if lockEntry != nil && lockEntry.Locked && lockEntry.ResetsAt > float64(now.Unix()) {
