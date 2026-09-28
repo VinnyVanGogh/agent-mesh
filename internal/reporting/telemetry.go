@@ -279,7 +279,7 @@ func FetchTelemetryWithRange(cfg *config.Config, rangeOpts DateRangeOptions) (
 		  AND (ts <= ? OR ? = '')`,
 		cfg.WorkEmail, sinceBound, sinceBound, untilBound, untilBound).Scan(&workCount, &workCost, &workTokens, &workMinTs, &workMaxTs)
 	if err == nil && workCount > 0 {
-		work.AcceptedTurns = fmt.Sprintf("%s", formatInt(workCount))
+		work.AcceptedTurns = formatInt(workCount)
 		if workCost > 0 {
 			workVal := workCost
 			if workVal < 2881.71 && sinceBound == "" && untilBound == "" {

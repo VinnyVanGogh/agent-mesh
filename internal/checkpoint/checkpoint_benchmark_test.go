@@ -19,17 +19,17 @@ func BenchmarkCreateCheckpoint_DirtyTree(b *testing.B) {
 	defer os.RemoveAll(tempDir)
 
 	ctx := context.Background()
-	runGit(ctx, tempDir, nil, "init")
-	runGit(ctx, tempDir, nil, "config", "user.name", "Bench User")
-	runGit(ctx, tempDir, nil, "config", "user.email", "bench@mesh.local")
+	_, _ = runGit(ctx, tempDir, nil, "init")
+	_, _ = runGit(ctx, tempDir, nil, "config", "user.name", "Bench User")
+	_, _ = runGit(ctx, tempDir, nil, "config", "user.email", "bench@mesh.local")
 
 	// Create 50 base tracked files
 	for i := 0; i < 50; i++ {
 		path := filepath.Join(tempDir, fmt.Sprintf("tracked_file_%03d.go", i))
 		_ = os.WriteFile(path, []byte(fmt.Sprintf("package main\n// version 1 of file %d\n", i)), 0644)
 	}
-	runGit(ctx, tempDir, nil, "add", "-A")
-	runGit(ctx, tempDir, nil, "commit", "-m", "initial commit with 50 files")
+	_, _ = runGit(ctx, tempDir, nil, "add", "-A")
+	_, _ = runGit(ctx, tempDir, nil, "commit", "-m", "initial commit with 50 files")
 
 	// Now modify all 50 tracked files
 	for i := 0; i < 50; i++ {
@@ -70,17 +70,17 @@ func TestBenchmarkCheckpointDistribution(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	ctx := context.Background()
-	runGit(ctx, tempDir, nil, "init")
-	runGit(ctx, tempDir, nil, "config", "user.name", "Bench User")
-	runGit(ctx, tempDir, nil, "config", "user.email", "bench@mesh.local")
+	_, _ = runGit(ctx, tempDir, nil, "init")
+	_, _ = runGit(ctx, tempDir, nil, "config", "user.name", "Bench User")
+	_, _ = runGit(ctx, tempDir, nil, "config", "user.email", "bench@mesh.local")
 
 	// 50 tracked files
 	for i := 0; i < 50; i++ {
 		path := filepath.Join(tempDir, fmt.Sprintf("tracked_%03d.go", i))
 		_ = os.WriteFile(path, []byte("package main\n"), 0644)
 	}
-	runGit(ctx, tempDir, nil, "add", "-A")
-	runGit(ctx, tempDir, nil, "commit", "-m", "init")
+	_, _ = runGit(ctx, tempDir, nil, "add", "-A")
+	_, _ = runGit(ctx, tempDir, nil, "commit", "-m", "init")
 
 	// Modify 50 files
 	for i := 0; i < 50; i++ {

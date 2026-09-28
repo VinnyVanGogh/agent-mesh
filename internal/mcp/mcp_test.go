@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -588,7 +587,7 @@ func TestSimulatedStdioServe(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &r1); err != nil {
 		t.Fatalf("failed to parse r1: %v", err)
 	}
-	if fmt.Sprintf("%s", *r1.ID) != "1" {
+	if string(*r1.ID) != "1" {
 		t.Errorf("expected id 1, got %s", *r1.ID)
 	}
 
@@ -597,7 +596,7 @@ func TestSimulatedStdioServe(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[1]), &r2); err != nil {
 		t.Fatalf("failed to parse r2: %v", err)
 	}
-	if fmt.Sprintf("%s", *r2.ID) != "2" {
+	if string(*r2.ID) != "2" {
 		t.Errorf("expected id 2, got %s", *r2.ID)
 	}
 
@@ -606,7 +605,7 @@ func TestSimulatedStdioServe(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[2]), &r3); err != nil {
 		t.Fatalf("failed to parse r3: %v", err)
 	}
-	if fmt.Sprintf("%s", *r3.ID) != "3" {
+	if string(*r3.ID) != "3" {
 		t.Errorf("expected id 3, got %s", *r3.ID)
 	}
 }

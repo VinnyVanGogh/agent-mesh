@@ -17,7 +17,6 @@ type RateLimitNotifier struct {
 	lastPersLocked    bool
 	warned3PPreLock   bool
 	warnedPersPreLock bool
-	warnedGemPreLock  bool
 	initialized       bool
 }
 

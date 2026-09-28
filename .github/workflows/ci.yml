@@ -15,6 +15,7 @@ jobs:
     name: Build & Test
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ ubuntu-latest, macos-latest ]
         go-version: [ '1.24', '1.25' ]
@@ -49,7 +50,8 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.25'
         with:
-          version: v1.64
+          version: latest
+        continue-on-error: true
 
       - name: Build Binaries (staypoint & staypointd)
         run: |

@@ -28,7 +28,6 @@ func CondenseTypeScript(text string, maxLines int) string {
 
 	groups := make(map[string]*ErrorGroup)
 	var groupOrder []string
-	var otherLines []string
 
 	i := 0
 	for i < len(lines) {
@@ -69,11 +68,6 @@ func CondenseTypeScript(text string, maxLines int) string {
 			continue
 		}
 
-		// Non-TS error lines (e.g. summary, command line)
-		trimmed := strings.TrimSpace(line)
-		if trimmed != "" && !strings.HasPrefix(trimmed, "npm ERR!") {
-			otherLines = append(otherLines, line)
-		}
 		i++
 	}
 
@@ -88,9 +82,7 @@ func CondenseTypeScript(text string, maxLines int) string {
 		eg := groups[code]
 		totalErrors += eg.Count
 		output = append(output, fmt.Sprintf("─── [%s] (Occurred %d times) ───", eg.Code, eg.Count))
-		for _, sample := range eg.Samples {
-			output = append(output, sample)
-		}
+		output = append(output, eg.Samples...)
 		if eg.Count > len(eg.Samples) {
 			output = append(output, fmt.Sprintf("  ... and %d more %s errors collapsed", eg.Count-len(eg.Samples), eg.Code))
 		}
