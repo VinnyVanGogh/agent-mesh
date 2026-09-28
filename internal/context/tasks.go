@@ -23,6 +23,10 @@ type Task struct {
 	CreatedAt   string  `json:"created_at"`
 	UpdatedAt   string  `json:"updated_at"`
 	DeletedAt   *string `json:"deleted_at,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Priority    *string `json:"priority,omitempty"`
+	Budget      *string `json:"budget,omitempty"`
+	Assignee    *string `json:"assignee,omitempty"`
 }
 
 // GetCurrentGitBranch returns the current active git branch for a directory.
@@ -90,14 +94,14 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 	var query string
 	if includeAll {
 		query = `
-			SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at
+			SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at, description, priority, budget, assignee
 			FROM tasks
 			WHERE status != 'soft_deleted'
 			ORDER BY created_at DESC
 		`
 	} else {
 		query = `
-			SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at
+			SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at, description, priority, budget, assignee
 			FROM tasks
 			WHERE status = 'active'
 			ORDER BY created_at DESC
@@ -113,7 +117,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 	var tasks []Task
 	for rows.Next() {
 		var t Task
-		var deletedAt sql.NullString
+		var deletedAt, desc, prio, budg, assign sql.NullString
 		if err := rows.Scan(
 			&t.ID,
 			&t.Name,
@@ -124,11 +128,27 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 			&t.CreatedAt,
 			&t.UpdatedAt,
 			&deletedAt,
+			&desc,
+			&prio,
+			&budg,
+			&assign,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan task row: %w", err)
 		}
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
+		}
+		if desc.Valid {
+			t.Description = &desc.String
+		}
+		if prio.Valid {
+			t.Priority = &prio.String
+		}
+		if budg.Valid {
+			t.Budget = &budg.String
+		}
+		if assign.Valid {
+			t.Assignee = &assign.String
 		}
 		tasks = append(tasks, t)
 	}
@@ -140,7 +160,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	id = strings.TrimSpace(id)
 	query := `
-		SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at
+		SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at, description, priority, budget, assignee
 		FROM tasks
 		WHERE id = ? OR id = ? OR id LIKE ?
 		ORDER BY created_at DESC
@@ -154,7 +174,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 
 	row := db.QueryRow(query, id, fullID, prefixMatch)
 	var t Task
-	var deletedAt sql.NullString
+	var deletedAt, desc, prio, budg, assign sql.NullString
 	if err := row.Scan(
 		&t.ID,
 		&t.Name,
@@ -165,6 +185,10 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,
+		&desc,
+		&prio,
+		&budg,
+		&assign,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("task not found: %s", id)
@@ -174,6 +198,18 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 	if deletedAt.Valid {
 		t.DeletedAt = &deletedAt.String
 	}
+	if desc.Valid {
+		t.Description = &desc.String
+	}
+	if prio.Valid {
+		t.Priority = &prio.String
+	}
+	if budg.Valid {
+		t.Budget = &budg.String
+	}
+	if assign.Valid {
+		t.Assignee = &assign.String
+	}
 	return &t, nil
 }
 
@@ -181,9 +217,8 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	cleanPath := filepath.Clean(repoPath)
 
-	// First try exact or prefix match on repo_path
 	query := `
-		SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at
+		SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at, description, priority, budget, assignee
 		FROM tasks
 		WHERE status = 'active' AND (repo_path = ? OR repo_path LIKE ?)
 		ORDER BY updated_at DESC
@@ -191,7 +226,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	`
 	row := db.QueryRow(query, cleanPath, cleanPath+"/%")
 	var t Task
-	var deletedAt sql.NullString
+	var deletedAt, desc, prio, budg, assign sql.NullString
 	err := row.Scan(
 		&t.ID,
 		&t.Name,
@@ -202,17 +237,32 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,
+		&desc,
+		&prio,
+		&budg,
+		&assign,
 	)
 	if err == nil {
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
 		}
+		if desc.Valid {
+			t.Description = &desc.String
+		}
+		if prio.Valid {
+			t.Priority = &prio.String
+		}
+		if budg.Valid {
+			t.Budget = &budg.String
+		}
+		if assign.Valid {
+			t.Assignee = &assign.String
+		}
 		return &t, nil
 	}
 
-	// Fallback to most recent active task in any repo
 	fallbackQuery := `
-		SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at
+		SELECT id, name, repo_path, git_branch, status, account_role, created_at, updated_at, deleted_at, description, priority, budget, assignee
 		FROM tasks
 		WHERE status = 'active'
 		ORDER BY updated_at DESC
@@ -229,10 +279,26 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,
+		&desc,
+		&prio,
+		&budg,
+		&assign,
 	)
 	if err == nil {
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
+		}
+		if desc.Valid {
+			t.Description = &desc.String
+		}
+		if prio.Valid {
+			t.Priority = &prio.String
+		}
+		if budg.Valid {
+			t.Budget = &budg.String
+		}
+		if assign.Valid {
+			t.Assignee = &assign.String
 		}
 		return &t, nil
 	}
@@ -279,6 +345,73 @@ func DeleteTask(db *sql.DB, id string) error {
 	res, err := db.Exec(query, task.ID)
 	if err != nil {
 		return fmt.Errorf("failed to delete task: %w", err)
+	}
+
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("task not found: %s", id)
+	}
+	return nil
+}
+
+// UpdateTask updates the task metadata.
+func UpdateTask(db *sql.DB, id string, name, description, priority, budget *string) error {
+	task, err := GetTask(db, id)
+	if err != nil {
+		return err
+	}
+
+	setClauses := []string{"updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"}
+	var args []interface{}
+
+	if name != nil {
+		setClauses = append(setClauses, "name = ?")
+		args = append(args, *name)
+	}
+	if description != nil {
+		setClauses = append(setClauses, "description = ?")
+		args = append(args, *description)
+	}
+	if priority != nil {
+		setClauses = append(setClauses, "priority = ?")
+		args = append(args, *priority)
+	}
+	if budget != nil {
+		setClauses = append(setClauses, "budget = ?")
+		args = append(args, *budget)
+	}
+
+	args = append(args, task.ID)
+
+	query := fmt.Sprintf("UPDATE tasks SET %s WHERE id = ?", strings.Join(setClauses, ", "))
+
+	res, err := db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update task: %w", err)
+	}
+
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("task not found: %s", task.ID)
+	}
+	return nil
+}
+
+// AssignTask updates the assignee of a task.
+func AssignTask(db *sql.DB, id string, assignee string) error {
+	task, err := GetTask(db, id)
+	if err != nil {
+		return err
+	}
+
+	query := `
+		UPDATE tasks
+		SET assignee = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		WHERE id = ?
+	`
+	res, err := db.Exec(query, assignee, task.ID)
+	if err != nil {
+		return fmt.Errorf("failed to assign task: %w", err)
 	}
 
 	affected, _ := res.RowsAffected()

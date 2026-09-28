@@ -46,7 +46,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     account_role TEXT NOT NULL DEFAULT 'work',
     created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    deleted_at   TEXT
+    deleted_at   TEXT,
+    description  TEXT,
+    priority     TEXT,
+    budget       TEXT,
+    assignee     TEXT
 );
 `
 
@@ -71,6 +75,17 @@ func Open(dbPath string) (*Store, error) {
 	if _, err := conn.Exec(Schema); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("failed to apply schema: %w", err)
+	}
+
+	// Migrations for STA-46
+	migrations := []string{
+		"ALTER TABLE tasks ADD COLUMN description TEXT;",
+		"ALTER TABLE tasks ADD COLUMN priority TEXT;",
+		"ALTER TABLE tasks ADD COLUMN budget TEXT;",
+		"ALTER TABLE tasks ADD COLUMN assignee TEXT;",
+	}
+	for _, m := range migrations {
+		_, _ = conn.Exec(m) // Ignore error if column already exists
 	}
 
 	return &Store{db: conn}, nil

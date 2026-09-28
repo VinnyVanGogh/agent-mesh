@@ -131,3 +131,53 @@ func TestHandoffGeneration(t *testing.T) {
 		t.Errorf("expected non-empty handoff prompt")
 	}
 }
+
+func TestTaskUpdateAndAssign(t *testing.T) {
+	database := setupTestDB(t)
+
+	task, err := CreateTask(database, "Initial Task", "/test/repo", "main", "work")
+	if err != nil {
+		t.Fatalf("CreateTask failed: %v", err)
+	}
+
+	// Update Task
+	newName := "Updated Task"
+	newDesc := "Description here"
+	newPrio := "high"
+	newBudget := "100"
+	err = UpdateTask(database, task.ID, &newName, &newDesc, &newPrio, &newBudget)
+	if err != nil {
+		t.Fatalf("UpdateTask failed: %v", err)
+	}
+
+	updated, err := GetTask(database, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if updated.Name != "Updated Task" {
+		t.Errorf("Expected updated name 'Updated Task', got %s", updated.Name)
+	}
+	if updated.Description == nil || *updated.Description != "Description here" {
+		t.Errorf("Expected updated description")
+	}
+	if updated.Priority == nil || *updated.Priority != "high" {
+		t.Errorf("Expected updated priority")
+	}
+	if updated.Budget == nil || *updated.Budget != "100" {
+		t.Errorf("Expected updated budget")
+	}
+
+	// Assign Task
+	err = AssignTask(database, task.ID, "agent-alpha")
+	if err != nil {
+		t.Fatalf("AssignTask failed: %v", err)
+	}
+
+	assigned, err := GetTask(database, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if assigned.Assignee == nil || *assigned.Assignee != "agent-alpha" {
+		t.Errorf("Expected assignee 'agent-alpha', got %v", assigned.Assignee)
+	}
+}

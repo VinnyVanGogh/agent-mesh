@@ -28,7 +28,7 @@ var (
 	version = "0.1.0"
 	cfg     *config.Config
 	rootCmd = &cobra.Command{
-		Use:     "mesh [command|args...]",
+		Use:     "staypoint [command|args...]",
 		Version: version,
 		Short:   "Agent-Mesh: Autonomous AI Agent Ops, Quota Pacing & Context Platform",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -757,69 +757,6 @@ var syncImportCmd = &cobra.Command{
 	},
 }
 
-var taskCmd = &cobra.Command{
-	Use:   "task",
-	Short: "Manage development tasks and context in mesh.db",
-}
-
-var taskListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List all active tasks",
-	Run: func(cmd *cobra.Command, args []string) {
-		store, err := db.Open(cfg.DBPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
-			os.Exit(1)
-		}
-		defer store.Close()
-		all, _ := cmd.Flags().GetBool("all")
-		tasks, err := meshContext.ListTasks(store.DB(), all)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error listing tasks: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("\033[1;36m[Agent-Mesh Tasks]\033[0m")
-		if len(tasks) == 0 {
-			fmt.Println("  No active tasks found.")
-			return
-		}
-		for _, t := range tasks {
-			statusColor := "\033[1;32m"
-			if t.Status == "done" {
-				statusColor = "\033[0;37m"
-			}
-			fmt.Printf("  • %s[%s]\033[0m \033[1m%s\033[0m (branch: %s, role: %s)\n",
-				statusColor, t.Status, t.Name, t.GitBranch, t.AccountRole)
-		}
-	},
-}
-
-var taskAddCmd = &cobra.Command{
-	Use:   "add [name]",
-	Short: "Add a new active task",
-	Args:  cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		store, err := db.Open(cfg.DBPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
-			os.Exit(1)
-		}
-		defer store.Close()
-		cwd, _ := os.Getwd()
-		branch := meshContext.GetCurrentGitBranch(cwd)
-		role := "personal"
-		if bridge.IsWorkRepo(cwd) {
-			role = "work"
-		}
-		t, err := meshContext.CreateTask(store.DB(), args[0], cwd, branch, role)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error adding task: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("\033[1;32m✔ Task created:\033[0m %s (id: %s, role: %s)\n", t.Name, t.ID, t.AccountRole)
-	},
-}
-
 var hookCmd = &cobra.Command{
 	Use:   "hook",
 	Short: "Agent-Mesh lifecycle and prompt hooks for Claude Code and Antigravity",
@@ -1077,7 +1014,6 @@ func init() {
 	rootCmd.AddCommand(scpCmd)
 	rootCmd.AddCommand(handoffCmd)
 	rootCmd.AddCommand(syncCmd)
-	rootCmd.AddCommand(taskCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(hookCmd)
 	rootCmd.AddCommand(fetchCmd)
@@ -1102,9 +1038,6 @@ func init() {
 	bridgeCmd.AddCommand(bridgeCheckCmd)
 	bridgeCmd.AddCommand(bridgeLaunchCmd)
 
-	taskCmd.AddCommand(taskListCmd)
-	taskCmd.AddCommand(taskAddCmd)
-	taskListCmd.Flags().BoolP("all", "a", false, "Include done and soft-deleted tasks")
 
 	handoffCmd.Flags().String("to", "gemini", "Target model family (gemini or claude)")
 	handoffCmd.Flags().String("step", "", "Immediate next step description")
