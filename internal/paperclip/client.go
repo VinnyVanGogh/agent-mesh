@@ -21,6 +21,7 @@ type CreateIssueRequest struct {
 	ProjectId       string   `json:"projectId,omitempty"`
 	AssigneeAgentId string   `json:"assigneeAgentId,omitempty"`
 	Labels          []string `json:"labels,omitempty"`
+	Status          string   `json:"status,omitempty"`
 }
 
 // IssueResponse represents the issue returned by the Paperclip API.
@@ -331,6 +332,66 @@ func (c *Client) ListProjects(ctx context.Context, companyID string) ([]ProjectR
 		return nil, fmt.Errorf("failed to decode projects: %w", err)
 	}
 	return projects, nil
+}
+
+
+// FetchProjects retrieves live projects for a company.
+func (c *Client) FetchProjects(ctx context.Context, companyID string) ([]ProjectResponse, error) {
+	return c.ListProjects(ctx, companyID)
+}
+
+// CreateProjectRequest represents the payload for creating a project.
+type CreateProjectRequest struct {
+	Name string `json:"name"`
+}
+
+// CreateProject creates a new project in the specified company.
+func (c *Client) CreateProject(ctx context.Context, companyID string, name string) (*ProjectResponse, error) {
+	if companyID == "" {
+		companyID = os.Getenv("PAPERCLIP_COMPANY_ID")
+		if companyID == "" {
+			return nil, errors.New("companyID is required")
+		}
+	}
+
+	url := fmt.Sprintf("%s/api/companies/%s/projects", c.BaseURL, companyID)
+	reqBody := CreateProjectRequest{Name: name}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode project request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create http request: %w", err)
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+
+	resp, err := c.HTTPClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("paperclip connection error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("paperclip API error (HTTP %d): %s", resp.StatusCode, string(respBytes))
+	}
+
+	var created ProjectResponse
+	if err := json.Unmarshal(respBytes, &created); err != nil {
+		return nil, fmt.Errorf("failed to parse created project: %w", err)
+	}
+
+	return &created, nil
 }
 
 // ResolveProject attempts to find a project matching the project name.

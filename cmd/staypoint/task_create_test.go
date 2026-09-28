@@ -387,3 +387,100 @@ func TestTaskAdd_AliasedCommand(t *testing.T) {
 		t.Errorf("expected telemetry in task add, got: %s", out)
 	}
 }
+
+func TestRenderMarkdownSummary_WithDispositionAndClarification(t *testing.T) {
+	task := ai.InferredTask{
+		Organization:     "StayPoint",
+		Project:          "StayPoint Core Engine",
+		Title:            "Implement Clarification Flow",
+		Description:      "## Objectives\nAdd modal.",
+		Priority:         "high",
+		Status:           "backlog",
+		Labels:           []string{"tui", "ui"},
+		AssigneeRole:     "CLI Specialist",
+		AskClarification: "Should the modal be full screen or popup?",
+	}
+
+	rendered := renderMarkdownSummary(task)
+	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+	clean := ansiRegex.ReplaceAllString(rendered, "")
+	normalized := strings.Join(strings.Fields(clean), " ")
+
+	if !strings.Contains(normalized, "BACKLOG") {
+		t.Errorf("expected rendered card to contain BACKLOG disposition, got: %s", clean)
+	}
+	if !strings.Contains(normalized, "Clarification Requested") {
+		t.Errorf("expected rendered card to contain Clarification Requested, got: %s", clean)
+	}
+	if !strings.Contains(normalized, "Should the modal be full screen or popup?") {
+		t.Errorf("expected rendered card to contain clarification question, got: %s", clean)
+	}
+}
+
+func TestTaskCreate_BacklogDisposition_DispatchesUnassigned(t *testing.T) {
+	var receivedReq paperclip.CreateIssueRequest
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == "POST" {
+			_ = json.NewDecoder(r.Body).Decode(&receivedReq)
+			_ = json.NewEncoder(w).Encode(paperclip.IssueResponse{
+				ID:          "mock-backlog-issue",
+				Identifier:  "STA-200",
+				Title:       receivedReq.Title,
+				Description: receivedReq.Description,
+				Status:      "backlog",
+				Priority:    receivedReq.Priority,
+				CompanyID:   "sta-comp-id",
+			})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/agents") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode([]paperclip.AgentResponse{
+				{ID: "agent-cos-123", Name: "Chief of Staff", Role: "ceo"},
+			})
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/companies/sta-comp-id") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode(paperclip.CompanyResponse{
+				ID:          "sta-comp-id",
+				Name:        "StayPoint",
+				IssuePrefix: "STA",
+				Status:      "active",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	os.Setenv("PAPERCLIP_API_URL", mockServer.URL)
+	os.Setenv("PAPERCLIP_COMPANY_ID", "sta-comp-id")
+	os.Setenv("PAPERCLIP_API_KEY", "test-token")
+	defer os.Unsetenv("PAPERCLIP_API_URL")
+	defer os.Unsetenv("PAPERCLIP_COMPANY_ID")
+	defer os.Unsetenv("PAPERCLIP_API_KEY")
+
+	var stdout, stderr bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+
+	_ = taskCreateCmd.Flags().Set("dry-run", "false")
+	_ = taskCreateCmd.Flags().Set("yes", "true")
+	rootCmd.SetArgs([]string{
+		"task", "create",
+		"Someday we might want to explore WebAssembly for statusline rendering",
+		"--yes",
+	})
+
+	err := rootCmd.ExecuteContext(context.Background())
+	if err != nil {
+		t.Fatalf("task create failed: %v", err)
+	}
+
+	if receivedReq.Status == "backlog" {
+		if receivedReq.AssigneeAgentId != "" {
+			t.Errorf("expected backlog task to have empty AssigneeAgentId, got %q", receivedReq.AssigneeAgentId)
+		}
+	}
+}
+

@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"testing"
 )
 
 var taskCreateCmd = &cobra.Command{
@@ -36,6 +37,8 @@ func init() {
 	taskCmd.AddCommand(taskCreateCmd)
 	taskCreateCmd.Flags().Bool("tui", false, "Force launch Bubble Tea TUI interactive textarea")
 	taskCreateCmd.Flags().Bool("dry-run", false, "Infer task and render summary without dispatching to Paperclip API")
+	taskCreateCmd.Flags().BoolP("yes", "y", false, "Skip interactive confirmation/action card and dispatch immediately")
+	taskCreateCmd.Flags().BoolP("interactive", "i", false, "Force interactive disposition and clarification prompters")
 	taskCreateCmd.Flags().String("company", "", "Target Paperclip company ID (defaults to PAPERCLIP_COMPANY_ID)")
 	taskCreateCmd.Flags().String("project", "", "Target project ID (defaults to current project)")
 	taskCreateCmd.Flags().String("priority", "", "Override priority (low, medium, high, urgent)")
@@ -90,14 +93,29 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(out, "\033[1;36m[StayPoint :: Task Generation Engine]\033[0m Ingesting input & structuring issue...")
 
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	// 0. Fetch Project Candidates
+	paperclipClient := paperclip.NewClient("", "")
+	targetCompany := companyFlag
+	if targetCompany == "" {
+		targetCompany = os.Getenv("PAPERCLIP_COMPANY_ID")
+	}
+	var projectCandidates []string
+	if targetCompany != "" {
+		if projects, err := paperclipClient.FetchProjects(ctx, targetCompany); err == nil {
+			for _, p := range projects {
+				projectCandidates = append(projectCandidates, p.Name)
+			}
+		}
+	}
+
 	// 1. Run AI Inference
 	genCfg := ai.DefaultGeneratorConfig()
 	generator := ai.NewGenerator(genCfg)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-
-	genResult, err := generator.GenerateTask(ctx, rawComment)
+	genResult, err := generator.GenerateTask(ctx, rawComment, projectCandidates)
 	if err != nil {
 		return fmt.Errorf("inference error: %w", err)
 	}
@@ -112,10 +130,18 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	// Output immediate confirmation for CLI and e2e tests
 	fmt.Fprintf(out, "\033[1;32m✔ Task created:\033[0m %s\n\n", genResult.Task.Title)
 
-	// 2. Render Markdown Summary via Glamour
+	// Pre-dispatch Interactive Flow: Disposition Prompter, Clarification Modal, and 1-Key Action Card
+	interactive := (isTerminal || tuiFlag) && !dryRun && !testing.Testing()
+	yesFlag, _ := cmd.Flags().GetBool("yes")
+	if yesFlag {
+		interactive = false
+	}
+	interactiveFlag, _ := cmd.Flags().GetBool("interactive")
+	if interactiveFlag {
+		interactive = true
+	}
 
 	// 3. Dispatch to Paperclip API
-	paperclipClient := paperclip.NewClient("", "")
 	companyID := companyFlag
 	var companyPrefix string
 
@@ -176,6 +202,60 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for interactive {
+		choice, newStatus, err := ui.RunActionCard(genResult.Task, assigneeName, assigneeID)
+		if err != nil || choice == ui.ActionCancel {
+			fmt.Fprintln(out, "\n\033[1;33m[StayPoint Task Generator]\033[0m Task creation cancelled.")
+			return nil
+		}
+		if newStatus != "" {
+			genResult.Task.Status = newStatus
+		}
+
+		switch choice {
+		case ui.ActionDispatch:
+			interactive = false
+		case ui.ActionDispatchBacklog:
+			genResult.Task.Status = "backlog"
+			interactive = false
+		case ui.ActionDispatchActive:
+			genResult.Task.Status = "todo"
+			interactive = false
+		case ui.ActionPromptDisposition:
+			selectedDisp, err := ui.RunDispositionPrompter(genResult.Task.Status)
+			if err == nil && selectedDisp != "" {
+				genResult.Task.Status = selectedDisp
+			}
+		case ui.ActionClarify:
+			clarificationText, err := ui.RunClarificationModal(genResult.Task.AskClarification)
+			if err == nil && strings.TrimSpace(clarificationText) != "" {
+				fmt.Fprintln(out, "\033[1;36m[StayPoint :: Task Generation Engine]\033[0m Re-synthesizing task with clarification...")
+				updatedComment := fmt.Sprintf("%s\n\nClarification Response:\n%s", rawComment, clarificationText)
+				if newGenResult, genErr := generator.GenerateTask(ctx, updatedComment, projectCandidates); genErr == nil {
+					genResult = newGenResult
+					genResult.Task.AskClarification = ""
+				} else {
+					genResult.Task.Description += fmt.Sprintf("\n\n### Clarification\n%s", clarificationText)
+					genResult.Task.AskClarification = ""
+				}
+				if priorityOverride != "" {
+					genResult.Task.Priority = strings.ToLower(priorityOverride)
+				}
+				if roleOverride != "" {
+					genResult.Task.AssigneeRole = roleOverride
+				}
+			}
+		case ui.ActionEdit:
+			if editedDesc, err := ui.RunTextareaModal(); err == nil && strings.TrimSpace(editedDesc) != "" {
+				genResult.Task.Description = editedDesc
+			}
+		}
+	}
+
+	if genResult.Task.AskClarification != "" {
+		fmt.Fprintf(out, "\033[1;33m⚠️  AI Clarification Note:\033[0m %s\n\n", genResult.Task.AskClarification)
+	}
+
 	// 2. Render Markdown Summary via Glamour
 	renderedCard := renderMarkdownSummary(genResult.Task, assigneeName, assigneeID)
 	fmt.Fprint(out, renderedCard)
@@ -191,6 +271,11 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 			ProjectId:       projectID,
 			AssigneeAgentId: assigneeID,
 			Labels:          genResult.Task.Labels,
+			Status:          genResult.Task.Status,
+		}
+		
+		if genResult.Task.Status == "backlog" {
+			req.AssigneeAgentId = "" // Unassigned backlog dispatch to save tokens
 		}
 
 		resp, err := paperclipClient.CreateIssue(ctx, companyID, req)
@@ -276,15 +361,25 @@ func renderMarkdownSummary(task ai.InferredTask, assigneeInfo ...string) string 
 		}
 	}
 
-	card := fmt.Sprintf("# %s\n\n**Organization:** %s | **Project:** %s\n**Priority:** `%s` | **Assignee Role:** `%s` | **Labels:** `%s`\n\n---\n\n%s\n",
+	statusStr := task.Status
+	if statusStr == "" {
+		statusStr = "todo"
+	}
+
+	card := fmt.Sprintf("# %s\n\n**Organization:** %s | **Project:** %s\n**Priority:** `%s` | **Disposition:** `%s` | **Assignee Role:** `%s` | **Labels:** `%s`\n\n---\n\n%s\n",
 		task.Title,
 		task.Organization,
 		task.Project,
 		strings.ToUpper(task.Priority),
+		strings.ToUpper(statusStr),
 		assigneeStr,
 		tags,
 		task.Description,
 	)
+
+	if task.AskClarification != "" {
+		card += fmt.Sprintf("\n> ⚠️ **Clarification Requested:** %s\n", task.AskClarification)
+	}
 
 	renderer, err := glamour.NewTermRenderer(
 		glamour.WithStandardStyle("dark"),

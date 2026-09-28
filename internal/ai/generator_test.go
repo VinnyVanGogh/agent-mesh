@@ -10,7 +10,7 @@ import (
 )
 
 func TestBuildPrompt(t *testing.T) {
-	prompt := BuildPrompt("Add speech-to-text safety to textarea")
+	prompt := BuildPrompt(BuildPrompt("Add speech-to-text safety to textarea", nil), nil)
 	if !strings.Contains(prompt, "Add speech-to-text safety to textarea") {
 		t.Errorf("expected prompt to contain input comment")
 	}
@@ -102,7 +102,7 @@ func TestGenerator_GeminiPrimarySuccess(t *testing.T) {
 	}
 
 	gen := NewGenerator(cfg)
-	res, err := gen.GenerateTask(context.Background(), "Implement Gemini primary inference")
+	res, err := gen.GenerateTask(context.Background(), "Implement Gemini primary inference", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestGenerator_FallbackToClaudeOnGeminiFailure(t *testing.T) {
 	}
 
 	gen := NewGenerator(cfg)
-	res, err := gen.GenerateTask(context.Background(), "Urgent bug in rate limiter")
+	res, err := gen.GenerateTask(context.Background(), "Urgent bug in rate limiter", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestGenerator_HeuristicFallbackWhenOffline(t *testing.T) {
 		AnthropicAPIKey: "",
 	}
 	gen := NewGenerator(cfg)
-	res, err := gen.GenerateTask(context.Background(), "Fix critical race condition in watcher")
+	res, err := gen.GenerateTask(context.Background(), "Fix critical race condition in watcher", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestGenerator_HeuristicFallbackWhenOffline(t *testing.T) {
 func TestComplexDictationInference_ManagedSolution(t *testing.T) {
 	input := "hey can you please um fix the azure active directory sync issue on the managed solution portal for client acme ASAP because the login is completely broken"
 	gen := NewGenerator(GeneratorConfig{})
-	res, err := gen.GenerateTask(context.Background(), input)
+	res, err := gen.GenerateTask(context.Background(), input, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestComplexDictationInference_ManagedSolution(t *testing.T) {
 	if len(task.Title) > 72 {
 		t.Errorf("expected title under 72 chars, got %d ('%s')", len(task.Title), task.Title)
 	}
-	if !strings.Contains(task.Description, "## Objectives") || !strings.Contains(task.Description, "## Core Specs") {
+	if !strings.Contains(task.Description, "## Objectives") || !strings.Contains(task.Description, "## Scope") {
 		t.Errorf("expected structured markdown description, got: %s", task.Description)
 	}
 }
@@ -243,7 +243,7 @@ func TestComplexDictationInference_ManagedSolution(t *testing.T) {
 func TestComplexDictationInference_RuneLite_WithPhoneticSTT(t *testing.T) {
 	input := "yo vinny so basically for runelite we need to add a prayer flicking indicator plugin with sound alerts when offensive prayers are active"
 	gen := NewGenerator(GeneratorConfig{})
-	res, err := gen.GenerateTask(context.Background(), input)
+	res, err := gen.GenerateTask(context.Background(), input, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -258,8 +258,8 @@ func TestComplexDictationInference_RuneLite_WithPhoneticSTT(t *testing.T) {
 	if strings.Contains(strings.ToLower(task.Title), "yo vinny") || strings.Contains(strings.ToLower(task.Title), "so basically") {
 		t.Errorf("expected title to strip conversational filler, got '%s'", task.Title)
 	}
-	if !strings.HasPrefix(task.Title, "Add") {
-		t.Errorf("expected title to start with imperative verb 'Add', got '%s'", task.Title)
+	if !strings.HasPrefix(task.Title, "Feature:") && !strings.HasPrefix(task.Title, "Fix:") && !strings.HasPrefix(task.Title, "Idea:") && !strings.HasPrefix(task.Title, "Infra:") && !strings.HasPrefix(task.Title, "Refactor:") {
+		t.Errorf("expected title to start with semantic prefix, got '%s'", task.Title)
 	}
 	hasPluginLabel := false
 	for _, l := range task.Labels {
@@ -277,7 +277,7 @@ func TestComplexDictationInference_StayPoint_PhoneticMisrecognition(t *testing.T
 	// User says "sharepoint" due to speech-to-text lisp and "grab" for grep/fetch
 	input := "in sharepoint we gotta update the wire daemon to grab the latest token metrics and fix the race condition in the statusline"
 	gen := NewGenerator(GeneratorConfig{})
-	res, err := gen.GenerateTask(context.Background(), input)
+	res, err := gen.GenerateTask(context.Background(), input, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestComplexDictationInference_StayPoint_PhoneticMisrecognition(t *testing.T
 func TestComplexDictationInference_Maintenance_Dotfiles(t *testing.T) {
 	input := "hey vinny could you please clean up my zshrc dotfiles and prune the unused homebrew packages on the local machine"
 	gen := NewGenerator(GeneratorConfig{})
-	res, err := gen.GenerateTask(context.Background(), input)
+	res, err := gen.GenerateTask(context.Background(), input, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestComplexDictationInference_Maintenance_Dotfiles(t *testing.T) {
 func TestComplexDictationInference_Research_Benchmarking(t *testing.T) {
 	input := "we need to run an evaluation benchmark on arxiv papers comparing gemini flash and claude sonnet latency across long context needle retrieval"
 	gen := NewGenerator(GeneratorConfig{})
-	res, err := gen.GenerateTask(context.Background(), input)
+	res, err := gen.GenerateTask(context.Background(), input, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestGenerator_GeminiInferenceComplexDictation(t *testing.T) {
 	}
 
 	gen := NewGenerator(cfg)
-	res, err := gen.GenerateTask(context.Background(), "hey can you please fix the azure sync on managed solution portal ASAP")
+	res, err := gen.GenerateTask(context.Background(), "hey can you please fix the azure sync on managed solution portal ASAP", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -414,7 +414,7 @@ I am curious about a few things:
 2. Do both of them have free usage or maximum usage limits? What is going on there, and how much usage can I actually get out of them?`
 
 	gen := NewGenerator(GeneratorConfig{})
-	res, err := gen.GenerateTask(context.Background(), input)
+	res, err := gen.GenerateTask(context.Background(), input, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -429,8 +429,8 @@ I am curious about a few things:
 	if strings.Contains(strings.ToLower(task.Title), "open a new task") {
 		t.Errorf("expected title to strip meta-dictation 'open a new task', got '%s'", task.Title)
 	}
-	if !strings.HasPrefix(task.Title, "Research") {
-		t.Errorf("expected title to start with 'Research', got '%s'", task.Title)
+	if !strings.HasPrefix(task.Title, "Feature: Research") {
+		t.Errorf("expected title to start with 'Feature: Research', got '%s'", task.Title)
 	}
 	if len(task.Title) > 72 {
 		t.Errorf("expected title length <= 72, got %d ('%s')", len(task.Title), task.Title)
@@ -449,7 +449,7 @@ line 2" | staypoint task create
 works cleanly without escaping artifacts!`
 
 	gen := NewGenerator(GeneratorConfig{})
-	res, err := gen.GenerateTask(context.Background(), input)
+	res, err := gen.GenerateTask(context.Background(), input, nil)
 	if err != nil {
 		t.Fatalf("unexpected error parsing complex multiline input: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestGenerator_RoleInferenceAndMapping(t *testing.T) {
 
 	gen := NewGenerator(GeneratorConfig{})
 	for _, c := range cases {
-		res, err := gen.GenerateTask(context.Background(), c.prompt)
+		res, err := gen.GenerateTask(context.Background(), c.prompt, nil)
 		if err != nil {
 			t.Fatalf("unexpected error for prompt %q: %v", c.prompt, err)
 		}

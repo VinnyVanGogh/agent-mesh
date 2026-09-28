@@ -357,6 +357,8 @@ func init() {
 	taskAddCmd.Flags().Bool("tui", false, "Launch Bubble Tea TUI interactive textarea")
 	taskAddCmd.Flags().Bool("ai", true, "Force dynamic AI inference")
 	taskAddCmd.Flags().Bool("dry-run", false, "Preview generated task without dispatching to Paperclip")
+	taskAddCmd.Flags().BoolP("yes", "y", false, "Skip interactive confirmation/action card and dispatch immediately")
+	taskAddCmd.Flags().BoolP("interactive", "i", false, "Force interactive disposition and clarification prompters")
 	taskAddCmd.Flags().String("company", "", "Target Paperclip company ID (defaults to PAPERCLIP_COMPANY_ID)")
 	taskAddCmd.Flags().String("project", "", "Target project ID (defaults to current project)")
 	taskAddCmd.Flags().String("priority", "", "Override priority (low, medium, high, urgent)")

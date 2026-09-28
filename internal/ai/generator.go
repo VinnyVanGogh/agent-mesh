@@ -23,6 +23,8 @@ type InferredTask struct {
 	Priority     string   `json:"priority"` // low, medium, high, urgent
 	Labels       []string `json:"labels"`
 	AssigneeRole string   `json:"assigneeRole"`
+	Status       string   `json:"status,omitempty"`
+	AskClarification string `json:"askClarification,omitempty"`
 }
 
 // GenerationResult holds the task and generation telemetry.
@@ -99,7 +101,11 @@ func NewGenerator(cfg GeneratorConfig) *TaskGenerator {
 }
 
 // BuildPrompt creates the system instruction and context wrapper for the raw comment.
-func BuildPrompt(comment string) string {
+func BuildPrompt(comment string, projects []string) string {
+	projectList := strings.Join(projects, ", ")
+	if projectList == "" {
+		projectList = "None available"
+	}
 	return fmt.Sprintf(`You are the CTO's autonomous AI parsing engine. A user has dictated or written a raw thought, complaint, or request.
 
 Task Input:
@@ -107,15 +113,18 @@ Task Input:
 %s
 """
 
-Your job is to read this raw input and convert it into a highly structured, professional engineering issue.
-1. DO NOT just copy and paste the input as the title or description. You MUST synthesize a crisp, concise title in imperative mood (e.g. "Implement dynamic quota router", "Fix layout bug on settings page").
-2. Carefully infer the target Organization (e.g. StayPoint, Managed Solution, RuneLite, Research) and Project from context clues in the text.
-3. Write a professional markdown description that includes:
-   ## Objectives (what needs to be achieved based on the user's intent)
-   ## Core Specs (technical details, constraints, questions asked by user)
-   ## Next Steps (concrete actions to take)
+Project Candidates:
+[%s]
 
-Respond ONLY with a valid JSON object matching the requested schema. No markdown wrapping.`, strings.TrimSpace(comment))
+Your job is to read this raw input and convert it into a highly structured, professional engineering issue.
+1. DO NOT just copy and paste the input as the title. You MUST synthesize a crisp, concise title using semantic prefixes (e.g., Feature:, Fix:, Refactor:, Infra:, Idea:).
+2. Carefully infer the target Organization and MUST select a Project strictly from the Project Candidates provided, if any match closely.
+3. Determine dynamic task sizing: Generate concise Idea/Spike cards for rough thoughts (label: idea) and comprehensive engineering specs (Objectives, Scope, Boundaries, Acceptance Criteria) for concrete requests.
+4. Raw Voice Preservation: Embed the exact original voice dictation inside a <details><summary>Original Voice Dictation</summary>... block in the description.
+5. If the brief has architectural forks or high ambiguity, write a clarification question in the askClarification field.
+6. Semantic Disposition Inference: Detect whether the prompt implies backlog parking ("idea", "someday", "later") vs. active execution ("urgent", "now"). Set status to "backlog" or "todo" accordingly.
+
+Respond ONLY with a valid JSON object matching the requested schema. No markdown wrapping.`, strings.TrimSpace(comment), projectList)
 }
 
 // CalculateCost estimates the USD cost for a generation run based on token counts.
@@ -187,8 +196,8 @@ func ExtractTaskJSON(raw string) (InferredTask, error) {
 }
 
 // GenerateTask orchestrates inference with Gemini 3.8 Flash as primary, falling back to Claude Sonnet.
-func (g *TaskGenerator) GenerateTask(ctx context.Context, comment string) (*GenerationResult, error) {
-	prompt := BuildPrompt(comment)
+func (g *TaskGenerator) GenerateTask(ctx context.Context, comment string, projects []string) (*GenerationResult, error) {
+	prompt := BuildPrompt(comment, projects)
 
 	// 1. Try Gemini (Primary) if key configured
 	var geminiErr error
@@ -280,6 +289,15 @@ func (g *TaskGenerator) CallGemini(ctx context.Context, prompt string) (*Generat
 						"type":        "array",
 						"items":       map[string]interface{}{"type": "string"},
 						"description": "array of lowercase tags",
+					},
+										"status": map[string]interface{}{
+						"type": "string",
+						"enum": []string{"backlog", "todo", "in_progress"},
+						"description": "If prompt implies parking (e.g. idea, someday) use 'backlog'. If active (e.g. urgent, now) use 'todo'.",
+					},
+					"askClarification": map[string]interface{}{
+						"type": "string",
+						"description": "If brief has architectural forks or high ambiguity, write a clarification question here.",
 					},
 					"assigneeRole": map[string]interface{}{
 						"type":        "string",
@@ -617,24 +635,30 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 		questionBlock = fmt.Sprintf("\n\n## Key Inquiries & Questions\n%s", strings.Join(questions, "\n"))
 	}
 
+	status := "todo"
+	if strings.Contains(lowerNorm, "idea") || strings.Contains(lowerNorm, "someday") || strings.Contains(lowerNorm, "look into later") {
+		status = "backlog"
+	}
+
 	// 7. Synthesize Markdown Description
 	description := fmt.Sprintf(`## Objectives
 - Synthesize requirements and deliver engineering solution for %s.
 - Address specifications and prevent regressions.
 
-## Core Specs
+## Scope
 - **Target Organization:** %s
 - **Target Project:** %s
 - **Priority Tier:** %s
 - **Scope Summary:** %s%s
 
-## Next Steps
+## Boundaries & Acceptance Criteria
 1. Triage codebase and inspect relevant source files.
 2. Implement solution following architectural specifications.
 3. Validate against StayPoint Definition of Done under race detection.
 
-## Original Request
-> %s`, title, org, project, strings.ToUpper(priority), title, questionBlock, cleanComment)
+<details><summary>Original Voice Dictation</summary>
+%s
+</details>`, title, org, project, strings.ToUpper(priority), title, questionBlock, cleanComment)
 
 	return InferredTask{
 		Organization: org,
@@ -644,6 +668,7 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 		Priority:     priority,
 		Labels:       labels,
 		AssigneeRole: role,
+		Status:       status,
 	}
 }
 
@@ -697,17 +722,27 @@ func cleanImperativeTitle(input, org string) string {
 		stripped = strings.ToUpper(stripped[:1]) + stripped[1:]
 	}
 
-	// Ensure imperative verb prefix if missing
-	verbs := []string{"Fix", "Implement", "Add", "Update", "Refactor", "Clean", "Prune", "Run", "Resolve", "Audit", "Remove", "Research", "Investigate", "Evaluate", "Benchmark", "Design"}
-	hasVerb := false
-	for _, v := range verbs {
-		if strings.HasPrefix(stripped, v) {
-			hasVerb = true
+	// Ensure semantic prefix if missing
+	prefixes := []string{"Feature:", "Fix:", "Refactor:", "Infra:", "Idea:"}
+	hasPrefix := false
+	for _, p := range prefixes {
+		if strings.HasPrefix(stripped, p) {
+			hasPrefix = true
 			break
 		}
 	}
-	if !hasVerb {
-		stripped = "Implement " + stripped
+	if !hasPrefix {
+		if strings.Contains(strings.ToLower(stripped), "bug") || strings.Contains(strings.ToLower(stripped), "fix") {
+			stripped = "Fix: " + stripped
+		} else if strings.Contains(strings.ToLower(stripped), "idea") {
+			stripped = "Idea: " + stripped
+		} else if strings.Contains(strings.ToLower(stripped), "refactor") {
+			stripped = "Refactor: " + stripped
+		} else if org == "Maintenance" {
+			stripped = "Infra: " + stripped
+		} else {
+			stripped = "Feature: " + stripped
+		}
 	}
 
 	// Remove trailing punctuation
