@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
 PackageIdentifier: VinnyVanGogh.staypoint
-PackageVersion: 0.1.0
+PackageVersion: 0.2.0
 PackageLocale: en-US
 Publisher: Vince Vasile
 PublisherUrl: https://github.com/VinnyVanGogh
@@ -23,6 +23,6 @@ Tags:
   - quota
   - telemetry
   - agent
-ReleaseNotesUrl: https://github.com/VinnyVanGogh/staypoint/releases/tag/v0.1.0
+ReleaseNotesUrl: https://github.com/VinnyVanGogh/staypoint/releases/tag/v0.2.0
 ManifestType: defaultLocale
 ManifestVersion: 1.6.0

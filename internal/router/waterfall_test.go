@@ -2,21 +2,28 @@ package router
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
 
 func TestIsWorkRepoDetection(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("unexpected error getting home dir: %v", err)
+	}
+
 	testCases := []struct {
 		path     string
 		expected bool
 	}{
-		{"/Users/vincevasile/Documents/dev/worktrees/feat-auth", true},
-		{"/Users/vincevasile/Documents/dev/mansol-apps-server/github_repo-prod", true},
-		{"/Users/vincevasile/Documents/dev/mansol/vps-hr-automation", true},
-		{"/Users/vincevasile/Documents/dev/managed-solution-dashboard", true},
-		{"/Users/vincevasile/Documents/dev/personal-game", false},
-		{"/Users/vincevasile/Documents/dev/bassline", false},
+		{filepath.Join(home, "Documents/dev/worktrees/feat-auth"), true},
+		{filepath.Join(home, "Documents/dev/mansol-apps-server/github_repo-prod"), true},
+		{filepath.Join(home, "Documents/dev/mansol/vps-hr-automation"), true},
+		{filepath.Join(home, "Documents/dev/managed-solution-dashboard"), true},
+		{filepath.Join(home, "Documents/dev/personal-game"), false},
+		{filepath.Join(home, "Documents/dev/bassline"), false},
 	}
 
 	for _, tc := range testCases {

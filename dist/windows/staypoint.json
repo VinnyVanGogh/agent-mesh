@@ -1,15 +1,15 @@
 {
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Autonomous AI Agent Ops, Quota Pacing & Cross-AI Context Platform",
   "homepage": "https://github.com/VinnyVanGogh/staypoint",
   "license": "Apache-2.0",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/VinnyVanGogh/staypoint/releases/download/v0.1.0/staypoint_0.1.0_windows_amd64.zip",
+      "url": "https://github.com/VinnyVanGogh/staypoint/releases/download/v0.2.0/staypoint_0.2.0_windows_amd64.zip",
       "hash": "PLACEHOLDER_SHA256_AMD64"
     },
     "arm64": {
-      "url": "https://github.com/VinnyVanGogh/staypoint/releases/download/v0.1.0/staypoint_0.1.0_windows_arm64.zip",
+      "url": "https://github.com/VinnyVanGogh/staypoint/releases/download/v0.2.0/staypoint_0.2.0_windows_arm64.zip",
       "hash": "PLACEHOLDER_SHA256_ARM64"
     }
   },

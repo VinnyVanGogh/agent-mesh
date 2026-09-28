@@ -25,8 +25,11 @@ func BenchmarkRenderStatusline(b *testing.B) {
 // including process fork/exec, Go runtime startup, and stdout write.
 func TestBenchmarkStatuslineProcessLatency(t *testing.T) {
 	staypointBin := "../../bin/staypoint"
-	if _, err := os.Stat(staypointBin); os.IsNotExist(err) {
+	if _, err := os.Stat(staypointBin); err != nil {
 		staypointBin = "../../bin/mesh"
+	}
+	if _, err := os.Stat(staypointBin); err != nil {
+		t.Skip("skipping process latency benchmark: staypoint binary not found in bin/staypoint or bin/mesh")
 	}
 	iterations := 20
 	var samples []time.Duration
