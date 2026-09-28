@@ -81,8 +81,7 @@ nfpms:
 brews:
   - name: staypoint
     ids:
-      - staypoint
-      - staypointd
+      - default
     repository:
       owner: VinnyVanGogh
       name: homebrew-tap
