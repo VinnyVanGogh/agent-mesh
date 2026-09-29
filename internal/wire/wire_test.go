@@ -2,6 +2,7 @@ package wire
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,5 +97,18 @@ func TestWirePrune(t *testing.T) {
 	}
 	if pruned != 1 {
 		t.Errorf("expected 1 pruned message, got %d", pruned)
+	}
+}
+
+func TestWirePostRedactsSecrets(t *testing.T) {
+	store := setupTestDB(t)
+	defer store.Close()
+
+	m, err := Post(store.DB(), "global", "claude", "", "use key AIzaSyD-9tSrke72PouQMnMX-a7eZSW0jkFMBWY for the call", 3600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(m.Content, "AIzaSy") || !strings.Contains(m.Content, "[REDACTED:google-api-key]") {
+		t.Fatalf("content not redacted: %q", m.Content)
 	}
 }

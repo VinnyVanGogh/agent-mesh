@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"github.com/VinnyVanGogh/staypoint/internal/security"
 	"io"
 	"log/slog"
 	"os"
@@ -28,6 +29,9 @@ func SetupLogger(level string, format string, writer io.Writer) *slog.Logger {
 		slogLevel = slog.LevelInfo
 	}
 
+	// slog emits one complete record per Write, so a stateless per-write redactor suffices.
+	writer = redactingWriter{dst: writer}
+
 	opts := &slog.HandlerOptions{
 		Level: slogLevel,
 	}
@@ -42,4 +46,14 @@ func SetupLogger(level string, format string, writer io.Writer) *slog.Logger {
 	logger := slog.New(handler)
 	slog.SetDefault(logger)
 	return logger
+}
+
+// redactingWriter scrubs secrets from every log record before it is written.
+type redactingWriter struct{ dst io.Writer }
+
+func (w redactingWriter) Write(p []byte) (int, error) {
+	if _, err := w.dst.Write(security.RedactBytes(p)); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }

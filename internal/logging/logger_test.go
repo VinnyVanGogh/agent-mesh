@@ -161,3 +161,19 @@ func TestSetupLoggerSetDefault(t *testing.T) {
 		t.Errorf("expected slog.Default to write to buffer, got: %s", output)
 	}
 }
+
+func TestSetupLoggerRedactsSecrets(t *testing.T) {
+	const key = "sk-ant-api03-Xk9fQ2mZ7vL0aB3cD4eF5gH6iJ7kL8mN9oP0qR1sT2uV3wX4yZ5aB6cD7eF8gH9iJ0"
+	for _, format := range []string{"json", "text"} {
+		var buf bytes.Buffer
+		l := SetupLogger("info", format, &buf)
+		l.Info("auth failed", slog.String("token", key), slog.String("hdr", "Bearer abcdef1234567890"))
+		out := buf.String()
+		if strings.Contains(out, key[:30]) || strings.Contains(out, "abcdef1234567890") {
+			t.Errorf("%s: secret leaked: %s", format, out)
+		}
+		if !strings.Contains(out, "REDACTED") {
+			t.Errorf("%s: no redaction marker: %s", format, out)
+		}
+	}
+}
