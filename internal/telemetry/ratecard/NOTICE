@@ -1,0 +1,3 @@
+internal/telemetry/ratecard/ratecard.json is derived from https://models.dev/api.json
+(MIT License, Copyright (c) 2025 models.dev). Full license text: internal/telemetry/ratecard/LICENSE-models.dev
+Regenerate with scripts/gen_ratecard.py. 1h cache-write rates are derived (2x input) for Anthropic models; models.dev does not publish them.
