@@ -1,7 +1,6 @@
 package adapter
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -30,25 +29,34 @@ func runCommandWithKeepalive(ctx context.Context, bin string, args []string, std
 		return fmt.Errorf("start error: %w", err)
 	}
 
-	// Buffered channel of 10,000 lines to prevent OS pipe backpressure from stalling agy
-	ch := make(chan string, 10000)
+	ch := make(chan []byte, 1000)
+	errCh := make(chan error, 1)
+
 	go func() {
-		scanner := bufio.NewScanner(cmdStdout)
-		buf := make([]byte, 64*1024)
-		scanner.Buffer(buf, 16*1024*1024)
-		for scanner.Scan() {
-			ch <- scanner.Text()
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := cmdStdout.Read(buf)
+			if n > 0 {
+				chunk := make([]byte, n)
+				copy(chunk, buf[:n])
+				ch <- chunk
+			}
+			if err != nil {
+				if err != io.EOF {
+					errCh <- err
+				}
+				close(ch)
+				return
+			}
 		}
-		close(ch)
 	}()
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	var burstCount int
 	for {
 		select {
-		case line, ok := <-ch:
+		case chunk, ok := <-ch:
 			if !ok {
 				err := cmdExec.Wait()
 				if err != nil {
@@ -56,16 +64,18 @@ func runCommandWithKeepalive(ctx context.Context, bin string, args []string, std
 				}
 				return nil
 			}
-			fmt.Fprintln(stdout, line)
-			burstCount++
-			if burstCount >= 20 {
-				time.Sleep(2 * time.Millisecond)
-				burstCount = 0
+			if _, err := stdout.Write(chunk); err != nil {
+				return err
 			}
 		case <-ticker.C:
-			// Emitting an empty string keepalive to prevent Paperclip stream consumer stall
-			fmt.Fprintln(stdout, "")
+			// Emit newline keepalive to keep Paperclip stream consumer alive
+			_, _ = stdout.Write([]byte("\n"))
+		case err := <-errCh:
+			return err
 		case <-ctx.Done():
+			if cmdExec.Process != nil {
+				_ = cmdExec.Process.Kill()
+			}
 			return ctx.Err()
 		}
 	}
@@ -274,11 +284,10 @@ func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, 
 
 		claudeLocked := poolClaude != nil && (poolClaude.IsLocked || (poolClaude.FiveHour.ResetsAt.After(time.Now()) && poolClaude.FiveHour.RemainingPct <= 0.0))
 		geminiLocked := poolGemini != nil && (poolGemini.IsLocked || (poolGemini.FiveHour.ResetsAt.After(time.Now()) && poolGemini.FiveHour.RemainingPct <= 0.0))
-		geminiOffPace := poolGemini != nil && !poolGemini.OnWeeklyPace(time.Now())
 
 		if targetTool == "agy" {
-			if (geminiLocked || geminiOffPace) && !claudeLocked {
-				fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Gemini locked or off weekly pace. Failing over to Claude...\n")
+			if geminiLocked && !claudeLocked {
+				fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Gemini locked. Failing over to Claude...\n")
 				targetTool = "claude"
 			}
 		} else if targetTool == "claude" {
@@ -293,6 +302,18 @@ func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, 
 	if targetTool == "claude" {
 		bin := "/Users/vincevasile/.local/bin/claude"
 		args := buildClaudeArgs(opts)
+		if provider == "gemini" {
+			var buf bytes.Buffer
+			err := runCommandWithKeepalive(ctx, bin, args, bytes.NewReader(stdinBytes), &buf, stderr)
+			if err != nil {
+				fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Claude failover failed (%v), failing back to Gemini...\n", err)
+				fallbackBin := "/Users/vincevasile/.local/bin/agy"
+				fallbackArgs := buildAgyArgs(opts)
+				return runCommandWithKeepalive(ctx, fallbackBin, fallbackArgs, bytes.NewReader(stdinBytes), stdout, stderr)
+			}
+			_, _ = io.Copy(stdout, &buf)
+			return nil
+		}
 		err := runCommandWithKeepalive(ctx, bin, args, bytes.NewReader(stdinBytes), stdout, stderr)
 		if err != nil {
 			fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Claude failed (%v), failing back to Gemini...\n", err)
@@ -306,6 +327,18 @@ func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, 
 	// Try agy first
 	bin := "/Users/vincevasile/.local/bin/agy"
 	args := buildAgyArgs(opts)
+	if provider == "claude" {
+		var buf bytes.Buffer
+		err := runCommandWithKeepalive(ctx, bin, args, bytes.NewReader(stdinBytes), &buf, stderr)
+		if err != nil {
+			fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Gemini failover failed (%v), failing back to Claude...\n", err)
+			fallbackBin := "/Users/vincevasile/.local/bin/claude"
+			fallbackArgs := buildClaudeArgs(opts)
+			return runCommandWithKeepalive(ctx, fallbackBin, fallbackArgs, bytes.NewReader(stdinBytes), stdout, stderr)
+		}
+		_, _ = io.Copy(stdout, &buf)
+		return nil
+	}
 	err := runCommandWithKeepalive(ctx, bin, args, bytes.NewReader(stdinBytes), stdout, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Gemini failed (%v), falling back to Claude...\n", err)
