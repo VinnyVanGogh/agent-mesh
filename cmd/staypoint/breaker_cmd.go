@@ -83,6 +83,9 @@ var breakerResetCmd = &cobra.Command{
 
 func cleanGitStatusFile(line string) string {
 	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "??") {
+		return ""
+	}
 	if len(line) >= 3 {
 		idx := strings.Index(line, " ")
 		if idx != -1 {
