@@ -30,6 +30,7 @@ var statusCmd = &cobra.Command{
 		decision, _ := router.Route(ctx, cwd, pacerState, router.RouteOptions{
 			CheckSSH:   false,
 			RemoteHost: remoteHost,
+			UIOLI:      router.UIOLIFromConfig(cfg),
 		})
 
 		if pacerState != nil {
@@ -50,11 +51,15 @@ var statusCmd = &cobra.Command{
 				persColor := "\033[1;32m✔ Available\033[0m"
 				if persPool.IsLocked {
 					persColor = "\033[1;31m✖ Locked\033[0m"
-				} else if persPool.Weekly.RemainingPct < 10 {
-					persColor = fmt.Sprintf("\033[1;33m⚠ %.0f%% Used\033[0m", persPool.Weekly.UsedPct)
+				} else if persPool.Weekly.Known && persPool.Weekly.RemainingPct < 10 {
+					persColor = fmt.Sprintf("\033[1;33m⚠ %s Used\033[0m", persPool.Weekly.FormatPct(false, 0))
 				}
-				fmt.Printf("  • Personal Claude Code:    %s | Week Left: %.0f%% | 5h Left: %.0f%%\n",
-					persColor, persPool.Weekly.RemainingPct, persPool.FiveHour.RemainingPct)
+				resetNote := ""
+				if r := router.FormatReset(persPool.Weekly.ResetsAt, time.Now()); r != "" {
+					resetNote = " (resets " + r + ")"
+				}
+				fmt.Printf("  • Personal Claude Code:    %s | Week Used: %s | Week Left: %s%s | 5h Left: %s\n",
+					persColor, persPool.Weekly.FormatPct(false, 0), persPool.Weekly.FormatPct(true, 0), resetNote, persPool.FiveHour.FormatPct(true, 0))
 			}
 			if geminiPool != nil {
 				gemColor := "\033[1;32m✔ Available\033[0m"

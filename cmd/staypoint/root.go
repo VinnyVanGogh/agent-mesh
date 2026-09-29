@@ -117,6 +117,7 @@ func runSmartLaunch(cmd *cobra.Command, args []string) {
 			RemoteHost:            remoteHost,
 			PreferredPersonalTool: prefTool,
 			LastUsedTool:          lastTool,
+			UIOLI:                 router.UIOLIFromConfig(cfg),
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Routing error: %v\n", err)

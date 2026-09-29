@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/router"
@@ -44,12 +45,17 @@ var routeCmd = &cobra.Command{
 
 		modelFlag, _ := cmd.Flags().GetString("model")
 		effortFlag, _ := cmd.Flags().GetString("effort")
+		priorityFlag, _ := cmd.Flags().GetString("priority")
+		highPriorityFlag, _ := cmd.Flags().GetBool("high-priority")
+		isHighPriority := highPriorityFlag || strings.EqualFold(priorityFlag, "high")
 
 		decision, err := router.Route(ctx, cwd, pacerState, router.RouteOptions{
 			CheckSSH:        !noSSH,
 			RemoteHost:      remoteHost,
 			PreferredModel:  modelFlag,
 			PreferredEffort: effortFlag,
+			HighPriority:    isHighPriority,
+			UIOLI:           router.UIOLIFromConfig(cfg),
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Routing error: %v\n", err)
@@ -122,11 +128,11 @@ var routeCmd = &cobra.Command{
 				statusIcon := "\033[1;32m✔\033[0m"
 				if pool.IsLocked {
 					statusIcon = "\033[1;31m🔒\033[0m"
-				} else if pool.Weekly.RemainingPct < 10 {
+				} else if pool.Weekly.Known && pool.Weekly.RemainingPct < 10 {
 					statusIcon = "\033[1;33m⚠\033[0m"
 				}
-				fmt.Printf("  %s %-18s | 5h Left: %5.1f%% | Week Left: %5.1f%% | Runway: %3d turns",
-					statusIcon, pool.Name, pool.FiveHour.RemainingPct, pool.Weekly.RemainingPct, pool.TurnsRunway)
+				fmt.Printf("  %s %-18s | 5h Left: %5s | Week Left: %5s | Runway: %3d turns",
+					statusIcon, pool.Name, pool.FiveHour.FormatPct(true, 1), pool.Weekly.FormatPct(true, 1), pool.TurnsRunway)
 				if pool.IsLocked {
 					fmt.Printf(" (resets @%s)", pool.LockoutUntil.Format("03:04pm"))
 				}
@@ -143,4 +149,6 @@ func init() {
 	routeCmd.Flags().Bool("no-ssh", false, "Skip SSH connectivity probe for work repo routing")
 	routeCmd.Flags().StringP("model", "m", "", "Target model tier (e.g. opus, sonnet, claude-opus-5, claude-sonnet-4-6)")
 	routeCmd.Flags().String("effort", "", "Reasoning effort (high, medium, low)")
+	routeCmd.Flags().Bool("high-priority", false, "Treat task as high-priority (steers to top-tier model under UIOLI)")
+	routeCmd.Flags().StringP("priority", "p", "", "Task priority tier (e.g. high, medium, low)")
 }

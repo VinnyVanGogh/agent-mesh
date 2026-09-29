@@ -495,7 +495,11 @@ func printTokenTelemetry(out io.Writer, res *ai.GenerationResult) {
 	fmt.Fprintf(out, "  • Input Tokens:            %d\n", res.InputTokens)
 	fmt.Fprintf(out, "  • Output Tokens:           %d\n", res.OutputTokens)
 	fmt.Fprintf(out, "  • Cached Tokens:           %d\n", res.CachedTokens)
-	fmt.Fprintf(out, "  • Estimated Turn Cost:     \033[1;32m$%.6f USD\033[0m\n", res.EstimatedCostUSD)
+	costColor := "\033[1;32m"
+	if res.Unpriced {
+		costColor = "\033[1;33m"
+	}
+	fmt.Fprintf(out, "  • Estimated Turn Cost:     %s%s\033[0m\n", costColor, res.FormatCost())
 }
 
 func printClickableLink(out io.Writer, identifier, issueURL string, assigneeName ...string) {

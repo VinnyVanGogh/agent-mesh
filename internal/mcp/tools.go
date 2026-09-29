@@ -414,6 +414,7 @@ func (s *Server) handleStatus(ctx context.Context, rawArgs json.RawMessage) *Too
 	decision, _ := router.Route(routeCtx, workDir, pacerState, router.RouteOptions{
 		CheckSSH:   false,
 		RemoteHost: remoteHost,
+		UIOLI:      router.UIOLIFromConfig(s.cfg),
 	})
 
 	statusData := map[string]any{
