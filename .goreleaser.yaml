@@ -82,6 +82,7 @@ brews:
   - name: staypoint
     ids:
       - default
+    directory: Formula
     repository:
       owner: VinnyVanGogh
       name: homebrew-tap

@@ -3,6 +3,12 @@ name: Bottle Hashing
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.2.0)'
+        required: true
+        default: 'v0.2.0'
 
 permissions:
   contents: write
@@ -20,7 +26,7 @@ jobs:
 
       - name: Install staypoint from release source
         run: |
-          VERSION="${{ github.event.release.tag_name }}"
+          VERSION="${{ github.event.release.tag_name || inputs.tag }}"
           brew install --build-bottle vinnyvangogh/tap/staypoint
 
       - name: Build bottle
@@ -40,7 +46,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
+          gh release upload "${{ github.event.release.tag_name || inputs.tag }}" \
             "${{ steps.bottle.outputs.filename }}" \
             --repo "${{ github.repository }}" \
             --clobber
@@ -48,6 +54,7 @@ jobs:
   bottle-x86_64:
     name: Build Bottle (x86_64)
     runs-on: macos-13
+    continue-on-error: true
     outputs:
       sha256: ${{ steps.bottle.outputs.sha256 }}
       filename: ${{ steps.bottle.outputs.filename }}
@@ -75,7 +82,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
+          gh release upload "${{ github.event.release.tag_name || inputs.tag }}" \
             "${{ steps.bottle.outputs.filename }}" \
             --repo "${{ github.repository }}" \
             --clobber
@@ -83,6 +90,7 @@ jobs:
   update-formula-bottles:
     name: Update Formula Bottle Stanza
     needs: [bottle-arm64, bottle-x86_64]
+    if: always() && needs.bottle-arm64.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout homebrew-tap
@@ -94,7 +102,7 @@ jobs:
 
       - name: Patch bottle stanza in Formula/staypoint.rb
         env:
-          VERSION: ${{ github.event.release.tag_name }}
+          VERSION: ${{ github.event.release.tag_name || inputs.tag }}
           ARM64_SHA: ${{ needs.bottle-arm64.outputs.sha256 }}
           AMD64_SHA: ${{ needs.bottle-x86_64.outputs.sha256 }}
         run: |
@@ -102,8 +110,12 @@ jobs:
           FORMULA="Formula/staypoint.rb"
 
           # Replace placeholder SHAs with real bottle checksums
-          sed -i "s|BOTTLE_ARM64_SHA256|${ARM64_SHA}|g" "$FORMULA"
-          sed -i "s|BOTTLE_AMD64_SHA256|${AMD64_SHA}|g" "$FORMULA"
+          if [ -n "${ARM64_SHA}" ]; then
+            sed -i "s|BOTTLE_ARM64_SHA256|${ARM64_SHA}|g" "$FORMULA"
+          fi
+          if [ -n "${AMD64_SHA}" ]; then
+            sed -i "s|BOTTLE_AMD64_SHA256|${AMD64_SHA}|g" "$FORMULA"
+          fi
 
           # Update root_url to point to this release's bottle download
           sed -i "s|root_url \".*\"|root_url \"https://github.com/VinnyVanGogh/staypoint/releases/download/${VERSION}\"|g" "$FORMULA"
@@ -115,5 +127,5 @@ jobs:
           git config user.email "bot@goreleaser.com"
           git add Formula/staypoint.rb
           git diff --cached --quiet && echo "no changes" && exit 0
-          git commit -m "feat: add bottles for staypoint ${{ github.event.release.tag_name }}"
+          git commit -m "feat: add bottles for staypoint ${{ github.event.release.tag_name || inputs.tag }}"
           git push
