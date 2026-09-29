@@ -39,3 +39,11 @@ If you discover a security issue or vulnerability in Staypoint:
    `security@staypoint.dev` (or the repository maintainer email).
 3. Include detailed steps to reproduce the issue, proof of concept code, and the affected version of Staypoint.
 4. The maintainer will acknowledge receipt within 48 hours and provide an estimated timeline for remediation.
+
+---
+
+## 3. Autonomous-run security floor
+
+Secret redaction on persisted/emitted streams, a sanitized child environment, Green/Yellow/Red command tiers with
+human confirmation for Red, and a worktree path boundary are implemented in `internal/security`.
+See `docs/SECURITY-FLOOR.md` for behaviour, known limits and the open credential-vault design review.
