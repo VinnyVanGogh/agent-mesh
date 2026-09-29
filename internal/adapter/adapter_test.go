@@ -11,8 +11,65 @@ import (
 	"github.com/VinnyVanGogh/staypoint/internal/router"
 )
 
+func TestParseRawArgs(t *testing.T) {
+	rawArgs := []string{
+		"--output-format", "stream-json",
+		"--approval-mode", "yolo",
+		"--sandbox=none",
+		"--model", "google/gemini-3.8-flash-high",
+		"--resume", "sess-123",
+		"--add-dir", "/tmp/skills",
+		"--prompt", "Explain how quota gating works",
+	}
+
+	opts := parseRawArgs(rawArgs)
+	if opts.Prompt != "Explain how quota gating works" {
+		t.Errorf("expected prompt 'Explain how quota gating works', got %q", opts.Prompt)
+	}
+	if opts.Model != "gemini-3.8-flash" {
+		t.Errorf("expected model 'gemini-3.8-flash', got %q", opts.Model)
+	}
+	if opts.Effort != "high" {
+		t.Errorf("expected effort 'high', got %q", opts.Effort)
+	}
+	if opts.ConversationID != "sess-123" {
+		t.Errorf("expected conversationID 'sess-123', got %q", opts.ConversationID)
+	}
+	if opts.OutputFormat != "stream-json" {
+		t.Errorf("expected outputFormat 'stream-json', got %q", opts.OutputFormat)
+	}
+	if len(opts.AddDirs) != 1 || opts.AddDirs[0] != "/tmp/skills" {
+		t.Errorf("expected addDirs [/tmp/skills], got %v", opts.AddDirs)
+	}
+
+	claudeArgs := buildClaudeArgs(opts)
+	// Claude should receive --print and NOT receive --prompt or Gemini model
+	hasPrint := false
+	hasPrompt := false
+	hasGeminiModel := false
+	for _, a := range claudeArgs {
+		if a == "--print" {
+			hasPrint = true
+		}
+		if a == "--prompt" {
+			hasPrompt = true
+		}
+		if strings.Contains(a, "gemini") {
+			hasGeminiModel = true
+		}
+	}
+	if !hasPrint {
+		t.Errorf("Claude args must include --print")
+	}
+	if hasPrompt {
+		t.Errorf("Claude args must not include --prompt")
+	}
+	if hasGeminiModel {
+		t.Errorf("Claude args must not include Gemini model names")
+	}
+}
+
 func TestAdapterKeepalive(t *testing.T) {
-	// Create a dummy shell script that sleeps for 3 seconds then prints "done"
 	script := `#!/bin/sh
 sleep 3
 echo "done"
@@ -29,14 +86,13 @@ echo "done"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Use custom context value to override the binary path
 	ctx = context.WithValue(ctx, "testBin", f.Name())
 
 	var stdout, stderr bytes.Buffer
 	pacerState := &router.PacerState{}
 
 	start := time.Now()
-	err = RunAdapter(ctx, ".", pacerState, []string{"--model", "google/gemini-3.8-flash"}, &stdout, &stderr)
+	err = RunAdapter(ctx, ".", pacerState, "gemini", []string{"--model", "google/gemini-3.8-flash"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("RunAdapter failed: %v", err)
 	}
@@ -56,7 +112,6 @@ echo "done"
 }
 
 func TestAdapterFallback(t *testing.T) {
-	// Dummy script that exits with 1 (simulating agy crashing or quota fail)
 	failScript := `#!/bin/sh
 exit 1
 `
@@ -72,14 +127,12 @@ exit 1
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Use custom context value to override the binary path
 	ctx = context.WithValue(ctx, "testBin", f.Name())
 
 	var stdout, stderr bytes.Buffer
 	pacerState := &router.PacerState{}
 
-	err = RunAdapter(ctx, ".", pacerState, []string{"--model", "google/gemini-3.8-flash"}, &stdout, &stderr)
-	// It should return an error because we overrode testBin and test fallback doesn't trigger when testBin is set
+	err = RunAdapter(ctx, ".", pacerState, "gemini", []string{"--model", "google/gemini-3.8-flash"}, &stdout, &stderr)
 	if err == nil {
 		t.Errorf("Expected error from failing script")
 	}
