@@ -411,3 +411,26 @@ func FormatDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%dm", mins)
 }
+
+// OnWeeklyPace reports whether the pool's weekly burn will last until its reset.
+// Mirrors calculate_pacing in rate-limit-notifier.py: on pace when burn rate
+// (%/day so far) <= sustainable budget (%/day to reset) or projected exhaustion
+// falls after the reset. An exhausted weekly window is never on pace.
+func (p *QuotaPool) OnWeeklyPace(now time.Time) bool {
+	used := p.Weekly.UsedPct
+	remaining := math.Max(0, 100.0-used)
+	if remaining <= 0 {
+		return false
+	}
+	if used <= 0 {
+		return true
+	}
+	daysLeft := 5.0 // fallback when the reset time is missing, same as the notifier
+	if p.Weekly.ResetsAt.After(now) {
+		daysLeft = math.Max(0.01, p.Weekly.ResetsAt.Sub(now).Hours()/24.0)
+	}
+	daysElapsed := math.Max(0.1, 7.0-daysLeft)
+	burn := used / daysElapsed
+	budget := remaining / daysLeft
+	return burn <= budget || remaining/burn >= daysLeft
+}

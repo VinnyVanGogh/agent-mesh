@@ -266,9 +266,9 @@ func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, 
 
 	if pacerState != nil {
 		poolGemini := pacerState.Pools[router.PoolGeminiNative]
-		if poolGemini != nil && (poolGemini.IsLocked || poolGemini.Weekly.RemainingPct < 25.0) {
+		if poolGemini != nil && (poolGemini.IsLocked || !poolGemini.OnWeeklyPace(time.Now())) {
 			if provider == "gemini" {
-				fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Gemini quota tight or locked (<25%% weekly headroom). Route recommending failover to Claude...\n")
+				fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Gemini locked or off weekly pace (burn rate exceeds sustainable budget). Failing over to Claude...\n")
 				targetTool = "claude"
 			}
 		}
