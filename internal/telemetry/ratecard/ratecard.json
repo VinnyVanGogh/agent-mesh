@@ -1,0 +1,1062 @@
+{
+ "license": "MIT (c) 2025 models.dev",
+ "models": {
+  "claude-fable-5": {
+   "cache_read": 1000000,
+   "cache_write": 12500000,
+   "cache_write_1h": 20000000,
+   "input": 10000000,
+   "output": 50000000,
+   "provider": "anthropic"
+  },
+  "claude-fable-5-1": {
+   "cache_read": 250000,
+   "cache_write": 12500000,
+   "cache_write_1h": 20000000,
+   "input": 10000000,
+   "output": 50000000,
+   "provider": "anthropic"
+  },
+  "claude-haiku-4-5": {
+   "cache_read": 100000,
+   "cache_write": 1250000,
+   "cache_write_1h": 2000000,
+   "input": 1000000,
+   "output": 5000000,
+   "provider": "anthropic"
+  },
+  "claude-haiku-4-5-20251001": {
+   "cache_read": 100000,
+   "cache_write": 1250000,
+   "cache_write_1h": 2000000,
+   "input": 1000000,
+   "output": 5000000,
+   "provider": "anthropic"
+  },
+  "claude-opus-4-5": {
+   "cache_read": 500000,
+   "cache_write": 6250000,
+   "cache_write_1h": 10000000,
+   "input": 5000000,
+   "output": 25000000,
+   "provider": "anthropic"
+  },
+  "claude-opus-4-5-20251101": {
+   "cache_read": 500000,
+   "cache_write": 6250000,
+   "cache_write_1h": 10000000,
+   "input": 5000000,
+   "output": 25000000,
+   "provider": "anthropic"
+  },
+  "claude-opus-4-6": {
+   "cache_read": 500000,
+   "cache_write": 6250000,
+   "cache_write_1h": 10000000,
+   "input": 5000000,
+   "output": 25000000,
+   "provider": "anthropic"
+  },
+  "claude-opus-4-7": {
+   "cache_read": 500000,
+   "cache_write": 6250000,
+   "cache_write_1h": 10000000,
+   "input": 5000000,
+   "output": 25000000,
+   "provider": "anthropic"
+  },
+  "claude-opus-4-8": {
+   "cache_read": 500000,
+   "cache_write": 6250000,
+   "cache_write_1h": 10000000,
+   "input": 5000000,
+   "output": 25000000,
+   "provider": "anthropic"
+  },
+  "claude-opus-5": {
+   "cache_read": 500000,
+   "cache_write": 6250000,
+   "cache_write_1h": 10000000,
+   "input": 5000000,
+   "output": 25000000,
+   "provider": "anthropic"
+  },
+  "claude-opus-5-5": {
+   "cache_read": 200000,
+   "cache_write": 5000000,
+   "cache_write_1h": 8000000,
+   "input": 4000000,
+   "output": 20000000,
+   "provider": "anthropic"
+  },
+  "claude-sonnet-4-5": {
+   "cache_read": 300000,
+   "cache_write": 3750000,
+   "cache_write_1h": 6000000,
+   "input": 3000000,
+   "output": 15000000,
+   "provider": "anthropic"
+  },
+  "claude-sonnet-4-5-20250929": {
+   "cache_read": 300000,
+   "cache_write": 3750000,
+   "cache_write_1h": 6000000,
+   "input": 3000000,
+   "output": 15000000,
+   "provider": "anthropic"
+  },
+  "claude-sonnet-4-6": {
+   "cache_read": 300000,
+   "cache_write": 3750000,
+   "cache_write_1h": 6000000,
+   "input": 3000000,
+   "output": 15000000,
+   "provider": "anthropic"
+  },
+  "claude-sonnet-5": {
+   "cache_read": 200000,
+   "cache_write": 2500000,
+   "cache_write_1h": 4000000,
+   "input": 2000000,
+   "output": 10000000,
+   "provider": "anthropic"
+  },
+  "claude-sonnet-5-5": {
+   "cache_read": 200000,
+   "cache_write": 2500000,
+   "cache_write_1h": 4000000,
+   "input": 2000000,
+   "output": 10000000,
+   "provider": "anthropic"
+  },
+  "codestral-latest": {
+   "cache_read": 30000,
+   "input": 300000,
+   "output": 900000,
+   "provider": "mistral"
+  },
+  "deep-research-max-preview-04-2026": {
+   "cache_read": 200000,
+   "input": 2000000,
+   "output": 12000000,
+   "provider": "google",
+   "tiers": [
+    {
+     "cache_read": 400000,
+     "context_over": 200000,
+     "input": 4000000,
+     "output": 18000000
+    }
+   ]
+  },
+  "deep-research-preview-04-2026": {
+   "cache_read": 200000,
+   "input": 2000000,
+   "output": 12000000,
+   "provider": "google",
+   "tiers": [
+    {
+     "cache_read": 400000,
+     "context_over": 200000,
+     "input": 4000000,
+     "output": 18000000
+    }
+   ]
+  },
+  "deepseek-flash": {
+   "cache_read": 3000,
+   "input": 150000,
+   "output": 600000,
+   "provider": "deepseek"
+  },
+  "deepseek-v4-flash": {
+   "cache_read": 3000,
+   "input": 150000,
+   "output": 600000,
+   "provider": "deepseek"
+  },
+  "deepseek-v4-flash-vision-exp": {
+   "cache_read": 3000,
+   "input": 150000,
+   "output": 600000,
+   "provider": "deepseek"
+  },
+  "deepseek-v4-pro": {
+   "cache_read": 3625,
+   "input": 435000,
+   "output": 870000,
+   "provider": "deepseek"
+  },
+  "devstral-2512": {
+   "input": 400000,
+   "output": 2000000,
+   "provider": "mistral"
+  },
+  "devstral-latest": {
+   "input": 400000,
+   "output": 2000000,
+   "provider": "mistral"
+  },
+  "devstral-medium-2507": {
+   "input": 400000,
+   "output": 2000000,
+   "provider": "mistral"
+  },
+  "devstral-medium-latest": {
+   "input": 400000,
+   "output": 2000000,
+   "provider": "mistral"
+  },
+  "devstral-small-2505": {
+   "input": 100000,
+   "output": 300000,
+   "provider": "mistral"
+  },
+  "devstral-small-2507": {
+   "input": 100000,
+   "output": 300000,
+   "provider": "mistral"
+  },
+  "gemini-2.5-computer-use-preview-10-2025": {
+   "input": 1250000,
+   "output": 10000000,
+   "provider": "google",
+   "tiers": [
+    {
+     "context_over": 200000,
+     "input": 2500000,
+     "output": 15000000
+    }
+   ]
+  },
+  "gemini-2.5-flash": {
+   "cache_read": 30000,
+   "input": 300000,
+   "output": 2500000,
+   "provider": "google"
+  },
+  "gemini-2.5-flash-image": {
+   "cache_read": 75000,
+   "input": 300000,
+   "output": 30000000,
+   "provider": "google"
+  },
+  "gemini-2.5-flash-lite": {
+   "cache_read": 10000,
+   "input": 100000,
+   "output": 400000,
+   "provider": "google"
+  },
+  "gemini-2.5-flash-preview-tts": {
+   "input": 500000,
+   "output": 10000000,
+   "provider": "google"
+  },
+  "gemini-2.5-pro": {
+   "cache_read": 125000,
+   "input": 1250000,
+   "output": 10000000,
+   "provider": "google",
+   "tiers": [
+    {
+     "cache_read": 250000,
+     "context_over": 200000,
+     "input": 2500000,
+     "output": 15000000
+    }
+   ]
+  },
+  "gemini-2.5-pro-preview-tts": {
+   "input": 1000000,
+   "output": 20000000,
+   "provider": "google"
+  },
+  "gemini-3-flash-preview": {
+   "cache_read": 50000,
+   "input": 500000,
+   "output": 3000000,
+   "provider": "google"
+  },
+  "gemini-3-pro-image": {
+   "input": 2000000,
+   "output": 120000000,
+   "provider": "google"
+  },
+  "gemini-3-pro-image-preview": {
+   "input": 2000000,
+   "output": 120000000,
+   "provider": "google"
+  },
+  "gemini-3.1-flash-image": {
+   "input": 500000,
+   "output": 60000000,
+   "provider": "google"
+  },
+  "gemini-3.1-flash-image-preview": {
+   "input": 500000,
+   "output": 60000000,
+   "provider": "google"
+  },
+  "gemini-3.1-flash-lite": {
+   "cache_read": 25000,
+   "input": 250000,
+   "output": 1500000,
+   "provider": "google"
+  },
+  "gemini-3.1-flash-lite-image": {
+   "input": 250000,
+   "output": 30000000,
+   "provider": "google"
+  },
+  "gemini-3.1-flash-lite-preview": {
+   "cache_read": 25000,
+   "input": 250000,
+   "output": 1500000,
+   "provider": "google"
+  },
+  "gemini-3.1-flash-live-preview": {
+   "input": 750000,
+   "output": 4500000,
+   "provider": "google"
+  },
+  "gemini-3.1-flash-tts-preview": {
+   "input": 1000000,
+   "output": 20000000,
+   "provider": "google"
+  },
+  "gemini-3.1-pro-preview": {
+   "cache_read": 200000,
+   "input": 2000000,
+   "output": 12000000,
+   "provider": "google",
+   "tiers": [
+    {
+     "cache_read": 400000,
+     "context_over": 200000,
+     "input": 4000000,
+     "output": 18000000
+    }
+   ]
+  },
+  "gemini-3.1-pro-preview-customtools": {
+   "cache_read": 200000,
+   "input": 2000000,
+   "output": 12000000,
+   "provider": "google",
+   "tiers": [
+    {
+     "cache_read": 400000,
+     "context_over": 200000,
+     "input": 4000000,
+     "output": 18000000
+    }
+   ]
+  },
+  "gemini-3.5-flash": {
+   "cache_read": 150000,
+   "input": 1500000,
+   "output": 9000000,
+   "provider": "google"
+  },
+  "gemini-3.5-flash-lite": {
+   "cache_read": 30000,
+   "input": 300000,
+   "output": 2500000,
+   "provider": "google"
+  },
+  "gemini-3.5-live-translate-preview": {
+   "input": 3500000,
+   "output": 21000000,
+   "provider": "google"
+  },
+  "gemini-3.6-flash": {
+   "cache_read": 75000,
+   "input": 750000,
+   "output": 3750000,
+   "provider": "google"
+  },
+  "gemini-3.7-flash": {
+   "cache_read": 75000,
+   "input": 750000,
+   "output": 3750000,
+   "provider": "google"
+  },
+  "gemini-3.8-flash": {
+   "cache_read": 75000,
+   "input": 750000,
+   "output": 3750000,
+   "provider": "google"
+  },
+  "gemini-embedding-001": {
+   "input": 150000,
+   "output": 0,
+   "provider": "google"
+  },
+  "gemini-embedding-2": {
+   "input": 200000,
+   "output": 0,
+   "provider": "google"
+  },
+  "gemini-flash-latest": {
+   "cache_read": 75000,
+   "input": 750000,
+   "output": 3750000,
+   "provider": "google"
+  },
+  "gemini-flash-lite-latest": {
+   "cache_read": 30000,
+   "input": 300000,
+   "output": 2500000,
+   "provider": "google"
+  },
+  "gemini-omni-flash-preview": {
+   "input": 1500000,
+   "output": 17500000,
+   "provider": "google"
+  },
+  "gpt-3.5-turbo": {
+   "cache_read": 0,
+   "input": 500000,
+   "output": 1500000,
+   "provider": "openai"
+  },
+  "gpt-4": {
+   "input": 30000000,
+   "output": 60000000,
+   "provider": "openai"
+  },
+  "gpt-4-turbo": {
+   "input": 10000000,
+   "output": 30000000,
+   "provider": "openai"
+  },
+  "gpt-4.1": {
+   "cache_read": 500000,
+   "input": 2000000,
+   "output": 8000000,
+   "provider": "openai"
+  },
+  "gpt-4.1-mini": {
+   "cache_read": 100000,
+   "input": 400000,
+   "output": 1600000,
+   "provider": "openai"
+  },
+  "gpt-4.1-nano": {
+   "cache_read": 25000,
+   "input": 100000,
+   "output": 400000,
+   "provider": "openai"
+  },
+  "gpt-4o": {
+   "cache_read": 1250000,
+   "input": 2500000,
+   "output": 10000000,
+   "provider": "openai"
+  },
+  "gpt-4o-2024-05-13": {
+   "input": 5000000,
+   "output": 15000000,
+   "provider": "openai"
+  },
+  "gpt-4o-2024-08-06": {
+   "cache_read": 1250000,
+   "input": 2500000,
+   "output": 10000000,
+   "provider": "openai"
+  },
+  "gpt-4o-2024-11-20": {
+   "cache_read": 1250000,
+   "input": 2500000,
+   "output": 10000000,
+   "provider": "openai"
+  },
+  "gpt-4o-mini": {
+   "cache_read": 75000,
+   "input": 150000,
+   "output": 600000,
+   "provider": "openai"
+  },
+  "gpt-5": {
+   "cache_read": 125000,
+   "input": 1250000,
+   "output": 10000000,
+   "provider": "openai"
+  },
+  "gpt-5-mini": {
+   "cache_read": 25000,
+   "input": 250000,
+   "output": 2000000,
+   "provider": "openai"
+  },
+  "gpt-5-nano": {
+   "cache_read": 5000,
+   "input": 50000,
+   "output": 400000,
+   "provider": "openai"
+  },
+  "gpt-5-pro": {
+   "input": 15000000,
+   "output": 120000000,
+   "provider": "openai"
+  },
+  "gpt-5.1": {
+   "cache_read": 125000,
+   "input": 1250000,
+   "output": 10000000,
+   "provider": "openai"
+  },
+  "gpt-5.2": {
+   "cache_read": 175000,
+   "input": 1750000,
+   "output": 14000000,
+   "provider": "openai"
+  },
+  "gpt-5.2-chat-latest": {
+   "cache_read": 175000,
+   "input": 1750000,
+   "output": 14000000,
+   "provider": "openai"
+  },
+  "gpt-5.2-pro": {
+   "input": 21000000,
+   "output": 168000000,
+   "provider": "openai"
+  },
+  "gpt-5.3-chat-latest": {
+   "cache_read": 175000,
+   "input": 1750000,
+   "output": 14000000,
+   "provider": "openai"
+  },
+  "gpt-5.3-codex": {
+   "cache_read": 175000,
+   "input": 1750000,
+   "output": 14000000,
+   "provider": "openai"
+  },
+  "gpt-5.3-codex-spark": {
+   "cache_read": 175000,
+   "input": 1750000,
+   "output": 14000000,
+   "provider": "openai"
+  },
+  "gpt-5.4": {
+   "cache_read": 250000,
+   "input": 2500000,
+   "output": 15000000,
+   "provider": "openai",
+   "tiers": [
+    {
+     "cache_read": 500000,
+     "context_over": 272000,
+     "input": 5000000,
+     "output": 22500000
+    }
+   ]
+  },
+  "gpt-5.4-mini": {
+   "cache_read": 75000,
+   "input": 750000,
+   "output": 4500000,
+   "provider": "openai"
+  },
+  "gpt-5.4-nano": {
+   "cache_read": 20000,
+   "input": 200000,
+   "output": 1250000,
+   "provider": "openai"
+  },
+  "gpt-5.4-pro": {
+   "input": 30000000,
+   "output": 180000000,
+   "provider": "openai",
+   "tiers": [
+    {
+     "context_over": 272000,
+     "input": 60000000,
+     "output": 270000000
+    }
+   ]
+  },
+  "gpt-5.5": {
+   "cache_read": 500000,
+   "input": 5000000,
+   "output": 30000000,
+   "provider": "openai",
+   "tiers": [
+    {
+     "cache_read": 1000000,
+     "context_over": 272000,
+     "input": 10000000,
+     "output": 45000000
+    }
+   ]
+  },
+  "gpt-5.5-pro": {
+   "input": 30000000,
+   "output": 180000000,
+   "provider": "openai",
+   "tiers": [
+    {
+     "context_over": 272000,
+     "input": 60000000,
+     "output": 270000000
+    }
+   ]
+  },
+  "gpt-5.6": {
+   "cache_read": 400000,
+   "cache_write": 5000000,
+   "input": 4000000,
+   "output": 20000000,
+   "provider": "openai",
+   "tiers": [
+    {
+     "cache_read": 800000,
+     "cache_write": 10000000,
+     "context_over": 272000,
+     "input": 8000000,
+     "output": 30000000
+    }
+   ]
+  },
+  "gpt-5.6-luna": {
+   "cache_read": 20000,
+   "cache_write": 250000,
+   "input": 200000,
+   "output": 1200000,
+   "provider": "openai",
+   "tiers": [
+    {
+     "cache_read": 40000,
+     "cache_write": 500000,
+     "context_over": 272000,
+     "input": 400000,
+     "output": 1800000
+    }
+   ]
+  },
+  "gpt-5.6-sol": {
+   "cache_read": 400000,
+   "cache_write": 5000000,
+   "input": 4000000,
+   "output": 20000000,
+   "provider": "openai",
+   "tiers": [
+    {
+     "cache_read": 800000,
+     "cache_write": 10000000,
+     "context_over": 272000,
+     "input": 8000000,
+     "output": 30000000
+    }
+   ]
+  },
+  "gpt-5.6-terra": {
+   "cache_read": 200000,
+   "cache_write": 2500000,
+   "input": 2000000,
+   "output": 12000000,
+   "provider": "openai",
+   "tiers": [
+    {
+     "cache_read": 400000,
+     "cache_write": 5000000,
+     "context_over": 272000,
+     "input": 4000000,
+     "output": 18000000
+    }
+   ]
+  },
+  "gpt-6-astra": {
+   "cache_read": 1000000,
+   "cache_write": 12500000,
+   "input": 10000000,
+   "output": 50000000,
+   "provider": "openai",
+   "tiers": [
+    {
+     "cache_read": 2000000,
+     "cache_write": 25000000,
+     "context_over": 272000,
+     "input": 20000000,
+     "output": 75000000
+    }
+   ]
+  },
+  "gpt-6-luna": {
+   "cache_read": 10000,
+   "cache_write": 125000,
+   "input": 100000,
+   "output": 500000,
+   "provider": "openai",
+   "tiers": [
+    {
+     "cache_read": 20000,
+     "cache_write": 250000,
+     "context_over": 272000,
+     "input": 200000,
+     "output": 750000
+    }
+   ]
+  },
+  "gpt-6-sol": {
+   "cache_read": 200000,
+   "cache_write": 2500000,
+   "input": 2000000,
+   "output": 10000000,
+   "provider": "openai",
+   "tiers": [
+    {
+     "cache_read": 400000,
+     "cache_write": 5000000,
+     "context_over": 272000,
+     "input": 4000000,
+     "output": 15000000
+    }
+   ]
+  },
+  "gpt-daybreak-blue-latest": {
+   "cache_read": 400000,
+   "cache_write": 5000000,
+   "input": 4000000,
+   "output": 20000000,
+   "provider": "openai",
+   "tiers": [
+    {
+     "cache_read": 800000,
+     "cache_write": 10000000,
+     "context_over": 272000,
+     "input": 8000000,
+     "output": 30000000
+    }
+   ]
+  },
+  "gpt-daybreak-red-latest": {
+   "cache_read": 1250000,
+   "cache_write": 15625000,
+   "input": 12500000,
+   "output": 75000000,
+   "provider": "openai"
+  },
+  "gpt-image-2": {
+   "cache_read": 1250000,
+   "input": 5000000,
+   "output": 30000000,
+   "provider": "openai"
+  },
+  "gpt-realtime-2.1": {
+   "cache_read": 400000,
+   "input": 4000000,
+   "output": 24000000,
+   "provider": "openai"
+  },
+  "grok-4.20-0309-non-reasoning": {
+   "cache_read": 200000,
+   "input": 1250000,
+   "output": 2500000,
+   "provider": "xai",
+   "tiers": [
+    {
+     "cache_read": 400000,
+     "context_over": 200000,
+     "input": 2500000,
+     "output": 5000000
+    }
+   ]
+  },
+  "grok-4.20-0309-reasoning": {
+   "cache_read": 200000,
+   "input": 1250000,
+   "output": 2500000,
+   "provider": "xai",
+   "tiers": [
+    {
+     "cache_read": 400000,
+     "context_over": 200000,
+     "input": 2500000,
+     "output": 5000000
+    }
+   ]
+  },
+  "grok-4.20-multi-agent-0309": {
+   "cache_read": 200000,
+   "input": 1250000,
+   "output": 2500000,
+   "provider": "xai",
+   "tiers": [
+    {
+     "cache_read": 400000,
+     "context_over": 200000,
+     "input": 2500000,
+     "output": 5000000
+    }
+   ]
+  },
+  "grok-4.3": {
+   "cache_read": 200000,
+   "input": 1250000,
+   "output": 2500000,
+   "provider": "xai",
+   "tiers": [
+    {
+     "cache_read": 400000,
+     "context_over": 200000,
+     "input": 2500000,
+     "output": 5000000
+    }
+   ]
+  },
+  "grok-4.5": {
+   "cache_read": 300000,
+   "input": 2000000,
+   "output": 6000000,
+   "provider": "xai",
+   "tiers": [
+    {
+     "cache_read": 600000,
+     "context_over": 200000,
+     "input": 4000000,
+     "output": 12000000
+    }
+   ]
+  },
+  "grok-4.6": {
+   "cache_read": 500000,
+   "input": 2000000,
+   "output": 6000000,
+   "provider": "xai",
+   "tiers": [
+    {
+     "cache_read": 1000000,
+     "context_over": 200000,
+     "input": 4000000,
+     "output": 12000000
+    }
+   ]
+  },
+  "grok-4.7": {
+   "cache_read": 500000,
+   "input": 2000000,
+   "output": 6000000,
+   "provider": "xai",
+   "tiers": [
+    {
+     "cache_read": 1000000,
+     "context_over": 200000,
+     "input": 4000000,
+     "output": 12000000
+    }
+   ]
+  },
+  "grok-build-0.1": {
+   "cache_read": 200000,
+   "input": 1000000,
+   "output": 2000000,
+   "provider": "xai",
+   "tiers": [
+    {
+     "cache_read": 400000,
+     "context_over": 200000,
+     "input": 2000000,
+     "output": 4000000
+    }
+   ]
+  },
+  "labs-devstral-small-2512": {
+   "input": 0,
+   "output": 0,
+   "provider": "mistral"
+  },
+  "lyria-3-clip-preview": {
+   "input": 0,
+   "output": 0,
+   "provider": "google"
+  },
+  "lyria-3-pro-preview": {
+   "input": 0,
+   "output": 0,
+   "provider": "google"
+  },
+  "magistral-medium-latest": {
+   "input": 2000000,
+   "output": 5000000,
+   "provider": "mistral"
+  },
+  "ministral-3b-latest": {
+   "input": 40000,
+   "output": 40000,
+   "provider": "mistral"
+  },
+  "ministral-8b-latest": {
+   "input": 100000,
+   "output": 100000,
+   "provider": "mistral"
+  },
+  "mistral-embed": {
+   "input": 100000,
+   "output": 0,
+   "provider": "mistral"
+  },
+  "mistral-large-2411": {
+   "input": 2000000,
+   "output": 6000000,
+   "provider": "mistral"
+  },
+  "mistral-large-2512": {
+   "cache_read": 50000,
+   "input": 500000,
+   "output": 1500000,
+   "provider": "mistral"
+  },
+  "mistral-large-latest": {
+   "cache_read": 50000,
+   "input": 500000,
+   "output": 1500000,
+   "provider": "mistral"
+  },
+  "mistral-medium-2505": {
+   "input": 400000,
+   "output": 2000000,
+   "provider": "mistral"
+  },
+  "mistral-medium-2508": {
+   "input": 400000,
+   "output": 2000000,
+   "provider": "mistral"
+  },
+  "mistral-medium-2604": {
+   "cache_read": 150000,
+   "input": 1500000,
+   "output": 7500000,
+   "provider": "mistral"
+  },
+  "mistral-medium-latest": {
+   "cache_read": 150000,
+   "input": 1500000,
+   "output": 7500000,
+   "provider": "mistral"
+  },
+  "mistral-nemo": {
+   "input": 150000,
+   "output": 150000,
+   "provider": "mistral"
+  },
+  "mistral-small-2506": {
+   "input": 100000,
+   "output": 300000,
+   "provider": "mistral"
+  },
+  "mistral-small-2603": {
+   "cache_read": 15000,
+   "input": 150000,
+   "output": 600000,
+   "provider": "mistral"
+  },
+  "mistral-small-latest": {
+   "cache_read": 15000,
+   "input": 150000,
+   "output": 600000,
+   "provider": "mistral"
+  },
+  "o1": {
+   "cache_read": 7500000,
+   "input": 15000000,
+   "output": 60000000,
+   "provider": "openai"
+  },
+  "o1-pro": {
+   "input": 150000000,
+   "output": 600000000,
+   "provider": "openai"
+  },
+  "o3": {
+   "cache_read": 500000,
+   "input": 2000000,
+   "output": 8000000,
+   "provider": "openai"
+  },
+  "o3-mini": {
+   "cache_read": 550000,
+   "input": 1100000,
+   "output": 4400000,
+   "provider": "openai"
+  },
+  "o3-pro": {
+   "input": 20000000,
+   "output": 80000000,
+   "provider": "openai"
+  },
+  "o4-mini": {
+   "cache_read": 275000,
+   "input": 1100000,
+   "output": 4400000,
+   "provider": "openai"
+  },
+  "open-mistral-7b": {
+   "input": 250000,
+   "output": 250000,
+   "provider": "mistral"
+  },
+  "open-mistral-nemo": {
+   "input": 150000,
+   "output": 150000,
+   "provider": "mistral"
+  },
+  "open-mixtral-8x22b": {
+   "input": 2000000,
+   "output": 6000000,
+   "provider": "mistral"
+  },
+  "open-mixtral-8x7b": {
+   "input": 700000,
+   "output": 700000,
+   "provider": "mistral"
+  },
+  "pixtral-12b": {
+   "input": 150000,
+   "output": 150000,
+   "provider": "mistral"
+  },
+  "pixtral-large-latest": {
+   "input": 2000000,
+   "output": 6000000,
+   "provider": "mistral"
+  },
+  "text-embedding-3-large": {
+   "input": 130000,
+   "output": 0,
+   "provider": "openai"
+  },
+  "text-embedding-3-small": {
+   "input": 20000,
+   "output": 0,
+   "provider": "openai"
+  },
+  "text-embedding-ada-002": {
+   "input": 100000,
+   "output": 0,
+   "provider": "openai"
+  },
+  "voxtral-small-latest": {
+   "input": 100000,
+   "output": 300000,
+   "provider": "mistral"
+  },
+  "zai-glm-5-2": {
+   "cache_read": 140000,
+   "input": 1400000,
+   "output": 4400000,
+   "provider": "mistral"
+  },
+  "zai-glm-5-3": {
+   "cache_read": 140000,
+   "input": 1400000,
+   "output": 4400000,
+   "provider": "mistral"
+  }
+ },
+ "source": "https://models.dev/api.json",
+ "unit": "micro-USD per 1M tokens"
+}
