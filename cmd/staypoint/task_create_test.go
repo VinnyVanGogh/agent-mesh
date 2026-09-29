@@ -522,7 +522,10 @@ func TestTaskCreate_ExplicitBacklogFlag(t *testing.T) {
 
 	_ = taskCreateCmd.Flags().Set("dry-run", "false")
 	_ = taskCreateCmd.Flags().Set("backlog", "false")
+	taskCreateCmd.Flags().Lookup("backlog").Changed = false
+	taskCreateCmd.Flags().Lookup("backlog").Changed = false
 	_ = taskCreateCmd.Flags().Set("start", "false")
+	taskCreateCmd.Flags().Lookup("start").Changed = false
 	_ = taskCreateCmd.Flags().Set("yes", "false")
 	rootCmd.SetArgs([]string{
 		"task", "create",
@@ -586,7 +589,10 @@ func TestTaskCreate_ExplicitStartFlag(t *testing.T) {
 
 	_ = taskCreateCmd.Flags().Set("dry-run", "false")
 	_ = taskCreateCmd.Flags().Set("backlog", "false")
+	taskCreateCmd.Flags().Lookup("backlog").Changed = false
+	taskCreateCmd.Flags().Lookup("backlog").Changed = false
 	_ = taskCreateCmd.Flags().Set("start", "false")
+	taskCreateCmd.Flags().Lookup("start").Changed = false
 	_ = taskCreateCmd.Flags().Set("yes", "false")
 	rootCmd.SetArgs([]string{
 		"task", "create",
@@ -646,7 +652,10 @@ func TestTaskCreate_ClarificationBypassRecordsAssumptions(t *testing.T) {
 
 	_ = taskCreateCmd.Flags().Set("dry-run", "false")
 	_ = taskCreateCmd.Flags().Set("backlog", "false")
+	taskCreateCmd.Flags().Lookup("backlog").Changed = false
+	taskCreateCmd.Flags().Lookup("backlog").Changed = false
 	_ = taskCreateCmd.Flags().Set("start", "false")
+	taskCreateCmd.Flags().Lookup("start").Changed = false
 	_ = taskCreateCmd.Flags().Set("yes", "false")
 	rootCmd.SetArgs([]string{
 		"task", "create",

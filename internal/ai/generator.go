@@ -603,10 +603,19 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 
 	// 6. Assignee Role
 	role := "CLI & Statusline Presentation Specialist"
+	
+	// Explicit user directives take top priority
+	if strings.Contains(lowerNorm, "chief of staff") {
+		role = "Chief of Staff"
+	} else if strings.Contains(lowerNorm, "cto") || strings.Contains(lowerNorm, "chief technology officer") {
+		role = "CTO"
+	} else if strings.Contains(lowerNorm, "devops") {
+		role = "DevOps & Release Engineer"
+	} else {
 	switch {
 	case strings.Contains(lowerNorm, "security") || strings.Contains(lowerNorm, "auth") || strings.Contains(lowerNorm, "secret"):
 		role = "Security & Deep Remediation Fixer"
-	case strings.Contains(lowerNorm, "review") || strings.Contains(lowerNorm, "audit"):
+	case strings.Contains(lowerNorm, "pull request") || strings.Contains(lowerNorm, "pr ") || strings.Contains(lowerNorm, "git diff") || strings.Contains(lowerNorm, "code review"):
 		role = "Senior PR Reviewer"
 	case strings.Contains(lowerNorm, "research") || strings.Contains(lowerNorm, "copilot") || strings.Contains(lowerNorm, "eval"):
 		role = "Research & Architecture Specialist"
@@ -616,6 +625,7 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 		role = "CI/CD Engineer"
 	case strings.Contains(lowerNorm, "release") || strings.Contains(lowerNorm, "deploy") || strings.Contains(lowerNorm, "package") || strings.Contains(lowerNorm, "homebrew"):
 		role = "DevOps & Release Engineer"
+	}
 	}
 
 	// Extract questions if present
@@ -707,9 +717,11 @@ func cleanImperativeTitle(input, org string) string {
 		regexp.MustCompile(`(?i)^please\s+`),
 		regexp.MustCompile(`(?i)^(?:um+|uh+|er+|ah+)\s+`),
 		regexp.MustCompile(`(?i)^(?:in|for)\s+(?:sharepoint|staypoint|runelite|managed\s+solution|research)\s+`),
-		regexp.MustCompile(`(?i)^(?:we\s+(?:need\s+to|gotta|should|have\s+to)|i\s+(?:need\s+to|want\s+to|would\s+like\s+to))\s+`),
+		regexp.MustCompile(`(?i)^(?:we\s+(?:need\s+to|gotta|should|have\s+to)|i\s+(?:need\s+to|want\s+to|would\s+like\s+to|need\s+help\s+(?:creating|making)\s+a\s+task\s+to))\s+`),
 		regexp.MustCompile(`(?i)^(?:the\s+)?task\s+(?:is\s+to|should\s+be\s+to|is)\s+`),
 		regexp.MustCompile(`(?i)^(?:urgent|asap|critical):\s*`),
+		regexp.MustCompile(`(?i)^(?:/(?:\\.|[^ \t\r\n\\])+)+\s+`),
+		regexp.MustCompile(`(?i)^!\[[^\]]*\]\([^\)]+\)\s+`),
 		regexp.MustCompile(`(?i)^(?:passing\s+thought|idea|note\s+to\s+self):\s*`),
 	}
 

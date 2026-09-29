@@ -131,7 +131,12 @@ func (m ActionCardModel) View() string {
 	))
 	sb.WriteString(fmt.Sprintf("%s %s   %s %s\n",
 		metaKeyStyle.Render("Priority:"), metaValStyle.Render(strings.ToUpper(m.Task.Priority)),
-		metaKeyStyle.Render("Role:"), metaValStyle.Render(m.Task.AssigneeRole),
+		metaKeyStyle.Render("Role:"), metaValStyle.Render(func() string {
+			if strings.ToLower(m.Status) == "backlog" {
+				return "Unassigned (Backlog)"
+			}
+			return m.Task.AssigneeRole
+		}()),
 	))
 	if len(m.Task.Labels) > 0 {
 		sb.WriteString(fmt.Sprintf("%s %s\n",

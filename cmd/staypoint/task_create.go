@@ -96,8 +96,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintln(out, "\033[1;36m[StayPoint :: Task Generation Engine]\033[0m Ingesting input & structuring issue...")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
+	ctx := context.Background()
 
 	// 0. Fetch Project Candidates
 	paperclipClient := paperclip.NewClient("", "")
@@ -107,7 +106,10 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	}
 	var projectCandidates []string
 	if targetCompany != "" {
-		if projects, err := paperclipClient.FetchProjects(ctx, targetCompany); err == nil {
+		fetchCtx, fetchCancel := context.WithTimeout(ctx, 15*time.Second)
+		projects, err := paperclipClient.FetchProjects(fetchCtx, targetCompany)
+		fetchCancel()
+		if err == nil {
 			for _, p := range projects {
 				projectCandidates = append(projectCandidates, p.Name)
 			}
@@ -118,7 +120,9 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	genCfg := ai.DefaultGeneratorConfig()
 	generator := ai.NewGenerator(genCfg)
 
-	genResult, err := generator.GenerateTask(ctx, rawComment, projectCandidates)
+	genCtx, genCancel := context.WithTimeout(ctx, 45*time.Second)
+	genResult, err := generator.GenerateTask(genCtx, rawComment, projectCandidates)
+	genCancel()
 	if err != nil {
 		return fmt.Errorf("inference error: %w", err)
 	}
@@ -163,13 +167,19 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	var companyPrefix string
 
 	if companyID != "" {
-		if comp, compErr := paperclipClient.GetCompany(ctx, companyID); compErr == nil && comp != nil {
+		compCtx, compCancel := context.WithTimeout(ctx, 15*time.Second)
+		comp, compErr := paperclipClient.GetCompany(compCtx, companyID)
+		compCancel()
+		if compErr == nil && comp != nil {
 			companyPrefix = comp.IssuePrefix
 		}
 	} else {
 		// Dynamically resolve company based on inferred Organization first
 		if genResult.Task.Organization != "" {
-			if comp, compErr := paperclipClient.ResolveCompany(ctx, genResult.Task.Organization); compErr == nil && comp != nil {
+			compCtx, compCancel := context.WithTimeout(ctx, 15*time.Second)
+			comp, compErr := paperclipClient.ResolveCompany(compCtx, genResult.Task.Organization)
+			compCancel()
+			if compErr == nil && comp != nil {
 				companyID = comp.ID
 				companyPrefix = comp.IssuePrefix
 			}
@@ -177,7 +187,10 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		// If still empty, fall back to environment variable
 		if companyID == "" {
 			companyID = os.Getenv("PAPERCLIP_COMPANY_ID")
-			if comp, compErr := paperclipClient.GetCompany(ctx, companyID); compErr == nil && comp != nil {
+			compCtx, compCancel := context.WithTimeout(ctx, 15*time.Second)
+		comp, compErr := paperclipClient.GetCompany(compCtx, companyID)
+		compCancel()
+		if compErr == nil && comp != nil {
 				companyPrefix = comp.IssuePrefix
 			}
 		}
@@ -188,7 +201,10 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		projectID = os.Getenv("PAPERCLIP_PROJECT_ID")
 	}
 	if projectID == "" && companyID != "" {
-		if resolvedProjID, projErr := paperclipClient.ResolveProject(ctx, companyID, genResult.Task.Project); projErr == nil && resolvedProjID != "" {
+		projCtx, projCancel := context.WithTimeout(ctx, 15*time.Second)
+		resolvedProjID, projErr := paperclipClient.ResolveProject(projCtx, companyID, genResult.Task.Project)
+		projCancel()
+		if projErr == nil && resolvedProjID != "" {
 			projectID = resolvedProjID
 		}
 	}
@@ -196,7 +212,10 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	var assigneeID string
 	var assigneeName string
 	if companyID != "" && genResult.Task.Status != "backlog" {
-		if agents, agentErr := paperclipClient.ListAgents(ctx, companyID); agentErr == nil {
+		listCtx, listCancel := context.WithTimeout(ctx, 15*time.Second)
+		agents, agentErr := paperclipClient.ListAgents(listCtx, companyID)
+		listCancel()
+		if agentErr == nil {
 			if roleOverride != "" {
 				lowerRole := strings.ToLower(roleOverride)
 				for _, agent := range agents {
@@ -243,7 +262,10 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		case ui.ActionDispatchActive:
 			genResult.Task.Status = "todo"
 			if (assigneeID == "" || assigneeName == "Unassigned") && companyID != "" {
-				if agents, agentErr := paperclipClient.ListAgents(ctx, companyID); agentErr == nil {
+				listCtx, listCancel := context.WithTimeout(ctx, 15*time.Second)
+		agents, agentErr := paperclipClient.ListAgents(listCtx, companyID)
+		listCancel()
+		if agentErr == nil {
 					for _, agent := range agents {
 						if strings.Contains(strings.ToLower(agent.Name), "chief of staff") || strings.EqualFold(agent.Role, "ceo") {
 							assigneeID = agent.ID
@@ -262,7 +284,10 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 					assigneeID = ""
 					assigneeName = "Unassigned"
 				} else if (assigneeID == "" || assigneeName == "Unassigned") && companyID != "" {
-					if agents, agentErr := paperclipClient.ListAgents(ctx, companyID); agentErr == nil {
+					listCtx, listCancel := context.WithTimeout(ctx, 15*time.Second)
+		agents, agentErr := paperclipClient.ListAgents(listCtx, companyID)
+		listCancel()
+		if agentErr == nil {
 						for _, agent := range agents {
 							if strings.Contains(strings.ToLower(agent.Name), "chief of staff") || strings.EqualFold(agent.Role, "ceo") {
 								assigneeID = agent.ID
@@ -278,7 +303,10 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 			if err == nil && strings.TrimSpace(clarificationText) != "" {
 				fmt.Fprintln(out, "\033[1;36m[StayPoint :: Task Generation Engine]\033[0m Re-synthesizing task with clarification...")
 				updatedComment := fmt.Sprintf("%s\n\nClarification Response:\n%s", rawComment, clarificationText)
-				if newGenResult, genErr := generator.GenerateTask(ctx, updatedComment, projectCandidates); genErr == nil {
+				reGenCtx, reGenCancel := context.WithTimeout(ctx, 45*time.Second)
+				newGenResult, genErr := generator.GenerateTask(reGenCtx, updatedComment, projectCandidates)
+				reGenCancel()
+				if genErr == nil {
 					genResult = newGenResult
 					genResult.Task.AskClarification = ""
 				} else {
@@ -335,7 +363,9 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 			req.AssigneeAgentId = "" // Unassigned backlog dispatch to save tokens
 		}
 
-		resp, err := paperclipClient.CreateIssue(ctx, companyID, req)
+		apiCtx, apiCancel := context.WithTimeout(ctx, 15*time.Second)
+		resp, err := paperclipClient.CreateIssue(apiCtx, companyID, req)
+		apiCancel()
 		if err != nil {
 			fmt.Fprintf(out, "\033[1;33m⚠ Paperclip dispatch notice:\033[0m %v (saving locally)\n", err)
 		} else {
