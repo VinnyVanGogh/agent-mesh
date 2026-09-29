@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/adapter"
 	"github.com/VinnyVanGogh/staypoint/internal/router"
+	"github.com/spf13/cobra"
 )
 
 var adapterCmd = &cobra.Command{
@@ -22,6 +22,10 @@ var adapterCmd = &cobra.Command{
 
 		if args[0] == "install" {
 			runAdapterInstall()
+			return
+		}
+		if args[0] == "probe" {
+			runAdapterProbe()
 			return
 		}
 
@@ -82,6 +86,39 @@ var adapterInstallCmd = &cobra.Command{
 	},
 }
 
+// runAdapterProbe resolves each provider CLI and reports its version, warning
+// when the installed major version has not been verified against the adapter.
+func runAdapterProbe() {
+	resolver := adapter.NewDefaultResolver()
+	for _, a := range adapter.Adapters() {
+		bin, err := resolver.Resolve(a)
+		if err != nil {
+			fmt.Printf("%-7s %-8s unavailable: %v\n", a.Provider(), a.BinaryName(), err)
+			continue
+		}
+		info, err := adapter.ProbeVersion(context.Background(), a, bin)
+		if err != nil {
+			fmt.Printf("%-7s %-8s probe failed: %v\n", a.Provider(), a.BinaryName(), err)
+			continue
+		}
+		status := "ok"
+		if info.Warning != "" {
+			status = "WARN"
+			fmt.Fprintf(os.Stderr, "warning: %s\n", info.Warning)
+		}
+		fmt.Printf("%-7s %-8s %-10s %-4s %s\n", a.Provider(), a.BinaryName(), info.String(), status, bin)
+	}
+}
+
+var adapterProbeCmd = &cobra.Command{
+	Use:   "probe",
+	Short: "Report installed provider CLI versions and warn on unverified major versions",
+	Run: func(cmd *cobra.Command, args []string) {
+		runAdapterProbe()
+	},
+}
+
 func init() {
 	adapterCmd.AddCommand(adapterInstallCmd)
+	adapterCmd.AddCommand(adapterProbeCmd)
 }

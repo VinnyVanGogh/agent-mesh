@@ -400,7 +400,16 @@ remote_host = "company-mbp"
 # Session Handoff Retention
 # Maximum number of recent session handoffs and manifests to keep per repository
 max_handoffs_per_repo = 3
+
+# Provider CLI binaries used by `staypoint adapter` (optional)
+# Empty = resolve `claude` / `agy` on PATH, then ~/.local/bin. Staypoint bridge
+# shims and the staypoint binary itself are skipped to avoid recursion.
+# Env vars STAYPOINT_CLAUDE_BIN / STAYPOINT_AGY_BIN take precedence.
+claude_bin = ""
+agy_bin = ""
 ```
+
+Run `staypoint adapter probe` to see which CLI binaries the adapter resolves and their versions. It warns when an installed CLI's major version has not been verified against the adapter's golden stream fixtures (upstream flag or stream-schema drift).
 
 ---
 
