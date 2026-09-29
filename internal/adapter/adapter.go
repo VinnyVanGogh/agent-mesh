@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -13,8 +14,11 @@ import (
 	"github.com/VinnyVanGogh/staypoint/internal/router"
 )
 
-func runCommandWithKeepalive(ctx context.Context, bin string, args []string, stdout io.Writer, stderr io.Writer) error {
+func runCommandWithKeepalive(ctx context.Context, bin string, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 	cmdExec := exec.CommandContext(ctx, bin, args...)
+	if stdin != nil {
+		cmdExec.Stdin = stdin
+	}
 	cmdExec.Stderr = stderr
 
 	cmdStdout, err := cmdExec.StdoutPipe()
@@ -161,7 +165,14 @@ func parseRawArgs(rawArgs []string) ParsedOptions {
 		case arg == "--verbose" || arg == "-v" || arg == "--strict-mcp-config" || arg == "--no-session-persistence" || arg == "--include-hook-events" || arg == "--include-partial-messages" || arg == "--replay-user-messages" || arg == "--restricted" || arg == "--safe-mode" || arg == "--chrome":
 			// Drop unsupported verbose and strict flags
 		case arg == "--mcp-config" || arg == "--config-dir" || arg == "--cwd" || arg == "--settings" || arg == "--permission-mode" || arg == "--permission-prompts" || arg == "--setting-sources" || arg == "--max-turns" || arg == "--max-budget-usd" || arg == "--tools" || arg == "--system-prompt" || arg == "--system-prompt-snapshot" || arg == "--append-system-prompt-file":
-			i++ // Drop flag with its parameter
+			if i+1 < len(rawArgs) {
+				i++ // Drop flag with its parameter
+			}
+		case arg == "--":
+			if i+1 < len(rawArgs) {
+				opts.Prompt = strings.Join(rawArgs[i+1:], " ")
+				break
+			}
 		default:
 			if !strings.HasPrefix(arg, "-") && opts.Prompt == "" {
 				opts.Prompt = arg
@@ -182,9 +193,11 @@ func parseRawArgs(rawArgs []string) ParsedOptions {
 
 func buildAgyArgs(opts ParsedOptions) []string {
 	args := []string{
-		"--prompt", opts.Prompt,
 		"--output-format", opts.OutputFormat,
 		"--dangerously-skip-permissions",
+	}
+	if opts.Prompt != "" {
+		args = append(args, "--prompt", opts.Prompt)
 	}
 	if opts.Model != "" && !strings.Contains(opts.Model, "claude") && !strings.Contains(opts.Model, "sonnet") && !strings.Contains(opts.Model, "opus") {
 		args = append(args, "--model", opts.Model)
@@ -203,7 +216,7 @@ func buildAgyArgs(opts ParsedOptions) []string {
 
 func buildClaudeArgs(opts ParsedOptions) []string {
 	args := []string{
-		"--print", opts.Prompt,
+		"--print",
 		"--output-format", opts.OutputFormat,
 		"--verbose",
 		"--dangerously-skip-permissions",
@@ -217,18 +230,32 @@ func buildClaudeArgs(opts ParsedOptions) []string {
 	for _, dir := range opts.AddDirs {
 		args = append(args, "--add-dir", dir)
 	}
+	if opts.Prompt != "" {
+		args = append(args, opts.Prompt)
+	}
 	return args
 }
 
 // RunAdapter executes the requested agent provider with anti-stall keepalive and quota failover.
-func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, provider string, rawArgs []string, stdout io.Writer, stderr io.Writer) error {
+func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, provider string, rawArgs []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 	opts := parseRawArgs(rawArgs)
+
+	var stdinBytes []byte
+	if stdin != nil {
+		data, err := io.ReadAll(stdin)
+		if err == nil && len(data) > 0 {
+			stdinBytes = data
+			if opts.Prompt == "" {
+				opts.Prompt = string(data)
+			}
+		}
+	}
 
 	// Check if overridden by test
 	if testBin := ctx.Value("testBin"); testBin != nil {
 		bin := testBin.(string)
 		args := buildAgyArgs(opts)
-		return runCommandWithKeepalive(ctx, bin, args, stdout, stderr)
+		return runCommandWithKeepalive(ctx, bin, args, bytes.NewReader(stdinBytes), stdout, stderr)
 	}
 
 	// Routing logic
@@ -250,18 +277,18 @@ func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, 
 	if targetTool == "claude" {
 		bin := "/Users/vincevasile/.local/bin/claude"
 		args := buildClaudeArgs(opts)
-		return runCommandWithKeepalive(ctx, bin, args, stdout, stderr)
+		return runCommandWithKeepalive(ctx, bin, args, bytes.NewReader(stdinBytes), stdout, stderr)
 	}
 
 	// Try agy first
 	bin := "/Users/vincevasile/.local/bin/agy"
 	args := buildAgyArgs(opts)
-	err := runCommandWithKeepalive(ctx, bin, args, stdout, stderr)
+	err := runCommandWithKeepalive(ctx, bin, args, bytes.NewReader(stdinBytes), stdout, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Gemini failed (%v), falling back to Claude...\n", err)
 		fallbackBin := "/Users/vincevasile/.local/bin/claude"
 		fallbackArgs := buildClaudeArgs(opts)
-		return runCommandWithKeepalive(ctx, fallbackBin, fallbackArgs, stdout, stderr)
+		return runCommandWithKeepalive(ctx, fallbackBin, fallbackArgs, bytes.NewReader(stdinBytes), stdout, stderr)
 	}
 
 	return nil

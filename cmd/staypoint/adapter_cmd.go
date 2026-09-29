@@ -31,7 +31,7 @@ var adapterCmd = &cobra.Command{
 		pacerState, _ := router.LoadPacerState()
 		cwd, _ := os.Getwd()
 
-		err := adapter.RunAdapter(context.Background(), cwd, pacerState, provider, rawArgs, os.Stdout, os.Stderr)
+		err := adapter.RunAdapter(context.Background(), cwd, pacerState, provider, rawArgs, os.Stdin, os.Stdout, os.Stderr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Adapter error: %v\n", err)
 			os.Exit(1)
