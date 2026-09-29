@@ -4,9 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,12 +16,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 	"github.com/VinnyVanGogh/staypoint/internal/config"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/wire"
+	"github.com/fsnotify/fsnotify"
 	_ "modernc.org/sqlite"
 )
 
@@ -80,6 +78,10 @@ type Watcher struct {
 	breaker        *BreakerTracker
 	handoffMu      sync.Mutex
 	pendingHandoff map[string]handoffTask
+
+	stateMu    sync.Mutex
+	fileStates map[string]*fileState
+	codexRoots map[string]string
 }
 
 func NewWatcher(cfg *config.Config) (*Watcher, error) {
@@ -132,8 +134,19 @@ func (w *Watcher) Start(ctx context.Context) error {
 	claudeProjects := filepath.Join(home, ".claude", "projects")
 	agyBrain := filepath.Join(home, ".gemini", "antigravity-cli", "brain")
 
+	codexSessions := filepath.Join(home, ".codex", "sessions")
+	cursorProjects := filepath.Join(home, ".cursor", "projects")
+
 	_ = w.addRecursiveWatch(claudeProjects)
 	_ = w.addRecursiveWatch(agyBrain)
+	_ = w.addRecursiveWatch(codexSessions)
+	// Cursor projects hold much besides transcripts; only watch each agent-transcripts tree.
+	_ = w.watcher.Add(cursorProjects)
+	if dirs, err := filepath.Glob(filepath.Join(cursorProjects, "*", "agent-transcripts")); err == nil {
+		for _, d := range dirs {
+			_ = w.addRecursiveWatch(d)
+		}
+	}
 
 	slog.Info("Watcher active",
 		slog.String("path", claudeProjects),
@@ -180,7 +193,13 @@ func (w *Watcher) Start(ctx context.Context) error {
 				} else {
 					// Check if a new project directory was created
 					if fi, err := os.Stat(event.Name); err == nil && fi.IsDir() {
+						if !shouldWatchDir(event.Name) {
+							continue
+						}
 						_ = w.watcher.Add(event.Name)
+						if strings.HasSuffix(filepath.ToSlash(event.Name), "/agent-transcripts") {
+							_ = w.addRecursiveWatch(event.Name)
+						}
 						slog.Debug("Added directory to watch", slog.String("path", event.Name))
 					}
 				}
@@ -263,6 +282,10 @@ func (w *Watcher) processFile(filePath string) {
 		return
 	}
 
+	if lastOffset > 0 && detectSource(filePath) == sourceCodex {
+		w.primeFileState(filePath, lastOffset)
+	}
+
 	slog.Debug("Processing file from offset", slog.String("path", filePath), slog.Int64("offset", lastOffset))
 
 	reader := bufio.NewReaderSize(file, 64*1024)
@@ -307,97 +330,115 @@ func (w *Watcher) processFile(filePath string) {
 }
 
 func (w *Watcher) ingestLine(line []byte, sourcePath string) {
-	var record map[string]interface{}
-	if err := json.Unmarshal(line, &record); err != nil {
+	w.ingest(line, sourcePath, true)
+}
+
+// ingest parses one transcript line. With record=false only per-file parser state
+// is updated (used to prime Codex metadata when resuming from a saved cursor);
+// nothing is written to the database.
+func (w *Watcher) ingest(line []byte, sourcePath string, record bool) {
+	var raw map[string]interface{}
+	if err := json.Unmarshal(line, &raw); err != nil {
 		slog.Debug("Failed to unmarshal JSON line", slog.String("path", sourcePath), slog.Any("error", err))
 		return
 	}
 
-	// 1. Session ID extraction
-	sessionID, _ := record["sessionId"].(string)
-	if sessionID == "" {
-		sessionID, _ = record["session_id"].(string)
+	var (
+		u       usageRecord
+		hasUsed bool
+	)
+	source := detectSource(sourcePath)
+	switch source {
+	case sourceCodex:
+		u, hasUsed = w.parseCodexRecord(raw, w.fileStateFor(sourcePath))
+	case sourceCursor:
+		u, hasUsed = parseCursorUsage(raw, sourcePath, line)
+	default:
+		u, hasUsed = parseClaudeUsage(raw, sourcePath, line)
+	}
+	if !record {
+		return
 	}
 
-	// 2. Directory context extraction
-	cwd, _ := record["cwd"].(string)
+	// Session and directory context. Usage-bearing records carry the resolved root
+	// session (subagent tokens roll up to the parent); other records fall back to
+	// the fields on the line itself.
+	sessionID := u.SessionID
+	cwd := u.CWD
+	model := u.Model
+	if !hasUsed {
+		sessionID = firstString(raw, "sessionId", "session_id")
+		cwd, _ = raw["cwd"].(string)
+		if msg, ok := raw["message"].(map[string]interface{}); ok {
+			model, _ = msg["model"].(string)
+		}
+		if model == "" {
+			model, _ = raw["model"].(string)
+		}
+		if source == sourceCursor {
+			sessionID = strings.TrimSuffix(filepath.Base(sourcePath), ".jsonl")
+		}
+	}
+	if parent, _, ok := subagentPathInfo(sourcePath); ok && (source == sourceCursor || sessionID == "") {
+		sessionID = parent
+	}
 	if cwd == "" {
-		if att, ok := record["attachment"].(map[string]interface{}); ok {
+		if att, ok := raw["attachment"].(map[string]interface{}); ok {
 			if snap, ok := att["snapshot"].(map[string]interface{}); ok {
 				cwd, _ = snap["workingDirectory"].(string)
 			}
 		}
 	}
 
-	// 3. Model name and family
-	var model string
-	if msg, ok := record["message"].(map[string]interface{}); ok {
-		model, _ = msg["model"].(string)
-	}
-	if model == "" {
-		model, _ = record["model"].(string)
-	}
-
-	modelFamily := "claude"
-	lowerModel := strings.ToLower(model)
-	if strings.Contains(lowerModel, "gemini") {
-		modelFamily = "gemini"
-	} else if strings.Contains(lowerModel, "gpt") || strings.Contains(lowerModel, "o1") || strings.Contains(lowerModel, "o3") {
+	modelFamily := modelFamilyOf(model)
+	if source == sourceCodex {
 		modelFamily = "openai"
 	}
 
-	// 4. Process tool activity, working files, and loop breaker
-	w.processRecordActivity(record, sessionID, cwd, modelFamily)
+	// Tool activity, working files, and loop breaker (Claude/Antigravity shaped records).
+	w.processRecordActivity(raw, sessionID, cwd, modelFamily)
 
-	// 5. Look for assistant message with token usage
-	msg, ok := record["message"].(map[string]interface{})
-	if !ok {
+	if !hasUsed {
 		return
 	}
-
-	usage, ok := msg["usage"].(map[string]interface{})
-	if !ok {
-		return
-	}
-
-	inputTokens, _ := usage["input_tokens"].(float64)
-	outputTokens, _ := usage["output_tokens"].(float64)
-	cacheRead, _ := usage["cache_read_input_tokens"].(float64)
-	cacheCreation, _ := usage["cache_creation_input_tokens"].(float64)
-
-	totalTokens := int64(inputTokens + outputTokens + cacheRead + cacheCreation)
+	totalTokens := u.total()
 	if totalTokens == 0 {
 		return
 	}
 
-	// Split cache writes by TTL when the transcript carries it; the 1h rate is higher.
-	cacheWrite1h := 0.0
-	if cc, ok := usage["cache_creation"].(map[string]interface{}); ok {
-		cacheWrite1h, _ = cc["ephemeral_1h_input_tokens"].(float64)
+	// Split cache writes by TTL for Claude lines; the 1h rate is higher.
+	var cacheWrite1h int64
+	if msg, ok := raw["message"].(map[string]interface{}); ok {
+		if usage, ok := msg["usage"].(map[string]interface{}); ok {
+			if cc, ok := usage["cache_creation"].(map[string]interface{}); ok {
+				if v, ok := cc["ephemeral_1h_input_tokens"].(float64); ok {
+					cacheWrite1h = int64(v)
+				}
+			}
+		}
 	}
-	if cacheWrite1h > cacheCreation {
-		cacheWrite1h = cacheCreation
+	if cacheWrite1h > u.CacheCreate {
+		cacheWrite1h = u.CacheCreate
 	}
 
 	// Price at ingest from the embedded rate card, in integer micro-dollars.
 	costMicros, priced := ComputeCostMicros(model, Usage{
-		Input:           int64(inputTokens),
-		Output:          int64(outputTokens),
-		CacheRead:       int64(cacheRead),
-		CacheCreation5m: int64(cacheCreation - cacheWrite1h),
-		CacheCreation1h: int64(cacheWrite1h),
+		Input:           u.Input,
+		Output:          u.Output,
+		CacheRead:       u.CacheRead,
+		CacheCreation5m: u.CacheCreate - cacheWrite1h,
+		CacheCreation1h: cacheWrite1h,
 	})
 	var costUSD float64
 	if priced {
 		costUSD = float64(costMicros) / 1_000_000.0
 	} else {
 		// Model not on the rate card: keep the legacy family-based estimate.
-		costUSD = EstimateModelCost(model, int64(inputTokens), int64(outputTokens), int64(cacheRead), int64(cacheCreation))
+		costUSD = EstimateModelCost(model, u.Input, u.Output, u.CacheRead, u.CacheCreate)
 		costMicros = int64(math.Round(costUSD * 1_000_000.0))
 	}
 
-	// Timestamp
-	ts, _ := record["timestamp"].(string)
+	ts := u.Timestamp
 	if ts == "" {
 		ts = time.Now().UTC().Format(time.RFC3339)
 	}
@@ -415,11 +456,6 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 		}
 	}
 
-	// Idempotency key
-	hasher := sha256.New()
-	hasher.Write(line)
-	idempotencyKey := fmt.Sprintf("hook:%s", hex.EncodeToString(hasher.Sum(nil)))
-
 	// Try inserting with cost_usd_micros + cost_usd; fall back to cost_usd only, then to no cost
 	// if the table lacks those columns (older schemas).
 	insertWithMicros := `
@@ -429,15 +465,15 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 		session_id, account_email, cost_usd, cost_usd_micros, raw_json
 	) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
-	_, err := w.db.Exec(insertWithMicros,
-		idempotencyKey,
+	res, err := w.db.Exec(insertWithMicros,
+		u.DedupKey,
 		ts,
 		model,
 		modelFamily,
-		int64(inputTokens),
-		int64(outputTokens),
-		int64(cacheRead),
-		int64(cacheCreation),
+		u.Input,
+		u.Output,
+		u.CacheRead,
+		u.CacheCreate,
 		totalTokens,
 		sessionID,
 		accountEmail,
@@ -453,15 +489,15 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 			session_id, account_email, cost_usd, raw_json
 		) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 		`
-		_, err = w.db.Exec(insertWithCost,
-			idempotencyKey,
+		res, err = w.db.Exec(insertWithCost,
+			u.DedupKey,
 			ts,
 			model,
 			modelFamily,
-			int64(inputTokens),
-			int64(outputTokens),
-			int64(cacheRead),
-			int64(cacheCreation),
+			u.Input,
+			u.Output,
+			u.CacheRead,
+			u.CacheCreate,
 			totalTokens,
 			sessionID,
 			accountEmail,
@@ -479,25 +515,33 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 			session_id, account_email, raw_json
 		) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 		`
-		if _, fallbackErr := w.db.Exec(insertWithoutCost,
-			idempotencyKey,
+		var fallbackErr error
+		res, fallbackErr = w.db.Exec(insertWithoutCost,
+			u.DedupKey,
 			ts,
 			model,
 			modelFamily,
-			int64(inputTokens),
-			int64(outputTokens),
-			int64(cacheRead),
-			int64(cacheCreation),
+			u.Input,
+			u.Output,
+			u.CacheRead,
+			u.CacheCreate,
 			totalTokens,
 			sessionID,
 			accountEmail,
 			string(line),
-		); fallbackErr != nil {
+		)
+		if fallbackErr != nil {
 			slog.Error("Failed to insert request", slog.String("path", sourcePath), slog.Any("error", fallbackErr))
+			return
 		}
 	}
 
-	// 6. Record spend to active task in mesh.db
+	// Count-once: a duplicate (ignored insert) must not be charged to the task again.
+	if n, rerr := res.RowsAffected(); rerr == nil && n == 0 {
+		return
+	}
+
+	// Record spend to active task in mesh.db
 	if w.meshDB != nil && cwd != "" {
 		var taskID string
 		err := w.meshDB.QueryRow(`
@@ -507,6 +551,48 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 		`, cwd, cwd).Scan(&taskID)
 		if err == nil && taskID != "" {
 			_ = meshContext.RecordTaskSpend(w.meshDB, taskID, totalTokens, costUSD, 1)
+		}
+	}
+}
+
+// shouldWatchDir reports whether a newly created directory should be watched.
+// Anything outside ~/.cursor/projects is watched as before; inside it only the
+// project directories and their agent-transcripts trees are.
+func shouldWatchDir(path string) bool {
+	p := filepath.ToSlash(path)
+	const marker = "/.cursor/projects/"
+	i := strings.Index(p, marker)
+	if i < 0 {
+		return true
+	}
+	rest := p[i+len(marker):]
+	return !strings.Contains(rest, "/") || strings.Contains(rest, "agent-transcripts")
+}
+
+// primeFileState replays the already-processed prefix of a Codex rollout so the
+// session id, model and cumulative-usage state are known when resuming from a
+// saved cursor. Nothing is written to the database.
+func (w *Watcher) primeFileState(filePath string, upTo int64) {
+	w.stateMu.Lock()
+	_, known := w.fileStates[filePath]
+	w.stateMu.Unlock()
+	if known {
+		return
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	w.fileStateFor(filePath) // ensure entry exists even for an empty prefix
+	reader := bufio.NewReaderSize(io.LimitReader(file, upTo), 64*1024)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 && len(line) <= 2*1024*1024 {
+			w.ingest(bytes.TrimSpace(line), filePath, false)
+		}
+		if err != nil {
+			break
 		}
 	}
 }
