@@ -13,6 +13,7 @@ const (
 	sourceClaude = "claude"
 	sourceCursor = "cursor"
 	sourceCodex  = "codex"
+	sourceGemini = "gemini"
 )
 
 // usageRecord is one normalized LLM usage event extracted from a transcript line.
@@ -56,6 +57,8 @@ func detectSource(path string) string {
 	switch {
 	case strings.Contains(p, "/.codex/sessions/"):
 		return sourceCodex
+	case strings.Contains(p, "/.gemini/antigravity-cli/brain/"):
+		return sourceGemini
 	case strings.Contains(p, "/.cursor/projects/") && strings.Contains(p, "/agent-transcripts/"):
 		return sourceCursor
 	default:
@@ -139,6 +142,82 @@ func parseClaudeUsage(record map[string]interface{}, sourcePath string, line []b
 	} else {
 		sum := sha256.Sum256(line)
 		u.DedupKey = "hook:" + hex.EncodeToString(sum[:])
+	}
+	return u, true
+}
+
+// geminiSessionID returns the brain conversation id from
+// ~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs/....
+func geminiSessionID(path string) string {
+	p := filepath.ToSlash(path)
+	const marker = "/antigravity-cli/brain/"
+	i := strings.Index(p, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := p[i+len(marker):]
+	if j := strings.Index(rest, "/"); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
+}
+
+// parseGeminiUsage handles Antigravity brain transcripts. Only PLANNER_RESPONSE
+// steps are model calls. Token counts and the model are read from whichever of
+// the known usage shapes the step carries (top level or under "metadata");
+// steps that carry no counts yield no usage, so no tokens are ever fabricated.
+//
+// Gemini semantics: promptTokenCount includes cachedContentTokenCount, and
+// thoughtsTokenCount is billed as output alongside candidatesTokenCount.
+func parseGeminiUsage(record map[string]interface{}, sourcePath string, line []byte) (usageRecord, bool) {
+	if typ, _ := record["type"].(string); typ != "PLANNER_RESPONSE" {
+		return usageRecord{}, false
+	}
+	holders := []map[string]interface{}{record}
+	if md, ok := record["metadata"].(map[string]interface{}); ok {
+		holders = append(holders, md)
+	}
+	var usage map[string]interface{}
+	var model string
+	for _, h := range holders {
+		if usage == nil {
+			for _, k := range []string{"usage", "usage_metadata", "usageMetadata", "token_usage", "tokenUsage"} {
+				if m, ok := h[k].(map[string]interface{}); ok {
+					usage = m
+					break
+				}
+			}
+		}
+		if model == "" {
+			model = firstString(h, "model", "model_name", "modelName", "model_id")
+		}
+	}
+	if usage == nil {
+		return usageRecord{}, false
+	}
+	if model == "" {
+		model = firstString(usage, "model", "model_name", "modelName")
+	}
+
+	cached := num(usage, "cachedContentTokenCount", "cached_content_token_count", "cache_read_tokens", "cachedTokens")
+	prompt := num(usage, "promptTokenCount", "prompt_token_count", "input_tokens", "inputTokens", "prompt_tokens")
+	u := usageRecord{
+		Source:    sourceGemini,
+		SessionID: geminiSessionID(sourcePath),
+		Model:     model,
+		CacheRead: cached,
+		Input:     prompt - cached,
+		Output: num(usage, "candidatesTokenCount", "candidates_token_count", "output_tokens", "outputTokens", "completion_tokens") +
+			num(usage, "thoughtsTokenCount", "thoughts_token_count", "reasoning_tokens"),
+	}
+	if u.Input < 0 {
+		u.Input = 0
+	}
+	u.Timestamp, _ = record["created_at"].(string)
+	if idx, ok := record["step_index"].(float64); ok {
+		u.DedupKey = fmt.Sprintf("gemini:%s:%d", u.SessionID, int64(idx))
+	} else {
+		u.DedupKey = hashKey("gemini", u.SessionID, string(line))
 	}
 	return u, true
 }

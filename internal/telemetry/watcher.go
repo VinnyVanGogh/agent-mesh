@@ -353,6 +353,8 @@ func (w *Watcher) ingest(line []byte, sourcePath string, record bool) {
 		u, hasUsed = w.parseCodexRecord(raw, w.fileStateFor(sourcePath))
 	case sourceCursor:
 		u, hasUsed = parseCursorUsage(raw, sourcePath, line)
+	case sourceGemini:
+		u, hasUsed = parseGeminiUsage(raw, sourcePath, line)
 	default:
 		u, hasUsed = parseClaudeUsage(raw, sourcePath, line)
 	}
@@ -378,6 +380,9 @@ func (w *Watcher) ingest(line []byte, sourcePath string, record bool) {
 		if source == sourceCursor {
 			sessionID = strings.TrimSuffix(filepath.Base(sourcePath), ".jsonl")
 		}
+		if source == sourceGemini && sessionID == "" {
+			sessionID = geminiSessionID(sourcePath)
+		}
 	}
 	if parent, _, ok := subagentPathInfo(sourcePath); ok && (source == sourceCursor || sessionID == "") {
 		sessionID = parent
@@ -391,8 +396,11 @@ func (w *Watcher) ingest(line []byte, sourcePath string, record bool) {
 	}
 
 	modelFamily := modelFamilyOf(model)
-	if source == sourceCodex {
+	switch source {
+	case sourceCodex:
 		modelFamily = "openai"
+	case sourceGemini:
+		modelFamily = "gemini"
 	}
 
 	// Tool activity, working files, and loop breaker (Claude/Antigravity shaped records).
