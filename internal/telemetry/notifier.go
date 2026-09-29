@@ -29,6 +29,7 @@ func (n *RateLimitNotifier) Start(ctx context.Context) {
 	defer ticker.Stop()
 
 	// Initial check
+	PollQuotas(ctx)
 	n.check()
 
 	for {
@@ -36,6 +37,7 @@ func (n *RateLimitNotifier) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			PollQuotas(ctx)
 			n.check()
 		}
 	}
