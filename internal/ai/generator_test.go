@@ -487,3 +487,65 @@ func TestGenerator_RoleInferenceAndMapping(t *testing.T) {
 		}
 	}
 }
+
+func TestGenerator_CleanImperativeTitle_FilePathStripping(t *testing.T) {
+	boardPrompt := `/Users/vincevasile/Documents/me/teams-archive/ /Users/vincevasile/Documents/cleanshot/Chat\ \ Bill\ Furlong\ \ Managed\\ Solution\ \ vvasile\@managedsolution.com\ \ Microsoft\\ Teams\_September-28-2026\_013363\@2x.png I need help creating a task to review everything that was done today, specifically in relation to the conversation I had with Bill earlier. The goal is to make sure I got everything done that I said I was going to do, and that whatever was a bug or issue got fixed.`
+
+	gen := NewGenerator(GeneratorConfig{})
+	res, err := gen.GenerateTask(context.Background(), boardPrompt, nil)
+	if err != nil {
+		t.Fatalf("GenerateTask failed: %v", err)
+	}
+
+	title := res.Task.Title
+	if strings.Contains(title, "/Users") || strings.Contains(title, "cleanshot") ||
+		strings.Contains(title, ".png") || strings.Contains(title, "\\") {
+		t.Errorf("title contains file path or escape artifacts: %q", title)
+	}
+
+	if !strings.HasPrefix(title, "Feature: Review everything that was done today") {
+		t.Errorf("expected crisp title starting with 'Feature: Review everything that was done today', got %q", title)
+	}
+
+	if res.Task.AssigneeRole == "Senior PR Reviewer" {
+		t.Errorf("expected role not to be Senior PR Reviewer, got %q", res.Task.AssigneeRole)
+	}
+}
+
+func TestGenerator_NegativeKeywordRoleRouting(t *testing.T) {
+	gen := NewGenerator(GeneratorConfig{})
+
+	tests := []struct {
+		name         string
+		prompt       string
+		expectedRole string
+	}{
+		{
+			name:         "Override PR Reviewer with Chief of Staff",
+			prompt:       "Review the pull request diff for PR #12. This should go to Chief of Staff, not PR Reviewer",
+			expectedRole: "Chief of Staff",
+		},
+		{
+			name:         "Override PR Reviewer with QA",
+			prompt:       "Review the pull request diff for PR #12. This should go to QA, not PR Reviewer",
+			expectedRole: "QA & Automated Test Engineer",
+		},
+		{
+			name:         "Override Security with DevOps",
+			prompt:       "Fix the auth bug, not security fixer, assign to DevOps",
+			expectedRole: "DevOps & Release Engineer",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := gen.GenerateTask(context.Background(), tc.prompt, nil)
+			if err != nil {
+				t.Fatalf("GenerateTask failed: %v", err)
+			}
+			if res.Task.AssigneeRole != tc.expectedRole {
+				t.Errorf("expected role %q, got %q", tc.expectedRole, res.Task.AssigneeRole)
+			}
+		})
+	}
+}

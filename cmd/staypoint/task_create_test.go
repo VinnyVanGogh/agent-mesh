@@ -672,3 +672,78 @@ func TestTaskCreate_ClarificationBypassRecordsAssumptions(t *testing.T) {
 	}
 }
 
+func TestTaskCreate_LeadingFilePathStripping_BoardPrompt(t *testing.T) {
+	var receivedReq paperclip.CreateIssueRequest
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == "POST" {
+			_ = json.NewDecoder(r.Body).Decode(&receivedReq)
+			_ = json.NewEncoder(w).Encode(paperclip.IssueResponse{
+				ID:        "mock-board-issue",
+				Status:    "todo",
+				CompanyID: "sta-comp-id",
+			})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/agents") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode([]paperclip.AgentResponse{
+				{ID: "e7c896e8-2d4f-4e21-a7a9-2c8e47f78976", Name: "Chief of Staff", Role: "ceo"},
+				{ID: "pr-reviewer-id", Name: "Senior PR Reviewer", Role: "reviewer"},
+			})
+			return
+		}
+		if strings.Contains(r.URL.Path, "/api/companies/sta-comp-id") && r.Method == "GET" {
+			_ = json.NewEncoder(w).Encode(paperclip.CompanyResponse{
+				ID:          "sta-comp-id",
+				Name:        "StayPoint",
+				IssuePrefix: "STA",
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mockServer.Close()
+
+	os.Setenv("PAPERCLIP_API_URL", mockServer.URL)
+	os.Setenv("PAPERCLIP_COMPANY_ID", "sta-comp-id")
+	os.Setenv("PAPERCLIP_API_KEY", "test-token")
+	defer os.Unsetenv("PAPERCLIP_API_URL")
+	defer os.Unsetenv("PAPERCLIP_COMPANY_ID")
+	defer os.Unsetenv("PAPERCLIP_API_KEY")
+
+	var stdout, stderr bytes.Buffer
+	rootCmd.SetOut(&stdout)
+	rootCmd.SetErr(&stderr)
+
+	_ = taskCreateCmd.Flags().Set("dry-run", "false")
+	_ = taskCreateCmd.Flags().Set("backlog", "false")
+	taskCreateCmd.Flags().Lookup("backlog").Changed = false
+	_ = taskCreateCmd.Flags().Set("start", "false")
+	taskCreateCmd.Flags().Lookup("start").Changed = false
+	_ = taskCreateCmd.Flags().Set("yes", "false")
+	taskCreateCmd.Flags().Lookup("yes").Changed = false
+
+	boardPrompt := `/Users/vincevasile/Documents/me/teams-archive/ /Users/vincevasile/Documents/cleanshot/Chat\ \ Bill\ Furlong\ \ Managed\\ Solution\ \ vvasile\@managedsolution.com\ \ Microsoft\\ Teams\_September-28-2026\_013363\@2x.png I need help creating a task to review everything that was done today, specifically in relation to the conversation I had with Bill earlier. The goal is to make sure I got everything done that I said I was going to do, and that whatever was a bug or issue got fixed.`
+
+	rootCmd.SetArgs([]string{
+		"task", "create",
+		boardPrompt,
+		"--yes",
+	})
+
+	if err := rootCmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("task create failed: %v", err)
+	}
+
+	if strings.Contains(receivedReq.Title, "/Users") || strings.Contains(receivedReq.Title, "cleanshot") ||
+		strings.Contains(receivedReq.Title, ".png") || strings.Contains(receivedReq.Title, "\\") {
+		t.Errorf("title contains file path artifacts: %q", receivedReq.Title)
+	}
+	if !strings.HasPrefix(receivedReq.Title, "Feature: Review everything that was done today") {
+		t.Errorf("expected title to start with 'Feature: Review everything that was done today', got: %s", receivedReq.Title)
+	}
+	if receivedReq.AssigneeAgentId == "pr-reviewer-id" {
+		t.Errorf("expected assignee not to be Senior PR Reviewer, got %s", receivedReq.AssigneeAgentId)
+	}
+}
+

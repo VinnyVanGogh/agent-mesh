@@ -604,26 +604,32 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 	// 6. Assignee Role
 	role := "CLI & Statusline Presentation Specialist"
 	
+	// Mask out negative directives (e.g. "not PR Reviewer", "don't assign to Security", "instead of Chief of Staff")
+	reNegative := regexp.MustCompile(`(?i)(?:not|don't|do not|never|instead of)\s+(?:a\s+|the\s+)?(?:senior\s+)?(?:pr\s+reviewer|pull\s+request|pr\b|code\s+review|chief\s+of\s+staff|cos\b|cto\b|devops|qa|test|security|ci\b)`)
+	roleNorm := reNegative.ReplaceAllString(lowerNorm, " ")
+
 	// Explicit user directives take top priority
-	if strings.Contains(lowerNorm, "chief of staff") {
+	if strings.Contains(roleNorm, "chief of staff") || strings.Contains(roleNorm, "cos") {
 		role = "Chief of Staff"
-	} else if strings.Contains(lowerNorm, "cto") || strings.Contains(lowerNorm, "chief technology officer") {
+	} else if strings.Contains(roleNorm, "cto") || strings.Contains(roleNorm, "chief technology officer") {
 		role = "CTO"
-	} else if strings.Contains(lowerNorm, "devops") {
+	} else if strings.Contains(roleNorm, "qa") || strings.Contains(roleNorm, "quality assurance") {
+		role = "QA & Automated Test Engineer"
+	} else if strings.Contains(roleNorm, "devops") {
 		role = "DevOps & Release Engineer"
 	} else {
 	switch {
-	case strings.Contains(lowerNorm, "security") || strings.Contains(lowerNorm, "auth") || strings.Contains(lowerNorm, "secret"):
+	case strings.Contains(roleNorm, "security") || strings.Contains(roleNorm, "auth") || strings.Contains(roleNorm, "secret"):
 		role = "Security & Deep Remediation Fixer"
-	case strings.Contains(lowerNorm, "pull request") || strings.Contains(lowerNorm, "pr ") || strings.Contains(lowerNorm, "git diff") || strings.Contains(lowerNorm, "code review"):
+	case strings.Contains(roleNorm, "pull request") || strings.Contains(roleNorm, "pr ") || strings.Contains(roleNorm, "git diff") || strings.Contains(roleNorm, "code review"):
 		role = "Senior PR Reviewer"
-	case strings.Contains(lowerNorm, "research") || strings.Contains(lowerNorm, "copilot") || strings.Contains(lowerNorm, "eval"):
+	case strings.Contains(roleNorm, "research") || strings.Contains(roleNorm, "copilot") || strings.Contains(roleNorm, "eval"):
 		role = "Research & Architecture Specialist"
-	case strings.Contains(lowerNorm, "wire") || strings.Contains(lowerNorm, "architecture") || strings.Contains(lowerNorm, "rfc") || strings.Contains(lowerNorm, "daemon"):
+	case strings.Contains(roleNorm, "wire") || strings.Contains(roleNorm, "architecture") || strings.Contains(roleNorm, "rfc") || strings.Contains(roleNorm, "daemon"):
 		role = "Architecture Lead"
-	case strings.Contains(lowerNorm, "ci") || strings.Contains(lowerNorm, "lint") || strings.Contains(lowerNorm, "hook") || strings.Contains(lowerNorm, "test"):
+	case strings.Contains(roleNorm, "ci") || strings.Contains(roleNorm, "lint") || strings.Contains(roleNorm, "hook") || strings.Contains(roleNorm, "test"):
 		role = "CI/CD Engineer"
-	case strings.Contains(lowerNorm, "release") || strings.Contains(lowerNorm, "deploy") || strings.Contains(lowerNorm, "package") || strings.Contains(lowerNorm, "homebrew"):
+	case strings.Contains(roleNorm, "release") || strings.Contains(roleNorm, "deploy") || strings.Contains(roleNorm, "package") || strings.Contains(roleNorm, "homebrew"):
 		role = "DevOps & Release Engineer"
 	}
 	}
@@ -720,8 +726,8 @@ func cleanImperativeTitle(input, org string) string {
 		regexp.MustCompile(`(?i)^(?:we\s+(?:need\s+to|gotta|should|have\s+to)|i\s+(?:need\s+to|want\s+to|would\s+like\s+to|need\s+help\s+(?:creating|making)\s+a\s+task\s+to))\s+`),
 		regexp.MustCompile(`(?i)^(?:the\s+)?task\s+(?:is\s+to|should\s+be\s+to|is)\s+`),
 		regexp.MustCompile(`(?i)^(?:urgent|asap|critical):\s*`),
-		regexp.MustCompile(`(?i)^(?:/(?:\\.|[^ \t\r\n\\])+)+\s+`),
-		regexp.MustCompile(`(?i)^!\[[^\]]*\]\([^\)]+\)\s+`),
+		regexp.MustCompile(`(?i)^(?:(?:~?/(?:\\+[\s\S]|[^ \t\r\n\\])+)\s*)+`),
+		regexp.MustCompile(`(?i)^!\[[^\]]*\]\([^\)]+\)\s*`),
 		regexp.MustCompile(`(?i)^(?:passing\s+thought|idea|note\s+to\s+self):\s*`),
 	}
 
