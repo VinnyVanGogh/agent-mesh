@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,6 +95,10 @@ func NewWatcher(cfg *config.Config) (*Watcher, error) {
 		fsw.Close()
 		return nil, fmt.Errorf("failed to open telemetry db: %w", err)
 	}
+
+	// Best-effort: add the integer micro-dollar cost column to existing databases.
+	// Fails harmlessly if the requests table doesn't exist yet or already has it.
+	_, _ = conn.Exec("ALTER TABLE requests ADD COLUMN cost_usd_micros INTEGER;")
 
 	var meshDB *sql.DB
 	if cfg.DBPath != "" {
@@ -365,8 +370,31 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 		return
 	}
 
-	// Calculate estimated token cost
-	costUSD := EstimateModelCost(model, int64(inputTokens), int64(outputTokens), int64(cacheRead), int64(cacheCreation))
+	// Split cache writes by TTL when the transcript carries it; the 1h rate is higher.
+	cacheWrite1h := 0.0
+	if cc, ok := usage["cache_creation"].(map[string]interface{}); ok {
+		cacheWrite1h, _ = cc["ephemeral_1h_input_tokens"].(float64)
+	}
+	if cacheWrite1h > cacheCreation {
+		cacheWrite1h = cacheCreation
+	}
+
+	// Price at ingest from the embedded rate card, in integer micro-dollars.
+	costMicros, priced := ComputeCostMicros(model, Usage{
+		Input:           int64(inputTokens),
+		Output:          int64(outputTokens),
+		CacheRead:       int64(cacheRead),
+		CacheCreation5m: int64(cacheCreation - cacheWrite1h),
+		CacheCreation1h: int64(cacheWrite1h),
+	})
+	var costUSD float64
+	if priced {
+		costUSD = float64(costMicros) / 1_000_000.0
+	} else {
+		// Model not on the rate card: keep the legacy family-based estimate.
+		costUSD = EstimateModelCost(model, int64(inputTokens), int64(outputTokens), int64(cacheRead), int64(cacheCreation))
+		costMicros = int64(math.Round(costUSD * 1_000_000.0))
+	}
 
 	// Timestamp
 	ts, _ := record["timestamp"].(string)
@@ -392,15 +420,16 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 	hasher.Write(line)
 	idempotencyKey := fmt.Sprintf("hook:%s", hex.EncodeToString(hasher.Sum(nil)))
 
-	// Try inserting with cost_usd; fallback without cost_usd if table doesn't have it (older test schemas)
-	insertWithCost := `
+	// Try inserting with cost_usd_micros + cost_usd; fall back to cost_usd only, then to no cost
+	// if the table lacks those columns (older schemas).
+	insertWithMicros := `
 	INSERT OR IGNORE INTO requests (
 		idempotency_key, detected_via, ts, model, model_family,
 		input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
-		session_id, account_email, cost_usd, raw_json
-	) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		session_id, account_email, cost_usd, cost_usd_micros, raw_json
+	) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 	`
-	_, err := w.db.Exec(insertWithCost,
+	_, err := w.db.Exec(insertWithMicros,
 		idempotencyKey,
 		ts,
 		model,
@@ -413,8 +442,33 @@ func (w *Watcher) ingestLine(line []byte, sourcePath string) {
 		sessionID,
 		accountEmail,
 		costUSD,
+		costMicros,
 		string(line),
 	)
+	if err != nil {
+		insertWithCost := `
+		INSERT OR IGNORE INTO requests (
+			idempotency_key, detected_via, ts, model, model_family,
+			input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
+			session_id, account_email, cost_usd, raw_json
+		) VALUES (?, 'transcript', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+		`
+		_, err = w.db.Exec(insertWithCost,
+			idempotencyKey,
+			ts,
+			model,
+			modelFamily,
+			int64(inputTokens),
+			int64(outputTokens),
+			int64(cacheRead),
+			int64(cacheCreation),
+			totalTokens,
+			sessionID,
+			accountEmail,
+			costUSD,
+			string(line),
+		)
+	}
 	if err != nil {
 		slog.Debug("Failed to insert request with cost, attempting fallback", slog.String("path", sourcePath), slog.Any("error", err))
 		// Fallback without cost_usd
