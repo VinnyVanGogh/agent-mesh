@@ -387,9 +387,9 @@ func TestGeminiTranscriptIngestion(t *testing.T) {
 		got = append(got, r)
 	}
 	want := []row{
-		// 800*0.75 + 200*0.075 + 400*3.75 = 600+15+1500 micro-dollars per 1000 tokens... /1e6 scale
+		// 800*0.75 + 200*0.075 + 400*3.75 micro-dollars
 		{"gemini-3.8-flash", "gemini", 800, 400, 200, 2115},
-		// 2000*2.00 + 500*12.00 = 4000 + 6000
+		// 2000*2.00 + 500*12.00 micro-dollars
 		{"gemini-3.1-pro-high", "gemini", 2000, 500, 0, 10000},
 	}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
