@@ -2,11 +2,14 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/router"
+	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
+	"github.com/VinnyVanGogh/staypoint/internal/telemetry/quota"
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +21,18 @@ var quotaCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("\033[1;36m[StayPoint Quota & Spend Report]\033[0m")
 		fmt.Println("======================================================")
+
+		// 0. Live provider quota (throttled in-process poll, cached in SQLite)
+		if cfg != nil && cfg.DBPath != "" {
+			fmt.Println("\n\033[1;35m--- Live Provider Quota ---\033[0m")
+			telemetry.PollQuotas(cmd.Context())
+			if database, err := db.Open(cfg.DBPath); err != nil {
+				fmt.Printf("Warning: Could not open db: %v\n", err)
+			} else {
+				renderLiveQuota(os.Stdout, quota.Store{DB: database.DB()}, time.Now())
+				database.Close()
+			}
+		}
 
 		// 1. Quotas and Rate Limits
 		fmt.Println("\n\033[1;35m--- API Rate Limits & Pacer State ---\033[0m")

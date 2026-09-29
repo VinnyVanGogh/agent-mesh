@@ -54,31 +54,6 @@ type PacerState struct {
 	LastUpdated time.Time             `json:"last_updated"`
 }
 
-type rawStateJSON struct {
-	Lockouts map[string]struct {
-		Provider     string  `json:"provider"`
-		Locked       bool    `json:"locked"`
-		ResetsAt     float64 `json:"resets_at"`
-		ResetTimeStr string  `json:"reset_time_str"`
-		ResetTimeISO string  `json:"reset_time_iso"`
-		DetectedAt   string  `json:"detected_at"`
-	} `json:"lockouts"`
-	Quotas map[string]rawQuota `json:"quotas"`
-}
-
-// rawQuota uses pointers so a window the poller never reported (e.g. the
-// personal Claude entry carries only five_hour_* keys) is distinguishable from
-// a genuine 0% remaining.
-type rawQuota struct {
-	FiveHourUsed      *float64 `json:"five_hour_used"`
-	FiveHourRemaining *float64 `json:"five_hour_remaining"`
-	FiveHourResetsAt  float64  `json:"five_hour_resets_at"`
-	WeeklyUsed        *float64 `json:"weekly_used"`
-	WeeklyRemaining   *float64 `json:"weekly_remaining"`
-	WeeklyResetsAt    float64  `json:"weekly_resets_at"`
-	LastUpdated       string   `json:"last_updated"`
-}
-
 type rawSampleJSON struct {
 	Timestamp      string  `json:"ts"`
 	SessionID      string  `json:"session_id"`
@@ -101,7 +76,8 @@ type rawEstimatesJSON struct {
 	} `json:"pct_per_turn"`
 }
 
-// LoadPacerState reads live quotas from ~/.config/rate-limits/state.json,
+// LoadPacerState reads live quotas cached in the StayPoint database by the
+// in-process quota poller (internal/telemetry/quota),
 // statusline samples from ~/.config/token-telemetry/statusline-samples.ndjson,
 // and burn rates from ~/.config/token-telemetry/statusline-estimates.json.
 func LoadPacerState() (*PacerState, error) {
@@ -169,67 +145,17 @@ func LoadPacerState() (*PacerState, error) {
 		Weekly:     QuotaWindow{RemainingPct: 100},
 	}
 
-	// 1. Read state.json
-	statePath := filepath.Join(home, ".config", "rate-limits", "state.json")
-	var stateData rawStateJSON
-	if raw, err := os.ReadFile(statePath); err == nil {
-		_ = json.Unmarshal(raw, &stateData)
-	}
-
-	// Apply quotas from state.json
-	if q, ok := stateData.Quotas["Gemini"]; ok {
-		applyStateQuota(state.Pools[PoolGeminiNative], q)
-	}
-	if q, ok := stateData.Quotas["Antigravity 3P"]; ok {
-		applyStateQuota(state.Pools[Pool3PClaude], q)
-	}
-	if q, ok := stateData.Quotas["Claude (Personal)"]; ok {
-		applyStateQuota(state.Pools[PoolPersonalClaude], q)
-	} else if q, ok := stateData.Quotas["Claude"]; ok {
-		applyStateQuota(state.Pools[PoolPersonalClaude], q)
-	}
-	if q, ok := stateData.Quotas["Claude (Work)"]; ok {
-		applyStateQuota(state.Pools[PoolWorkClaude], q)
-	}
+	// 1. Apply cached live quotas. Stale or missing rows are ignored, which
+	// fails open to the statusline samples and optimistic defaults below.
+	applyLiveQuotas(state, time.Now())
 
 	// 2. Read latest statusline-samples.ndjson (fast tail read)
 	samplesPath := filepath.Join(home, ".config", "token-telemetry", "statusline-samples.ndjson")
 	readSamplesTail(samplesPath, state)
 
-	// 3. Evaluate lockouts from state.json and thresholds
+	// 3. Evaluate lockouts from window thresholds
 	now := time.Now()
 	for _, pool := range state.Pools {
-		// Check explicit lockout map in state.json
-		var lockEntry *struct {
-			Provider     string  `json:"provider"`
-			Locked       bool    `json:"locked"`
-			ResetsAt     float64 `json:"resets_at"`
-			ResetTimeStr string  `json:"reset_time_str"`
-			ResetTimeISO string  `json:"reset_time_iso"`
-			DetectedAt   string  `json:"detected_at"`
-		}
-
-		switch pool.ID {
-		case PoolGeminiNative:
-			if l, ok := stateData.Lockouts["Gemini"]; ok {
-				lockEntry = &l
-			}
-		case Pool3PClaude:
-			if l, ok := stateData.Lockouts["Antigravity 3P"]; ok {
-				lockEntry = &l
-			}
-		case PoolPersonalClaude:
-			if l, ok := stateData.Lockouts["Claude (Personal)"]; ok {
-				lockEntry = &l
-			} else if l, ok := stateData.Lockouts["Claude"]; ok {
-				lockEntry = &l
-			}
-		case PoolWorkClaude:
-			if l, ok := stateData.Lockouts["Claude (Work)"]; ok {
-				lockEntry = &l
-			}
-		}
-
 		// Auto-reset windows whose reset timestamp has passed
 		if !pool.FiveHour.ResetsAt.IsZero() && now.After(pool.FiveHour.ResetsAt) && pool.FiveHour.ResetsAt.After(pool.LastUpdated) {
 			pool.FiveHour.UsedPct = 0.0
@@ -244,12 +170,7 @@ func LoadPacerState() (*PacerState, error) {
 			pool.Weekly.IsLocked = false
 		}
 
-		if lockEntry != nil && lockEntry.Locked && lockEntry.ResetsAt > float64(now.Unix()) {
-			pool.IsLocked = true
-			pool.LockoutUntil = time.Unix(int64(lockEntry.ResetsAt), 0)
-			pool.LockoutReason = "Reported locked by rate-limit notifier"
-			pool.FiveHour.IsLocked = true
-		} else if pool.FiveHour.RemainingPct <= 0.0 || pool.FiveHour.UsedPct >= 100.0 {
+		if pool.FiveHour.RemainingPct <= 0.0 || pool.FiveHour.UsedPct >= 100.0 {
 			if pool.FiveHour.ResetsAt.After(now) {
 				pool.IsLocked = true
 				pool.FiveHour.IsLocked = true
@@ -288,33 +209,6 @@ func LoadPacerState() (*PacerState, error) {
 	}
 
 	return state, nil
-}
-
-func applyStateQuota(p *QuotaPool, q rawQuota) {
-	applyWindow(&p.FiveHour, q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt)
-	applyWindow(&p.Weekly, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt)
-
-	if q.LastUpdated != "" {
-		if t, err := time.Parse(time.RFC3339, q.LastUpdated); err == nil {
-			p.LastUpdated = t
-		}
-	}
-}
-
-// applyWindow fills one window from whichever of used/remaining was reported,
-// deriving the other. When neither is present the window stays Known=false.
-func applyWindow(w *QuotaWindow, used, remaining *float64, resetsAt float64) {
-	switch {
-	case used != nil && remaining != nil:
-		w.UsedPct, w.RemainingPct, w.Known = *used, *remaining, true
-	case used != nil:
-		w.UsedPct, w.RemainingPct, w.Known = *used, math.Max(0, 100.0-*used), true
-	case remaining != nil:
-		w.UsedPct, w.RemainingPct, w.Known = math.Max(0, 100.0-*remaining), *remaining, true
-	}
-	if resetsAt > 0 {
-		w.ResetsAt = time.Unix(int64(resetsAt), 0)
-	}
 }
 
 // FormatPct renders a window's used or remaining percentage, or "n/a" when the

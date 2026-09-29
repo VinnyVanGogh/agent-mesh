@@ -1,121 +1,163 @@
 package quota
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
-// GeminiFetcher refreshes the Google ADC token and probes the Gemini models API.
+const (
+	geminiCodeAssistBase = "https://cloudcode-pa.googleapis.com/v1internal"
+	// Buckets resetting within this horizon are treated as the short window.
+	geminiShortWindow = 6 * time.Hour
+)
+
+// GeminiFetcher reads per-model quota buckets from the Code Assist backend the
+// installed Gemini CLI itself uses (`loadCodeAssist` for the project, then
+// `retrieveUserQuota`). The endpoint is undocumented, so every failure is an
+// ordinary error the caller fails open on.
+//
+// It is read-only: it uses the access token the Gemini CLI already cached in
+// ~/.gemini/oauth_creds.json and never refreshes or rewrites it, so an expired
+// token yields ErrNoCredentials until the user's own CLI refreshes it.
 type GeminiFetcher struct {
 	Client    HTTPDoer
-	URL       string
-	TokenURL  string
+	BaseURL   string
 	CredsFile string
 	Now       func() time.Time
 }
 
 func NewGeminiFetcher() *GeminiFetcher {
-	home, _ := os.UserHomeDir()
-	return &GeminiFetcher{
-		Client:    newHTTPClient(),
-		URL:       "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1",
-		TokenURL:  "https://oauth2.googleapis.com/token",
-		CredsFile: filepath.Join(home, ".config", "gcloud", "application_default_credentials.json"),
-		Now:       time.Now,
+	f := &GeminiFetcher{Client: newHTTPClient(), BaseURL: geminiCodeAssistBase, Now: time.Now}
+	if home, err := os.UserHomeDir(); err == nil {
+		f.CredsFile = filepath.Join(home, ".gemini", "oauth_creds.json")
 	}
+	return f
 }
 
 func (f *GeminiFetcher) Provider() string { return "gemini" }
 
-func (f *GeminiFetcher) Fetch(ctx context.Context) (*Snapshot, error) {
-	// Read gcloud credentials
+func (f *GeminiFetcher) token() (string, error) {
 	b, err := os.ReadFile(f.CredsFile)
 	if err != nil {
-		return nil, fmt.Errorf("%w: gemini ADC missing", ErrNoCredentials)
+		return "", fmt.Errorf("%w: gemini oauth file unreadable", ErrNoCredentials)
 	}
-
-	var creds struct {
-		RefreshToken string `json:"refresh_token"`
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret"`
-	}
-	if err := json.Unmarshal(b, &creds); err != nil {
-		return nil, fmt.Errorf("%w: gemini ADC invalid JSON", ErrNoCredentials)
-	}
-
-	if creds.RefreshToken == "" || creds.ClientID == "" || creds.ClientSecret == "" {
-		return nil, fmt.Errorf("%w: gemini ADC missing required fields", ErrNoCredentials)
-	}
-
-	// Refresh token
-	form := url.Values{}
-	form.Set("grant_type", "refresh_token")
-	form.Set("client_id", creds.ClientID)
-	form.Set("client_secret", creds.ClientSecret)
-	form.Set("refresh_token", creds.RefreshToken)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.TokenURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	body, err := doJSON(f.Client, "gemini_oauth", req)
-	if err != nil {
-		return nil, err
-	}
-
-	var tokResp struct {
+	var c struct {
 		AccessToken string `json:"access_token"`
+		ExpiryDate  int64  `json:"expiry_date"` // unix millis
 	}
-	if err := json.Unmarshal(body, &tokResp); err != nil {
-		return nil, fmt.Errorf("quota: gemini oauth decode: %w", err)
+	if json.Unmarshal(b, &c) != nil || c.AccessToken == "" {
+		return "", fmt.Errorf("%w: gemini", ErrNoCredentials)
+	}
+	if c.ExpiryDate > 0 && c.ExpiryDate <= f.Now().UnixMilli() {
+		return "", fmt.Errorf("%w: gemini access token expired", ErrNoCredentials)
+	}
+	return c.AccessToken, nil
+}
+
+func (f *GeminiFetcher) post(ctx context.Context, tok, method string, payload any) ([]byte, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.BaseURL+":"+method, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("quota: gemini build request: %w", sanitizeErr(err))
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", userAgent)
+	return doJSON(f.Client, "gemini", req)
+}
+
+type geminiBucket struct {
+	ModelID           string   `json:"modelId"`
+	RemainingFraction *float64 `json:"remainingFraction"`
+	ResetTime         string   `json:"resetTime"`
+}
+
+func (f *GeminiFetcher) Fetch(ctx context.Context) (*Snapshot, error) {
+	tok, err := f.token()
+	if err != nil {
+		return nil, err
 	}
 
-	if tokResp.AccessToken == "" {
-		return nil, fmt.Errorf("quota: gemini oauth returned empty token")
+	meta := map[string]any{"metadata": map[string]string{"ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI"}}
+	body, err := f.post(ctx, tok, "loadCodeAssist", meta)
+	if err != nil {
+		return nil, err
+	}
+	var la struct {
+		Project json.RawMessage `json:"cloudaicompanionProject"`
+	}
+	if err := json.Unmarshal(body, &la); err != nil {
+		return nil, fmt.Errorf("quota: gemini decode loadCodeAssist: %w", err)
+	}
+	project := decodeGeminiProject(la.Project)
+	if project == "" {
+		return nil, fmt.Errorf("quota: gemini loadCodeAssist returned no project")
 	}
 
-	// Update agy oauth_creds.json
-	home, _ := os.UserHomeDir()
-	agyCreds := filepath.Join(home, ".gemini", "oauth_creds.json")
-	if _, err := os.Stat(agyCreds); err == nil {
-		if b, err := os.ReadFile(agyCreds); err == nil {
-			var agy map[string]interface{}
-			if err := json.Unmarshal(b, &agy); err == nil {
-				agy["access_token"] = tokResp.AccessToken
-				agy["expiry_date"] = f.Now().UnixMilli() + 3600000
-				if out, err := json.MarshalIndent(agy, "", "  "); err == nil {
-					_ = os.WriteFile(agyCreds, out, 0600)
-				}
-			}
+	body, err = f.post(ctx, tok, "retrieveUserQuota", map[string]string{"project": project})
+	if err != nil {
+		return nil, err
+	}
+	var q struct {
+		Buckets []geminiBucket `json:"buckets"`
+	}
+	if err := json.Unmarshal(body, &q); err != nil {
+		return nil, fmt.Errorf("quota: gemini decode quota: %w", err)
+	}
+
+	now := f.Now()
+	snap := &Snapshot{Provider: "gemini", FetchedAt: now}
+	// Per-model buckets: keep the most constrained one per horizon. Buckets
+	// resetting within 6h map to the short window, the rest to the long one.
+	for _, b := range q.Buckets {
+		if b.RemainingFraction == nil {
+			continue
+		}
+		used := clampPct((1 - *b.RemainingFraction) * 100)
+		reset := parseTime(b.ResetTime)
+		w := &Window{Utilization: used, ResetsAt: reset}
+		slot := &snap.Weekly
+		if !reset.IsZero() && reset.Sub(now) <= geminiShortWindow {
+			slot = &snap.FiveHour
+		}
+		if *slot == nil || used > (*slot).Utilization {
+			*slot = w
 		}
 	}
+	return snap, nil
+}
 
-	// Probe API
-	req2, err := http.NewRequestWithContext(ctx, http.MethodGet, f.URL, nil)
-	if err != nil {
-		return nil, err
+// cloudaicompanionProject is a string in current responses and an object with
+// an id in older ones; accept both.
+func decodeGeminiProject(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
 	}
-	req2.Header.Set("Authorization", "Bearer "+tokResp.AccessToken)
-	req2.Header.Set("User-Agent", userAgent)
-
-	_, err = doJSON(f.Client, "gemini", req2)
-	if err != nil {
-		return nil, err
+	var o struct {
+		ID string `json:"id"`
 	}
+	if json.Unmarshal(raw, &o) == nil {
+		return o.ID
+	}
+	return ""
+}
 
-	// Gemini API doesn't report quota.
-	// Returning a placeholder so we know it succeeded.
-	return &Snapshot{
-		Provider:  "gemini",
-		FetchedAt: f.Now(),
-	}, nil
+func clampPct(v float64) float64 {
+	switch {
+	case v < 0:
+		return 0
+	case v > 100:
+		return 100
+	}
+	return v
 }

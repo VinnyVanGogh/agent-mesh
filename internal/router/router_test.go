@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -45,42 +43,5 @@ func BenchmarkRoute(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-	}
-}
-
-func TestPacer_ClaudeKeyFallback(t *testing.T) {
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
-
-	rateLimitsDir := filepath.Join(tmpHome, ".config", "rate-limits")
-	if err := os.MkdirAll(rateLimitsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	stateJSON := `{
-		"quotas": {
-			"Claude": {
-				"five_hour_used": 15.0,
-				"five_hour_remaining": 85.0,
-				"weekly_used": 20.0,
-				"weekly_remaining": 80.0
-			}
-		}
-	}`
-	if err := os.WriteFile(filepath.Join(rateLimitsDir, "state.json"), []byte(stateJSON), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	state, err := LoadPacerState()
-	if err != nil {
-		t.Fatalf("LoadPacerState failed: %v", err)
-	}
-
-	personalPool := state.Pools[PoolPersonalClaude]
-	if personalPool.FiveHour.RemainingPct != 85.0 {
-		t.Errorf("expected 85.0%% 5h remaining from Claude key fallback, got %f", personalPool.FiveHour.RemainingPct)
-	}
-	if personalPool.Weekly.RemainingPct != 80.0 {
-		t.Errorf("expected 80.0%% weekly remaining from Claude key fallback, got %f", personalPool.Weekly.RemainingPct)
 	}
 }

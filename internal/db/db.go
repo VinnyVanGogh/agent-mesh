@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -28,13 +29,23 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 CREATE TABLE IF NOT EXISTS quota_windows (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    pool_key      TEXT NOT NULL UNIQUE,
-    window_type   TEXT NOT NULL CHECK (window_type IN ('rolling_5h', 'weekly_7d')),
+    pool_key      TEXT NOT NULL,
+    window_type   TEXT NOT NULL CHECK (window_type IN ('rolling_5h', 'weekly_7d', 'monthly')),
     used_percent  REAL NOT NULL DEFAULT 0.0,
     remaining_pct REAL NOT NULL DEFAULT 100.0,
     is_locked     INTEGER NOT NULL DEFAULT 0,
     resets_at     TEXT,
-    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (pool_key, window_type)
+);
+
+-- Per-provider fetch bookkeeping: throttle (next_attempt_at) and last outcome.
+CREATE TABLE IF NOT EXISTS quota_fetch_state (
+    provider        TEXT PRIMARY KEY,
+    last_attempt_at TEXT NOT NULL,
+    next_attempt_at TEXT NOT NULL,
+    last_success_at TEXT,
+    last_status     TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -137,7 +148,28 @@ type Store struct {
 	db *sql.DB
 }
 
+// migrateLegacyQuotaWindows drops the pre-T3 quota_windows table, which held
+// one row per pool (pool_key UNIQUE) and could not store both windows. Nothing
+// wrote to it before T3, so there is no data to carry over.
+func migrateLegacyQuotaWindows(conn *sql.DB) error {
+	var ddl string
+	if err := conn.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='quota_windows'").Scan(&ddl); err != nil {
+		return nil
+	}
+	if strings.Contains(ddl, "UNIQUE (pool_key, window_type)") {
+		return nil
+	}
+	if _, err := conn.Exec("DROP TABLE quota_windows"); err != nil {
+		return err
+	}
+	_, err := conn.Exec(Schema)
+	return err
+}
+
 func migrateSchema(conn *sql.DB) error {
+	if err := migrateLegacyQuotaWindows(conn); err != nil {
+		return err
+	}
 	rows, err := conn.Query("PRAGMA table_info(tasks);")
 	if err != nil {
 		return err
