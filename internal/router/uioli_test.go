@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"encoding/json"
+	"github.com/VinnyVanGogh/staypoint/internal/telemetry/quota"
 	"os"
 	"strings"
 	"testing"
@@ -120,13 +121,10 @@ func TestUIOLIRoutingPrefersPersonalClaudeOverGemini(t *testing.T) {
 }
 
 func TestUnreportedWeeklyWindowIsNotZeroPercent(t *testing.T) {
-	// state.json's personal Claude entry carries only five_hour_* keys.
-	var q rawQuota
-	if err := json.Unmarshal([]byte(`{"five_hour_used":40,"five_hour_remaining":60}`), &q); err != nil {
-		t.Fatal(err)
-	}
+	// A provider row set that carries only the 5h window.
+	now := time.Now()
 	p := &QuotaPool{Weekly: QuotaWindow{RemainingPct: 100}, FiveHour: QuotaWindow{RemainingPct: 100}}
-	applyStateQuota(p, q)
+	applyQuotaRows(p, []quota.Row{{WindowType: quota.WindowFiveHour, UsedPct: 40, UpdatedAt: now}}, now)
 	if p.Weekly.Known {
 		t.Fatal("weekly window must stay unknown")
 	}
@@ -137,10 +135,7 @@ func TestUnreportedWeeklyWindowIsNotZeroPercent(t *testing.T) {
 		t.Errorf("5h remaining=%q want 60%%", got)
 	}
 
-	// used-only is enough: remaining is derived (63% used -> 37% left).
-	var w rawQuota
-	_ = json.Unmarshal([]byte(`{"weekly_used":63,"weekly_resets_at":1790722800}`), &w)
-	applyStateQuota(p, w)
+	applyQuotaRows(p, []quota.Row{{WindowType: quota.WindowWeekly, UsedPct: 63, UpdatedAt: now}}, now)
 	if !p.Weekly.Known || p.Weekly.RemainingPct != 37 || p.Weekly.FormatPct(false, 0) != "63%" {
 		t.Errorf("derived weekly wrong: %+v", p.Weekly)
 	}
@@ -174,12 +169,12 @@ func TestReadSamplesTailBackfillsMissingWeekly(t *testing.T) {
 	// Write a sample with weekly quota resetting in the future
 	futureReset := float64(time.Now().Add(6 * time.Hour).Unix())
 	sample := rawSampleJSON{
-		AccountEmail:    "stylesbyvinny@gmail.com",
-		Timestamp:       time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
-		FiveHourPct:     20,
-		FiveHourResets:  float64(time.Now().Add(2 * time.Hour).Unix()),
-		SevenDayPct:     63,
-		SevenDayResets:  futureReset,
+		AccountEmail:   "stylesbyvinny@gmail.com",
+		Timestamp:      time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+		FiveHourPct:    20,
+		FiveHourResets: float64(time.Now().Add(2 * time.Hour).Unix()),
+		SevenDayPct:    63,
+		SevenDayResets: futureReset,
 	}
 	sampleData, _ := json.Marshal(sample)
 	tmpFile.Write(append(sampleData, '\n'))
@@ -194,10 +189,10 @@ func TestReadSamplesTailBackfillsMissingWeekly(t *testing.T) {
 			Weekly:      QuotaWindow{Known: false}, // state.json lacked weekly
 		},
 		PoolWorkClaude: {
-			ID:          PoolWorkClaude,
-			Name:        "Claude (Work)",
-			Weekly:      QuotaWindow{Known: true},
-			FiveHour:    QuotaWindow{Known: true},
+			ID:       PoolWorkClaude,
+			Name:     "Claude (Work)",
+			Weekly:   QuotaWindow{Known: true},
+			FiveHour: QuotaWindow{Known: true},
 		},
 	}}
 
@@ -214,4 +209,3 @@ func TestReadSamplesTailBackfillsMissingWeekly(t *testing.T) {
 		t.Fatalf("expected ResetsAt %v, got %v", int64(futureReset), p.Weekly.ResetsAt.Unix())
 	}
 }
-

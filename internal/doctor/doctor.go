@@ -500,7 +500,15 @@ func (d *FleetDoctor) checkInfrastructure(ctx context.Context) SectionResult {
 	}
 
 	dbErr := d.CheckTelemetryDBFunc(telemetryPath)
-	statePath := filepath.Join(getHome(), ".config", "rate-limits", "state.json")
+	// Live quota now lives in the StayPoint DB (written by the daemon's poller).
+	// Its WAL is touched on every write, so prefer it as the freshness signal.
+	statePath := filepath.Join(getHome(), ".staypoint", "staypoint.db")
+	if d.cfg != nil && d.cfg.DBPath != "" {
+		statePath = d.cfg.DBPath
+	}
+	if _, err := os.Stat(statePath + "-wal"); err == nil {
+		statePath += "-wal"
+	}
 	stateAge, stateErr := d.CheckStateAgeFunc(statePath)
 
 	if dbErr != nil {
@@ -509,15 +517,15 @@ func (d *FleetDoctor) checkInfrastructure(ctx context.Context) SectionResult {
 		chkDB.Remediation = "Initialize token telemetry database or run `mesh init`"
 	} else if stateErr != nil {
 		chkDB.Status = StatusWarn
-		chkDB.Message = fmt.Sprintf("Telemetry DB readable, but rate limits state missing: %v", stateErr)
-		chkDB.Remediation = "Run statusline poll or prompt hook to generate state.json"
+		chkDB.Message = fmt.Sprintf("Telemetry DB readable, but quota cache missing: %v", stateErr)
+		chkDB.Remediation = "Start staypointd or run `staypoint quota` to populate the quota cache"
 	} else if stateAge > 24*time.Hour {
 		chkDB.Status = StatusWarn
-		chkDB.Message = fmt.Sprintf("Telemetry DB readable; rate limits state is stale (%s old)", formatDuration(stateAge))
-		chkDB.Remediation = "Run `mesh statusline` or trigger prompt hook to refresh telemetry"
+		chkDB.Message = fmt.Sprintf("Telemetry DB readable; quota cache is stale (%s old)", formatDuration(stateAge))
+		chkDB.Remediation = "Check that staypointd is running, or run `staypoint quota`"
 	} else {
 		chkDB.Status = StatusOK
-		chkDB.Message = fmt.Sprintf("Telemetry DB readable, state.json fresh (%s old)", formatDuration(stateAge))
+		chkDB.Message = fmt.Sprintf("Telemetry DB readable, quota cache fresh (%s old)", formatDuration(stateAge))
 	}
 	sec.Checks = append(sec.Checks, chkDB)
 
