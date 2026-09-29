@@ -32,6 +32,10 @@ type Config struct {
 	UIOLIWindowHours     float64 `json:"uioli_window_hours" toml:"uioli_window_hours"`
 	UIOLIMinRemainingPct float64 `json:"uioli_min_remaining_pct" toml:"uioli_min_remaining_pct"`
 	UIOLIMinPctPerHour   float64 `json:"uioli_min_pct_per_hour" toml:"uioli_min_pct_per_hour"`
+	// Provider CLI binary overrides. Empty = resolve via PATH (exec.LookPath).
+	// STAYPOINT_CLAUDE_BIN / STAYPOINT_AGY_BIN env vars take precedence over these.
+	ClaudeBin string `json:"claude_bin" toml:"claude_bin"`
+	AgyBin    string `json:"agy_bin" toml:"agy_bin"`
 }
 
 // DefaultConfig returns the default configuration.
@@ -115,6 +119,8 @@ func LoadConfig() (*Config, error) {
 	cfg.DataDir = expandPath(cfg.DataDir, home)
 	cfg.DBPath = expandPath(cfg.DBPath, home)
 	cfg.TelemetryDBPath = expandPath(cfg.TelemetryDBPath, home)
+	cfg.ClaudeBin = expandPath(cfg.ClaudeBin, home)
+	cfg.AgyBin = expandPath(cfg.AgyBin, home)
 
 	if cfg.RemoteRepoRoot == "" {
 		if strings.Contains(strings.ToLower(cfg.CompanyName), "managed solution") ||

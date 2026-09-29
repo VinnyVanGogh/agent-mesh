@@ -445,7 +445,6 @@ echo "personal-claude ran"
 	// Build a chain manually, override bins to our test script
 	chain := BuildProviderChain(true, "gemini")
 	for i := range chain {
-		chain[i].Bin = f.Name()
 		chain[i].ExtraEnv = nil // don't need real CLAUDE_CONFIG_DIR in test
 	}
 
@@ -459,9 +458,16 @@ echo "personal-claude ran"
 		if isPoolLocked(pool) {
 			continue
 		}
-		args := candidate.BuildArgs(ParsedOptions{Prompt: "test", OutputFormat: "stream-json"})
 		var buf bytes.Buffer
-		err := runCommandWithEnv(ctx, candidate.Bin, args, candidate.ExtraEnv, nil, &buf, &stderr)
+		err := candidate.Adapter.Execute(ctx, ExecRequest{
+			Bin:      f.Name(),
+			Dir:      ".",
+			Opts:     ParsedOptions{Prompt: "test", OutputFormat: "stream-json"},
+			ExtraEnv: candidate.ExtraEnv,
+			Stdin:    nil,
+			Stdout:   &buf,
+			Stderr:   &stderr,
+		})
 		if err == nil {
 			stdout.Write(buf.Bytes())
 			break
@@ -598,17 +604,25 @@ echo "valid output from fallback"
 
 	// Simulate chain: first candidate fails (poison), second succeeds (good)
 	candidates := []providerCandidate{
-		{Name: "poison-provider", Bin: pf.Name(), BuildArgs: buildAgyArgs},
-		{Name: "good-provider", Bin: gf.Name(), BuildArgs: buildAgyArgs},
+		{Name: "poison-provider", Adapter: AgyAdapter{}},
+		{Name: "good-provider", Adapter: AgyAdapter{}},
 	}
+	bins := []string{pf.Name(), gf.Name()}
 
 	opts := ParsedOptions{Prompt: "test", OutputFormat: "stream-json"}
 	var finalStdout, stderrBuf bytes.Buffer
 
-	for _, candidate := range candidates {
-		args := candidate.BuildArgs(opts)
+	for i, candidate := range candidates {
 		var buf bytes.Buffer
-		err := runCommandWithEnv(ctx, candidate.Bin, args, nil, nil, &buf, &stderrBuf)
+		err := candidate.Adapter.Execute(ctx, ExecRequest{
+			Bin:      bins[i],
+			Dir:      ".",
+			Opts:     opts,
+			ExtraEnv: nil,
+			Stdin:    nil,
+			Stdout:   &buf,
+			Stderr:   &stderrBuf,
+		})
 		if err == nil {
 			finalStdout.Write(buf.Bytes())
 			break

@@ -7,21 +7,22 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
+	"regexp"
 	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/router"
 )
 
-func runCommandWithKeepalive(ctx context.Context, bin string, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
-	return runCommandWithEnv(ctx, bin, args, nil, stdin, stdout, stderr)
-}
+// testBinKey is the context key existing tests use to substitute a fake CLI
+// binary for every provider. The plain string type is kept for compatibility.
+const testBinKey = "testBin"
 
 // runCommandWithEnv executes a command with optional extra environment variables,
 // anti-stall keepalive newlines, and unthrottled 32KB chunk streaming.
-func runCommandWithEnv(ctx context.Context, bin string, args []string, extraEnv []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
+func runCommandWithEnv(ctx context.Context, dir string, bin string, args []string, extraEnv []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 	cmdExec := exec.CommandContext(ctx, bin, args...)
+	cmdExec.Dir = dir
 	if stdin != nil {
 		cmdExec.Stdin = stdin
 	}
@@ -212,75 +213,18 @@ func parseRawArgs(rawArgs []string) ParsedOptions {
 	return opts
 }
 
-func buildAgyArgs(opts ParsedOptions) []string {
-	args := []string{
-		"--output-format", opts.OutputFormat,
-		"--dangerously-skip-permissions",
-	}
-	if opts.Prompt != "" {
-		args = append(args, "--prompt", opts.Prompt)
-	}
-
-	model := opts.Model
-	effort := opts.Effort
-
-	// Translate Claude models to Gemini equivalents via FallbackPairingMatrix.
-	// Opus -> Gemini 3.1 Pro (high effort), Sonnet -> Gemini 3.8 Flash (medium effort).
-	isClaudeModel := strings.Contains(model, "claude") || strings.Contains(model, "sonnet") || strings.Contains(model, "opus")
-	if isClaudeModel || model == "" {
-		geminiModel, geminiEffort, _ := router.FallbackPairingMatrix(model, effort)
-		model = geminiModel
-		effort = geminiEffort
-	}
-
-	if model != "" {
-		args = append(args, "--model", model)
-	}
-	if effort != "" && model != "" {
-		args = append(args, "--effort", effort)
-	}
-	// Do NOT pass ConversationID: Claude session IDs are invalid for agy.
-	for _, dir := range opts.AddDirs {
-		args = append(args, "--add-dir", dir)
-	}
-	return args
-}
-
-func buildClaudeArgs(opts ParsedOptions) []string {
-	args := []string{
-		"--print",
-		"--output-format", opts.OutputFormat,
-		"--verbose",
-		"--dangerously-skip-permissions",
-	}
-	if strings.Contains(opts.Model, "claude") || strings.Contains(opts.Model, "sonnet") || strings.Contains(opts.Model, "opus") {
-		args = append(args, "--model", opts.Model)
-	}
-	if opts.ConversationID != "" {
-		args = append(args, "--resume", opts.ConversationID)
-	}
-	for _, dir := range opts.AddDirs {
-		args = append(args, "--add-dir", dir)
-	}
-	if opts.Prompt != "" {
-		args = append(args, opts.Prompt)
-	}
-	return args
-}
-
 // providerCandidate represents a single provider in the failover chain.
 type providerCandidate struct {
 	Name     string          // "gemini", "work-claude", "personal-claude"
 	PoolID   router.PoolID   // for quota lock check
-	Bin      string          // binary path
-	BuildArgs func(ParsedOptions) []string
+	Adapter  ProviderAdapter
 	ExtraEnv []string        // e.g. CLAUDE_CONFIG_DIR for work claude
 }
 
 // isPoolLocked returns true if the quota pool is hard-locked or has zero 5-hour headroom.
 func isPoolLocked(pool *router.QuotaPool) bool {
 	if pool == nil {
-		return false // no pool data means we cannot confirm it is locked; allow attempt
+		return false
 	}
 	if pool.IsLocked {
 		return true
@@ -309,23 +253,20 @@ func BuildProviderChain(isWork bool, provider string) []providerCandidate {
 	gemini := providerCandidate{
 		Name:      "gemini",
 		PoolID:    router.PoolGeminiNative,
-		Bin:       home + "/.local/bin/agy",
-		BuildArgs: buildAgyArgs,
+		Adapter:   AgyAdapter{},
 	}
 
 	workClaude := providerCandidate{
 		Name:      "work-claude",
 		PoolID:    router.PoolWorkClaude,
-		Bin:       home + "/.local/bin/claude",
-		BuildArgs: buildClaudeArgs,
+		Adapter:   ClaudeAdapter{},
 		ExtraEnv:  []string{"CLAUDE_CONFIG_DIR=" + home + "/.claude-work"},
 	}
 
 	personalClaude := providerCandidate{
 		Name:      "personal-claude",
 		PoolID:    router.PoolPersonalClaude,
-		Bin:       home + "/.local/bin/claude",
-		BuildArgs: buildClaudeArgs,
+		Adapter:   ClaudeAdapter{},
 	}
 
 	if isWork {
@@ -345,14 +286,20 @@ func BuildProviderChain(isWork bool, provider string) []providerCandidate {
 
 // RunAdapter executes the requested agent provider with chain-based failover.
 // Every invocation re-evaluates quota fresh. No sticky state between runs.
-//
-// The chain is built from (isWork, provider). Each candidate is checked against
-// its quota pool. Locked candidates are skipped. Candidates that fail at runtime
-// are caught, their stdout is swallowed, and the next candidate is tried.
-// Only successful provider output reaches the caller (Paperclip).
 func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, provider string, rawArgs []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
+	var resolve func(ProviderAdapter) (string, error)
+	if testBin, ok := ctx.Value(testBinKey).(string); ok && testBin != "" {
+		resolve = func(ProviderAdapter) (string, error) { return testBin, nil }
+	} else {
+		resolve = NewDefaultResolver().Resolve
+	}
+	return runWithFailover(ctx, cwd, pacerState, provider, rawArgs, stdin, stdout, stderr, resolve)
+}
+
+func runWithFailover(ctx context.Context, cwd string, pacerState *router.PacerState, provider string, rawArgs []string, stdin io.Reader, stdout io.Writer, stderr io.Writer, resolve func(ProviderAdapter) (string, error)) error {
 	opts := parseRawArgs(rawArgs)
 
+	// Buffer stdin once so the fallback CLI receives the same input as the primary.
 	var stdinBytes []byte
 	if stdin != nil {
 		data, err := io.ReadAll(stdin)
@@ -362,13 +309,6 @@ func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, 
 				opts.Prompt = string(data)
 			}
 		}
-	}
-
-	// Check if overridden by test
-	if testBin := ctx.Value("testBin"); testBin != nil {
-		bin := testBin.(string)
-		args := buildAgyArgs(opts)
-		return runCommandWithKeepalive(ctx, bin, args, bytes.NewReader(stdinBytes), stdout, stderr)
 	}
 
 	// Detect work vs personal repo
@@ -411,11 +351,26 @@ func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, 
 		}
 		firstAttempt = false
 
-		args := candidate.BuildArgs(candidateOpts)
 		var buf bytes.Buffer
 		fmt.Fprintf(stderr, "[staypoint-adapter] trying %s...\n", candidate.Name)
 
-		err := runCommandWithEnv(ctx, candidate.Bin, args, candidate.ExtraEnv, bytes.NewReader(stdinBytes), &buf, stderr)
+		bin, err := resolve(candidate.Adapter)
+		if err != nil {
+			fmt.Fprintf(stderr, "[staypoint-adapter] %s failed to resolve (%v), trying next provider...\n", candidate.Name, err)
+			lastErr = err
+			continue
+		}
+
+		err = candidate.Adapter.Execute(ctx, ExecRequest{
+			Bin:      bin,
+			Dir:      cwd,
+			Opts:     candidateOpts,
+			ExtraEnv: candidate.ExtraEnv,
+			Stdin:    bytes.NewReader(stdinBytes),
+			Stdout:   &buf,
+			Stderr:   stderr,
+		})
+
 		if err == nil {
 			// Success: flush buffered output to real stdout
 			_, _ = io.Copy(stdout, &buf)
