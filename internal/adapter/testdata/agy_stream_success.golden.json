@@ -1,0 +1,96 @@
+[
+  {
+    "kind": "init",
+    "session_id": "00000000-0000-4000-8000-0000000a9e01",
+    "model": "gemini-3.8-flash"
+  },
+  {
+    "kind": "other",
+    "session_id": "00000000-0000-4000-8000-0000000a9e01",
+    "status": "DONE",
+    "raw": "step_update:user_input"
+  },
+  {
+    "kind": "other",
+    "session_id": "00000000-0000-4000-8000-0000000a9e01",
+    "status": "DONE",
+    "raw": "step_update:unknown"
+  },
+  {
+    "kind": "usage",
+    "session_id": "00000000-0000-4000-8000-0000000a9e01",
+    "status": "DONE",
+    "usage": {
+      "input_tokens": 34619,
+      "output_tokens": 611,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "thinking_tokens": 550
+    }
+  },
+  {
+    "kind": "tool_use",
+    "session_id": "00000000-0000-4000-8000-0000000a9e01",
+    "tool_name": "view_file",
+    "tool_id": "3",
+    "status": "ACTIVE"
+  },
+  {
+    "kind": "tool_result",
+    "session_id": "00000000-0000-4000-8000-0000000a9e01",
+    "tool_name": "view_file",
+    "tool_id": "3",
+    "status": "DONE"
+  },
+  {
+    "kind": "usage",
+    "session_id": "00000000-0000-4000-8000-0000000a9e01",
+    "status": "DONE",
+    "usage": {
+      "input_tokens": 5258,
+      "output_tokens": 89,
+      "cache_read_tokens": 32662,
+      "cache_creation_tokens": 0,
+      "thinking_tokens": 24
+    }
+  },
+  {
+    "kind": "tool_use",
+    "session_id": "00000000-0000-4000-8000-0000000a9e01",
+    "tool_name": "view_file",
+    "tool_id": "5",
+    "status": "ACTIVE"
+  },
+  {
+    "kind": "tool_result",
+    "session_id": "00000000-0000-4000-8000-0000000a9e01",
+    "tool_name": "view_file",
+    "tool_id": "5",
+    "status": "DONE"
+  },
+  {
+    "kind": "usage",
+    "session_id": "00000000-0000-4000-8000-0000000a9e01",
+    "status": "DONE",
+    "usage": {
+      "input_tokens": 2590,
+      "output_tokens": 243,
+      "cache_read_tokens": 36740,
+      "cache_creation_tokens": 0,
+      "thinking_tokens": 32
+    }
+  },
+  {
+    "kind": "result",
+    "session_id": "00000000-0000-4000-8000-0000000a9e01",
+    "text": "Release artifacts verified.",
+    "status": "SUCCESS",
+    "usage": {
+      "input_tokens": 259829,
+      "output_tokens": 14254,
+      "cache_read_tokens": 1882808,
+      "cache_creation_tokens": 0,
+      "thinking_tokens": 6273
+    }
+  }
+]

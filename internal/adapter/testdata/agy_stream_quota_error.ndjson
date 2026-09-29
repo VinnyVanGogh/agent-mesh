@@ -1,0 +1,5 @@
+{"event":"init","conversation_id":"00000000-0000-4000-8000-0000000a9e02","init":{"cwd":"/work/project","tools":["run_command","view_file","write_to_file"],"permission_mode":"always-proceed"}}
+{"event":"step_update","step_update":{"conversation_id":"00000000-0000-4000-8000-0000000a9e02","step_index":0,"state":"DONE","step_type":"user_input"}}
+{"event":"step_update","step_update":{"conversation_id":"00000000-0000-4000-8000-0000000a9e02","step_index":1,"state":"DONE","step_type":"unknown","duration_seconds":0.000125}}
+{"event":"step_update","step_update":{"conversation_id":"00000000-0000-4000-8000-0000000a9e02","step_index":2,"state":"DONE","step_type":"error_message"}}
+{"event":"result","result":{"conversation_id":"00000000-0000-4000-8000-0000000a9e02","status":"ERROR","response":"","error":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h57m47s.","duration_seconds":23.339825,"num_turns":1,"usage":{"input_tokens":0,"output_tokens":0,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":0}}}

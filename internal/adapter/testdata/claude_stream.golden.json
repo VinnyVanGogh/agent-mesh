@@ -1,0 +1,88 @@
+[
+  {
+    "kind": "other",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "raw": "system:hook_started"
+  },
+  {
+    "kind": "other",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "raw": "system:hook_started"
+  },
+  {
+    "kind": "other",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "raw": "system:hook_started"
+  },
+  {
+    "kind": "other",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "raw": "system:hook_started"
+  },
+  {
+    "kind": "init",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "model": "claude-haiku-4-5-20251001"
+  },
+  {
+    "kind": "other",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "raw": "system:thinking_tokens"
+  },
+  {
+    "kind": "other",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "raw": "system:thinking_tokens"
+  },
+  {
+    "kind": "other",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "raw": "system:thinking_tokens"
+  },
+  {
+    "kind": "thinking",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "model": "claude-haiku-4-5-20251001"
+  },
+  {
+    "kind": "tool_use",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "model": "claude-haiku-4-5-20251001",
+    "tool_name": "Bash",
+    "tool_id": "toolu_01Xffa89zoLuGLnk68njQmF4"
+  },
+  {
+    "kind": "other",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "raw": "rate_limit_event"
+  },
+  {
+    "kind": "tool_result",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "tool_id": "toolu_01Xffa89zoLuGLnk68njQmF4"
+  },
+  {
+    "kind": "thinking",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "model": "claude-haiku-4-5-20251001"
+  },
+  {
+    "kind": "text",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "model": "claude-haiku-4-5-20251001",
+    "text": "done"
+  },
+  {
+    "kind": "result",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "text": "done",
+    "status": "success",
+    "usage": {
+      "input_tokens": 18,
+      "output_tokens": 355,
+      "cache_read_tokens": 56733,
+      "cache_creation_tokens": 23169,
+      "thinking_tokens": 272
+    }
+  }
+]

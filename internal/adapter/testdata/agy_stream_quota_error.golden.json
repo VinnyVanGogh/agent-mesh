@@ -1,0 +1,38 @@
+[
+  {
+    "kind": "init",
+    "session_id": "00000000-0000-4000-8000-0000000a9e02"
+  },
+  {
+    "kind": "other",
+    "session_id": "00000000-0000-4000-8000-0000000a9e02",
+    "status": "DONE",
+    "raw": "step_update:user_input"
+  },
+  {
+    "kind": "other",
+    "session_id": "00000000-0000-4000-8000-0000000a9e02",
+    "status": "DONE",
+    "raw": "step_update:unknown"
+  },
+  {
+    "kind": "error",
+    "session_id": "00000000-0000-4000-8000-0000000a9e02",
+    "status": "DONE",
+    "is_error": true
+  },
+  {
+    "kind": "result",
+    "session_id": "00000000-0000-4000-8000-0000000a9e02",
+    "status": "ERROR",
+    "is_error": true,
+    "error": "Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 1h57m47s.",
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "thinking_tokens": 0
+    }
+  }
+]
