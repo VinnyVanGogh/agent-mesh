@@ -96,6 +96,10 @@ Staypoint eliminates these pain points with a single, zero-dependency Go platfor
 
 ---
 
+## Provider Access Policy (BYOC)
+
+Staypoint only drives the AI CLIs you have installed yourself, signed in with your own accounts. It never pools, proxies, shares, or resells provider accounts or credentials, in any tier or configuration. Decisions and measured baselines for the native orchestrator live in [`docs/ORCHESTRATOR.md`](docs/ORCHESTRATOR.md).
+
 ## Key Features
 
 ### ⏱️ Agent Time Machine (Micro-Checkpoints & Instant Undo/Redo)

@@ -24,6 +24,10 @@ When launching external tools or agent runtimes, Staypoint resolves binaries usi
 
 Ephemeral micro-checkpoints are stored in the repository object database under `refs/staypoint/checkpoints/` using an isolated index file (`GIT_INDEX_FILE=.git/staypoint_index`). Checkpoints are not pushed to remote origins during normal `git push` operations because standard push configurations only track `refs/heads/*`.
 
+### Bring Your Own CLI (BYOC) Policy
+
+Staypoint launches only locally installed, user-owned agent CLIs authenticated with the user's own accounts. It does not pool, proxy, relay, or resell provider accounts, API keys, or OAuth tokens, and it never hosts inference or shares credentials between users, in any tier. Credentials stay with the provider CLI on the user's machine.
+
 ---
 
 ## 2. Reporting a Vulnerability
