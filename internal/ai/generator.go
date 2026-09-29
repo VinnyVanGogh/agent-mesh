@@ -35,8 +35,34 @@ type GenerationResult struct {
 	OutputTokens     int
 	CachedTokens     int
 	EstimatedCostUSD float64
+	// Unpriced marks a turn that made no billable API call (local heuristic). The
+	// telemetry block must render it as unpriced rather than as a real $0 cost.
+	Unpriced         bool
+	ReferenceCostUSD float64 // what the same tokens would cost on ReferenceModel
+	ReferenceModel   string
 	FallbackUsed     bool
 	RawResponse      string
+}
+
+// EstimateHeuristicTokens approximates token counts for the local heuristic
+// engine at ~4 characters per token for the prompt it would have sent, plus a
+// fixed synthesized-task output size.
+func EstimateHeuristicTokens(prompt string) (in, out int) {
+	return (len(prompt) + 3) / 4, heuristicOutputTokens
+}
+
+const heuristicOutputTokens = 120
+
+// FormatCost renders the turn cost line value: a priced dollar amount, or an
+// explicit "unpriced" with the reference estimate for non-billable turns.
+func (r *GenerationResult) FormatCost() string {
+	if !r.Unpriced {
+		return fmt.Sprintf("$%.6f USD", r.EstimatedCostUSD)
+	}
+	if r.ReferenceCostUSD > 0 {
+		return fmt.Sprintf("unpriced (local heuristic, no API billed; ~$%.6f USD if run on %s)", r.ReferenceCostUSD, r.ReferenceModel)
+	}
+	return "unpriced (local heuristic, no API billed)"
 }
 
 // GeneratorConfig configures model endpoints, keys, and timeout behaviors.
@@ -226,13 +252,20 @@ func (g *TaskGenerator) GenerateTask(ctx context.Context, comment string, projec
 
 	// 3. If both remote APIs fail or are unconfigured, use deterministic heuristic generator
 	heuristicTask := g.GenerateHeuristicTask(comment)
+	inTokens, outTokens := EstimateHeuristicTokens(prompt)
 	return &GenerationResult{
-		Task:             heuristicTask,
-		Model:            "heuristic-fallback",
-		InputTokens:      len(strings.Fields(comment)),
-		OutputTokens:     120,
-		CachedTokens:     0,
+		Task:         heuristicTask,
+		Model:        "heuristic-fallback",
+		InputTokens:  inTokens,
+		OutputTokens: outTokens,
+		CachedTokens: 0,
+		// No API call is billed, so the real cost is zero. Flag it as unpriced and
+		// carry the reference cost the same tokens would have incurred on the
+		// primary model so the report never shows a bare $0.000000.
 		EstimatedCostUSD: 0.0,
+		Unpriced:         true,
+		ReferenceCostUSD: CalculateCost(g.cfg.GeminiModel, inTokens, outTokens, 0),
+		ReferenceModel:   g.cfg.GeminiModel,
 		FallbackUsed:     true,
 		RawResponse:      "Synthesized via StayPoint local heuristic engine (remote APIs unavailable: Gemini: " + geminiErr.Error() + "; Claude: " + claudeErr.Error() + ")",
 	}, nil

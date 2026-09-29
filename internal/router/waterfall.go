@@ -34,6 +34,9 @@ type RouteOptions struct {
 	LastUsedTool          string // "claude", "agy", "gemini"
 	PreferredModel        string // e.g. "opus", "sonnet", "claude-opus-5", "claude-sonnet-4-6"
 	PreferredEffort       string // e.g. "high", "medium", "low"
+	HighPriority          bool   // task is high priority: UIOLI routing selects the top-tier Claude model
+	UIOLI                 UIOLIConfig
+	Now                   time.Time // clock override for tests; zero means time.Now()
 }
 
 type RouteDecision struct {
@@ -382,6 +385,23 @@ func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOp
 		decision.Command = "claude"
 		decision.Reason = reason
 		return decision, nil
+	}
+
+	now := opts.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+
+	// Priority 0 (use-it-or-lose-it): near the weekly reset with unspent personal
+	// Claude quota, spend it rather than let it expire. Beats balance/continuity,
+	// but not an explicit user preference for Antigravity.
+	if claudeOk && opts.PreferredPersonalTool != "agy" && opts.PreferredPersonalTool != "gemini" {
+		if u := poolPersonal.UIOLIPressure(now, opts.UIOLI); u.Active {
+			if opts.PreferredModel == "" && opts.HighPriority {
+				opts.PreferredModel = UIOLIHighPriorityModel
+			}
+			return routeToClaude("Personal repo: " + u.describe() + " - preferring Claude Code over Gemini")
+		}
 	}
 
 	// Priority 1: User explicitly configured a preferred personal tool

@@ -26,6 +26,10 @@ type QuotaWindow struct {
 	RemainingPct float64   `json:"remaining_pct"`
 	ResetsAt     time.Time `json:"resets_at"`
 	IsLocked     bool      `json:"is_locked"`
+	// Known is false when no source reported this window; UsedPct/RemainingPct
+	// are then optimistic defaults, not measurements, and must not be displayed
+	// as data or used for routing pressure.
+	Known bool `json:"known"`
 }
 
 type QuotaPool struct {
@@ -59,15 +63,20 @@ type rawStateJSON struct {
 		ResetTimeISO string  `json:"reset_time_iso"`
 		DetectedAt   string  `json:"detected_at"`
 	} `json:"lockouts"`
-	Quotas map[string]struct {
-		FiveHourUsed      float64 `json:"five_hour_used"`
-		FiveHourRemaining float64 `json:"five_hour_remaining"`
-		FiveHourResetsAt  float64 `json:"five_hour_resets_at"`
-		WeeklyUsed        float64 `json:"weekly_used"`
-		WeeklyRemaining   float64 `json:"weekly_remaining"`
-		WeeklyResetsAt    float64 `json:"weekly_resets_at"`
-		LastUpdated       string  `json:"last_updated"`
-	} `json:"quotas"`
+	Quotas map[string]rawQuota `json:"quotas"`
+}
+
+// rawQuota uses pointers so a window the poller never reported (e.g. the
+// personal Claude entry carries only five_hour_* keys) is distinguishable from
+// a genuine 0% remaining.
+type rawQuota struct {
+	FiveHourUsed      *float64 `json:"five_hour_used"`
+	FiveHourRemaining *float64 `json:"five_hour_remaining"`
+	FiveHourResetsAt  float64  `json:"five_hour_resets_at"`
+	WeeklyUsed        *float64 `json:"weekly_used"`
+	WeeklyRemaining   *float64 `json:"weekly_remaining"`
+	WeeklyResetsAt    float64  `json:"weekly_resets_at"`
+	LastUpdated       string   `json:"last_updated"`
 }
 
 type rawSampleJSON struct {
@@ -169,18 +178,18 @@ func LoadPacerState() (*PacerState, error) {
 
 	// Apply quotas from state.json
 	if q, ok := stateData.Quotas["Gemini"]; ok {
-		applyStateQuota(state.Pools[PoolGeminiNative], q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt, q.LastUpdated)
+		applyStateQuota(state.Pools[PoolGeminiNative], q)
 	}
 	if q, ok := stateData.Quotas["Antigravity 3P"]; ok {
-		applyStateQuota(state.Pools[Pool3PClaude], q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt, q.LastUpdated)
+		applyStateQuota(state.Pools[Pool3PClaude], q)
 	}
 	if q, ok := stateData.Quotas["Claude (Personal)"]; ok {
-		applyStateQuota(state.Pools[PoolPersonalClaude], q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt, q.LastUpdated)
+		applyStateQuota(state.Pools[PoolPersonalClaude], q)
 	} else if q, ok := stateData.Quotas["Claude"]; ok {
-		applyStateQuota(state.Pools[PoolPersonalClaude], q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt, q.LastUpdated)
+		applyStateQuota(state.Pools[PoolPersonalClaude], q)
 	}
 	if q, ok := stateData.Quotas["Claude (Work)"]; ok {
-		applyStateQuota(state.Pools[PoolWorkClaude], q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt, q.LastUpdated)
+		applyStateQuota(state.Pools[PoolWorkClaude], q)
 	}
 
 	// 2. Read latest statusline-samples.ndjson (fast tail read)
@@ -225,11 +234,13 @@ func LoadPacerState() (*PacerState, error) {
 		if !pool.FiveHour.ResetsAt.IsZero() && now.After(pool.FiveHour.ResetsAt) {
 			pool.FiveHour.UsedPct = 0.0
 			pool.FiveHour.RemainingPct = 100.0
+			pool.FiveHour.Known = true
 			pool.FiveHour.IsLocked = false
 		}
 		if !pool.Weekly.ResetsAt.IsZero() && now.After(pool.Weekly.ResetsAt) {
 			pool.Weekly.UsedPct = 0.0
 			pool.Weekly.RemainingPct = 100.0
+			pool.Weekly.Known = true
 			pool.Weekly.IsLocked = false
 		}
 
@@ -279,24 +290,64 @@ func LoadPacerState() (*PacerState, error) {
 	return state, nil
 }
 
-func applyStateQuota(p *QuotaPool, used5h, rem5h, resets5h, usedW, remW, resetsW float64, updatedISO string) {
-	p.FiveHour.UsedPct = used5h
-	p.FiveHour.RemainingPct = rem5h
-	if resets5h > 0 {
-		p.FiveHour.ResetsAt = time.Unix(int64(resets5h), 0)
-	}
+func applyStateQuota(p *QuotaPool, q rawQuota) {
+	applyWindow(&p.FiveHour, q.FiveHourUsed, q.FiveHourRemaining, q.FiveHourResetsAt)
+	applyWindow(&p.Weekly, q.WeeklyUsed, q.WeeklyRemaining, q.WeeklyResetsAt)
 
-	p.Weekly.UsedPct = usedW
-	p.Weekly.RemainingPct = remW
-	if resetsW > 0 {
-		p.Weekly.ResetsAt = time.Unix(int64(resetsW), 0)
-	}
-
-	if updatedISO != "" {
-		if t, err := time.Parse(time.RFC3339, updatedISO); err == nil {
+	if q.LastUpdated != "" {
+		if t, err := time.Parse(time.RFC3339, q.LastUpdated); err == nil {
 			p.LastUpdated = t
 		}
 	}
+}
+
+// applyWindow fills one window from whichever of used/remaining was reported,
+// deriving the other. When neither is present the window stays Known=false.
+func applyWindow(w *QuotaWindow, used, remaining *float64, resetsAt float64) {
+	switch {
+	case used != nil && remaining != nil:
+		w.UsedPct, w.RemainingPct, w.Known = *used, *remaining, true
+	case used != nil:
+		w.UsedPct, w.RemainingPct, w.Known = *used, math.Max(0, 100.0-*used), true
+	case remaining != nil:
+		w.UsedPct, w.RemainingPct, w.Known = math.Max(0, 100.0-*remaining), *remaining, true
+	}
+	if resetsAt > 0 {
+		w.ResetsAt = time.Unix(int64(resetsAt), 0)
+	}
+}
+
+// FormatPct renders a window's used or remaining percentage, or "n/a" when the
+// window was never reported so a missing reading is not shown as "0%".
+func (w QuotaWindow) FormatPct(remaining bool, prec int) string {
+	if !w.Known {
+		return "n/a"
+	}
+	v := w.UsedPct
+	if remaining {
+		v = w.RemainingPct
+	}
+	return fmt.Sprintf("%.*f%%", prec, v)
+}
+
+// FormatReset renders a reset time relative to now, e.g. "today 4:00 PM",
+// "tomorrow 9:00 AM" or "Fri 4:00 PM". Empty when the reset time is unknown.
+func FormatReset(t, now time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	t = t.In(now.Location())
+	clock := t.Format("3:04 PM")
+	ty, tm, td := t.Date()
+	ny, nm, nd := now.Date()
+	if ty == ny && tm == nm && td == nd {
+		return "today " + clock
+	}
+	ty, tm, td = now.AddDate(0, 0, 1).Date()
+	if t.Year() == ty && t.Month() == tm && t.Day() == td {
+		return "tomorrow " + clock
+	}
+	return t.Format("Mon ") + clock
 }
 
 // readSamplesTail performs a fast reverse-seek read on statusline-samples.ndjson
@@ -354,6 +405,7 @@ func readSamplesTail(path string, state *PacerState) {
 			p := state.Pools[PoolWorkClaude]
 			sampleTime, _ := time.Parse(time.RFC3339, sample.Timestamp)
 			if p.LastUpdated.IsZero() || sampleTime.After(p.LastUpdated) {
+				p.FiveHour.Known, p.Weekly.Known = true, true
 				p.FiveHour.UsedPct = sample.FiveHourPct
 				p.FiveHour.RemainingPct = math.Max(0, 100.0-sample.FiveHourPct)
 				if sample.FiveHourResets > 0 {
@@ -365,6 +417,19 @@ func readSamplesTail(path string, state *PacerState) {
 					p.Weekly.ResetsAt = time.Unix(int64(sample.SevenDayResets), 0)
 				}
 				p.LastUpdated = sampleTime
+			} else {
+				if !p.Weekly.Known && sample.SevenDayResets > 0 && time.Unix(int64(sample.SevenDayResets), 0).After(time.Now()) {
+					p.Weekly.Known = true
+					p.Weekly.UsedPct = sample.SevenDayPct
+					p.Weekly.RemainingPct = math.Max(0, 100.0-sample.SevenDayPct)
+					p.Weekly.ResetsAt = time.Unix(int64(sample.SevenDayResets), 0)
+				}
+				if !p.FiveHour.Known && sample.FiveHourResets > 0 && time.Unix(int64(sample.FiveHourResets), 0).After(time.Now()) {
+					p.FiveHour.Known = true
+					p.FiveHour.UsedPct = sample.FiveHourPct
+					p.FiveHour.RemainingPct = math.Max(0, 100.0-sample.FiveHourPct)
+					p.FiveHour.ResetsAt = time.Unix(int64(sample.FiveHourResets), 0)
+				}
 			}
 			workFound = true
 		} else if isPersonal && !personalFound {
@@ -372,6 +437,7 @@ func readSamplesTail(path string, state *PacerState) {
 			sampleTime, _ := time.Parse(time.RFC3339, sample.Timestamp)
 			// Only override if newer or if state.json was missing data
 			if p.LastUpdated.IsZero() || sampleTime.After(p.LastUpdated) {
+				p.FiveHour.Known, p.Weekly.Known = true, true
 				p.FiveHour.UsedPct = sample.FiveHourPct
 				p.FiveHour.RemainingPct = math.Max(0, 100.0-sample.FiveHourPct)
 				if sample.FiveHourResets > 0 {
@@ -383,6 +449,19 @@ func readSamplesTail(path string, state *PacerState) {
 					p.Weekly.ResetsAt = time.Unix(int64(sample.SevenDayResets), 0)
 				}
 				p.LastUpdated = sampleTime
+			} else {
+				if !p.Weekly.Known && sample.SevenDayResets > 0 && time.Unix(int64(sample.SevenDayResets), 0).After(time.Now()) {
+					p.Weekly.Known = true
+					p.Weekly.UsedPct = sample.SevenDayPct
+					p.Weekly.RemainingPct = math.Max(0, 100.0-sample.SevenDayPct)
+					p.Weekly.ResetsAt = time.Unix(int64(sample.SevenDayResets), 0)
+				}
+				if !p.FiveHour.Known && sample.FiveHourResets > 0 && time.Unix(int64(sample.FiveHourResets), 0).After(time.Now()) {
+					p.FiveHour.Known = true
+					p.FiveHour.UsedPct = sample.FiveHourPct
+					p.FiveHour.RemainingPct = math.Max(0, 100.0-sample.FiveHourPct)
+					p.FiveHour.ResetsAt = time.Unix(int64(sample.FiveHourResets), 0)
+				}
 			}
 			personalFound = true
 		}
