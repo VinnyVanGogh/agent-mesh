@@ -67,6 +67,16 @@ func TestParseRawArgs(t *testing.T) {
 	if hasGeminiModel {
 		t.Errorf("Claude args must not include Gemini model names")
 	}
+
+	// Test double-dash delimiter stops flag parsing
+	delimiterArgs := []string{"--approval-mode", "yolo", "--", "--model", "foo", "hello world"}
+	delimOpts := parseRawArgs(delimiterArgs)
+	if delimOpts.Prompt != "--model foo hello world" {
+		t.Errorf("expected prompt after -- to be '--model foo hello world', got %q", delimOpts.Prompt)
+	}
+	if delimOpts.Model != "" {
+		t.Errorf("expected model to remain empty after --, got %q", delimOpts.Model)
+	}
 }
 
 func TestAdapterKeepalive(t *testing.T) {
@@ -93,7 +103,7 @@ echo "done"
 	pacerState := &router.PacerState{}
 
 	start := time.Now()
-	err = RunAdapter(ctx, ".", pacerState, "gemini", []string{"--model", "google/gemini-3.8-flash"}, &stdout, &stderr)
+	err = RunAdapter(ctx, ".", pacerState, "gemini", []string{"--model", "google/gemini-3.8-flash"}, nil, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("RunAdapter failed: %v", err)
 	}
@@ -133,7 +143,7 @@ exit 1
 	var stdout, stderr bytes.Buffer
 	pacerState := &router.PacerState{}
 
-	err = RunAdapter(ctx, ".", pacerState, "gemini", []string{"--model", "google/gemini-3.8-flash"}, &stdout, &stderr)
+	err = RunAdapter(ctx, ".", pacerState, "gemini", []string{"--model", "google/gemini-3.8-flash"}, nil, &stdout, &stderr)
 	if err == nil {
 		t.Errorf("Expected error from failing script")
 	}
@@ -163,7 +173,7 @@ done
 	pacerState := &router.PacerState{}
 
 	start := time.Now()
-	err = RunAdapter(ctx, ".", pacerState, "gemini", []string{"--model", "google/gemini-3.8-flash"}, &stdout, &stderr)
+	err = RunAdapter(ctx, ".", pacerState, "gemini", []string{"--model", "google/gemini-3.8-flash"}, nil, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("RunAdapter failed: %v", err)
 	}
@@ -176,5 +186,103 @@ done
 	out := stdout.String()
 	if !strings.Contains(out, "line 100") {
 		t.Errorf("Expected burst output to complete, got %d bytes", len(out))
+	}
+}
+
+func TestClaudeAdapterWithStdinPrompt(t *testing.T) {
+	rawArgs := []string{
+		"--print",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--dangerously-skip-permissions",
+		"--add-dir", "/tmp/project",
+	}
+
+	opts := parseRawArgs(rawArgs)
+	if opts.Prompt != "" {
+		t.Errorf("Expected empty prompt initially from CLI flags, got %q", opts.Prompt)
+	}
+
+	stdinPrompt := "Review PR #76 and verify tests"
+	stdin := strings.NewReader(stdinPrompt)
+
+	script := `#!/bin/sh
+cat
+`
+	f, err := os.CreateTemp("", "dummy-claude-*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	f.WriteString(script)
+	f.Close()
+	os.Chmod(f.Name(), 0755)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ctx = context.WithValue(ctx, "testBin", f.Name())
+
+	var stdout, stderr bytes.Buffer
+	pacerState := &router.PacerState{}
+
+	err = RunAdapter(ctx, ".", pacerState, "claude", rawArgs, stdin, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("RunAdapter failed: %v", err)
+	}
+
+	claudeArgs := buildClaudeArgs(opts)
+	// Claude args should not contain empty string after --print
+	for i, arg := range claudeArgs {
+		if arg == "--print" && i+1 < len(claudeArgs) && claudeArgs[i+1] == "" {
+			t.Errorf("Claude args contains empty string after --print: %v", claudeArgs)
+		}
+	}
+}
+
+func TestAdapterFailoverRouting(t *testing.T) {
+	now := time.Now()
+	// Scenario: Gemini is off pace, but Claude is LOCKED.
+	// Adapter must NOT fail over to Claude, but stay on Gemini.
+	pacerState := &router.PacerState{
+		Pools: map[router.PoolID]*router.QuotaPool{
+			router.PoolGeminiNative: {
+				ID: router.PoolGeminiNative,
+				Weekly: router.QuotaWindow{
+					UsedPct:  50.0,
+					ResetsAt: now.Add(6 * 24 * time.Hour), // off pace: 50% in 1 day
+				},
+			},
+			router.PoolPersonalClaude: {
+				ID:       router.PoolPersonalClaude,
+				IsLocked: true,
+			},
+		},
+	}
+
+	script := `#!/bin/sh
+echo "ran gemini"
+`
+	f, err := os.CreateTemp("", "dummy-routing-*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	f.WriteString(script)
+	f.Close()
+	os.Chmod(f.Name(), 0755)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ctx = context.WithValue(ctx, "testBin", f.Name())
+
+	var stdout, stderr bytes.Buffer
+	err = RunAdapter(ctx, ".", pacerState, "gemini", []string{"--prompt", "test"}, nil, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("RunAdapter failed: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "ran gemini") {
+		t.Errorf("Expected gemini to execute when claude is locked, got %q", stdout.String())
 	}
 }

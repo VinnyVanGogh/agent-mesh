@@ -11,7 +11,7 @@ import (
 
 func BenchmarkStatusline(b *testing.B) {
 	payload := `{"model":{"display_name":"Claude 3.7 Sonnet"},"workspace":{"current_dir":"/path/to/project-mesh"},"cost":{"total_cost_usd":0.43},"context_window":{"used_percentage":18,"remaining_tokens":164000}}`
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		r := bytes.NewReader([]byte(payload))

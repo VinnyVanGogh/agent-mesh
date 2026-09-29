@@ -5,9 +5,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
+	"github.com/spf13/cobra"
 )
 
 var breakerCmd = &cobra.Command{
@@ -83,6 +83,9 @@ var breakerResetCmd = &cobra.Command{
 
 func cleanGitStatusFile(line string) string {
 	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "??") {
+		return ""
+	}
 	if len(line) >= 3 {
 		idx := strings.Index(line, " ")
 		if idx != -1 {
@@ -91,7 +94,6 @@ func cleanGitStatusFile(line string) string {
 	}
 	return line
 }
-
 
 func init() {
 	rootCmd.AddCommand(breakerCmd)

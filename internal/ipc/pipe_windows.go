@@ -49,9 +49,9 @@ func (c *pipeConn) Write(b []byte) (int, error) {
 	return int(n), nil
 }
 
-func (c *pipeConn) Close() error               { return windows.CloseHandle(c.handle) }
-func (c *pipeConn) LocalAddr() net.Addr        { return pipeAddr{} }
-func (c *pipeConn) RemoteAddr() net.Addr       { return pipeAddr{} }
+func (c *pipeConn) Close() error                     { return windows.CloseHandle(c.handle) }
+func (c *pipeConn) LocalAddr() net.Addr              { return pipeAddr{} }
+func (c *pipeConn) RemoteAddr() net.Addr             { return pipeAddr{} }
 func (c *pipeConn) SetDeadline(time.Time) error      { return nil }
 func (c *pipeConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *pipeConn) SetWriteDeadline(time.Time) error { return nil }

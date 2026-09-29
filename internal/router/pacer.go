@@ -71,14 +71,14 @@ type rawStateJSON struct {
 }
 
 type rawSampleJSON struct {
-	Timestamp       string  `json:"ts"`
-	SessionID       string  `json:"session_id"`
-	ModelID         string  `json:"model_id"`
-	FiveHourPct     float64 `json:"five_hour_pct"`
-	SevenDayPct     float64 `json:"seven_day_pct"`
-	FiveHourResets  float64 `json:"five_hour_resets_at"`
-	SevenDayResets  float64 `json:"seven_day_resets_at"`
-	AccountEmail    string  `json:"account_email"`
+	Timestamp      string  `json:"ts"`
+	SessionID      string  `json:"session_id"`
+	ModelID        string  `json:"model_id"`
+	FiveHourPct    float64 `json:"five_hour_pct"`
+	SevenDayPct    float64 `json:"seven_day_pct"`
+	FiveHourResets float64 `json:"five_hour_resets_at"`
+	SevenDayResets float64 `json:"seven_day_resets_at"`
+	AccountEmail   string  `json:"account_email"`
 }
 
 type rawEstimatesJSON struct {
@@ -144,20 +144,20 @@ func LoadPacerState() (*PacerState, error) {
 		Weekly:     QuotaWindow{RemainingPct: 100},
 	}
 	state.Pools[PoolGeminiNative] = &QuotaPool{
-		ID:          PoolGeminiNative,
-		Name:        "Gemini Native",
-		BurnRate5h:  geminiBurn5h,
-		BurnRateW:   geminiBurnW,
-		FiveHour:    QuotaWindow{RemainingPct: 100},
-		Weekly:      QuotaWindow{RemainingPct: 100},
+		ID:         PoolGeminiNative,
+		Name:       "Gemini Native",
+		BurnRate5h: geminiBurn5h,
+		BurnRateW:  geminiBurnW,
+		FiveHour:   QuotaWindow{RemainingPct: 100},
+		Weekly:     QuotaWindow{RemainingPct: 100},
 	}
 	state.Pools[Pool3PClaude] = &QuotaPool{
-		ID:          Pool3PClaude,
-		Name:        "Antigravity 3P",
-		BurnRate5h:  claudeBurn5h,
-		BurnRateW:   claudeBurnW,
-		FiveHour:    QuotaWindow{RemainingPct: 100},
-		Weekly:      QuotaWindow{RemainingPct: 100},
+		ID:         Pool3PClaude,
+		Name:       "Antigravity 3P",
+		BurnRate5h: claudeBurn5h,
+		BurnRateW:  claudeBurnW,
+		FiveHour:   QuotaWindow{RemainingPct: 100},
+		Weekly:     QuotaWindow{RemainingPct: 100},
 	}
 
 	// 1. Read state.json
@@ -410,4 +410,27 @@ func FormatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh %dm", hours, mins)
 	}
 	return fmt.Sprintf("%dm", mins)
+}
+
+// OnWeeklyPace reports whether the pool's weekly burn will last until its reset.
+// Mirrors calculate_pacing in rate-limit-notifier.py: on pace when burn rate
+// (%/day so far) <= sustainable budget (%/day to reset) or projected exhaustion
+// falls after the reset. An exhausted weekly window is never on pace.
+func (p *QuotaPool) OnWeeklyPace(now time.Time) bool {
+	used := p.Weekly.UsedPct
+	remaining := math.Max(0, 100.0-used)
+	if remaining <= 0 {
+		return false
+	}
+	if used <= 0 {
+		return true
+	}
+	daysLeft := 5.0 // fallback when the reset time is missing, same as the notifier
+	if p.Weekly.ResetsAt.After(now) {
+		daysLeft = math.Max(0.01, p.Weekly.ResetsAt.Sub(now).Hours()/24.0)
+	}
+	daysElapsed := math.Max(0.1, 7.0-daysLeft)
+	burn := used / daysElapsed
+	budget := remaining / daysLeft
+	return burn <= budget || remaining/burn >= daysLeft
 }

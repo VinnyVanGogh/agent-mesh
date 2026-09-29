@@ -7,8 +7,8 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/condenser"
+	"github.com/spf13/cobra"
 )
 
 var condenseCmd = &cobra.Command{
@@ -64,7 +64,6 @@ var condenseCmd = &cobra.Command{
 		fmt.Print(res.Condensed)
 	},
 }
-
 
 func init() {
 	rootCmd.AddCommand(condenseCmd)

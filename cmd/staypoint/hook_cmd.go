@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/router"
 	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 	"github.com/VinnyVanGogh/staypoint/internal/wire"
+	"github.com/spf13/cobra"
 )
 
 var hookCmd = &cobra.Command{
@@ -265,12 +265,21 @@ func handleHookPrompt() {
 			return false
 		}
 
-		if checkPool(poolPersonal) {
-			triggeredPool = poolPersonal
-		} else if checkPool(pool3P) {
-			triggeredPool = pool3P
-		} else if checkPool(poolWork) {
-			triggeredPool = poolWork
+		if isAntigravity {
+			// When running in Antigravity (Gemini), only check Gemini Native quota.
+			poolGemini := pacerState.Pools[router.PoolGeminiNative]
+			if checkPool(poolGemini) {
+				triggeredPool = poolGemini
+			}
+		} else {
+			// When running in Claude Code, check Claude pools.
+			if checkPool(poolPersonal) {
+				triggeredPool = poolPersonal
+			} else if checkPool(pool3P) {
+				triggeredPool = pool3P
+			} else if checkPool(poolWork) {
+				triggeredPool = poolWork
+			}
 		}
 
 		if triggeredPool != nil {
@@ -282,22 +291,29 @@ func handleHookPrompt() {
 				}
 			}
 
+			targetModel := "gemini"
+			targetDisplay := "Gemini (/model gemini-3.8-flash-high or open Antigravity 'agy' and paste)"
+			if isAntigravity {
+				targetModel = "claude"
+				targetDisplay = "Claude Code (/model claude-sonnet-4-6)"
+			}
+
 			if shouldNotify {
 				_ = os.WriteFile(debounceFile, []byte(fmt.Sprintf("%d", time.Now().Unix())), 0644)
 				_, _ = meshContext.GenerateHandoff(meshContext.HandoffOptions{
-					TargetModel:       "gemini",
-					ImmediateNextStep: fmt.Sprintf("Approaching quota limit: %s. Resume session seamlessly in Gemini.", warningReason),
+					TargetModel:       targetModel,
+					ImmediateNextStep: fmt.Sprintf("Approaching quota limit: %s. Resume session seamlessly in %s.", warningReason, targetModel),
 					Directory:         cwd,
 					DB:                dbConn,
 				})
 
 				telemetry.SendNotification(
 					"[Staypoint] Quota Limit Warning (15% left)",
-					fmt.Sprintf("%s %s. Handoff staged in clipboard. Switch to Gemini (/model gemini-3.8-flash-high or open agy and paste).", triggeredPool.Name, warningReason),
+					fmt.Sprintf("%s %s. Handoff staged in clipboard. Switch to %s.", triggeredPool.Name, warningReason, targetDisplay),
 				)
 			}
 
-			notices = append(notices, fmt.Sprintf("⚠️ [STAYPOINT QUOTA NOTICE]: %s %s. Staypoint has pre-staged a zero-token context handoff snapshot in your system clipboard and /tmp/ai-handoff.md. Remind the user to prepare to switch to Gemini (/model gemini-3.8-flash-high or open Antigravity 'agy' and paste) before running out of turns.", triggeredPool.Name, warningReason))
+			notices = append(notices, fmt.Sprintf("⚠️ [STAYPOINT QUOTA NOTICE]: %s %s. Staypoint has pre-staged a zero-token context handoff snapshot in your system clipboard and /tmp/ai-handoff.md. Remind the user to prepare to switch to %s before running out of turns.", triggeredPool.Name, warningReason, targetDisplay))
 		}
 	}
 

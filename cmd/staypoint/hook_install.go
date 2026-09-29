@@ -179,7 +179,7 @@ func installPowerShellHook(homeDir, staypointBin string) {
 
 	_ = os.MkdirAll(profileDir, 0755)
 
-	// The hook snippet to inject — idempotent check prevents double-install.
+	// The hook snippet to inject: idempotent check prevents double-install.
 	snippet := `
 # --- Staypoint hook (auto-installed by staypoint hook install) ---
 if (-not (Get-Variable -Name _StaypointHookLoaded -Scope Global -ErrorAction SilentlyContinue)) {

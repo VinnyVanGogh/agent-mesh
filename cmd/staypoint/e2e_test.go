@@ -226,6 +226,31 @@ func TestE2E_Task(t *testing.T) {
 	}
 }
 
+func TestE2E_TaskCreate(t *testing.T) {
+	repoDir, homeDir := setupE2ETestRepo(t)
+
+	// Create dynamic task via CLI with dry-run
+	createOut, err := execStaypoint(t, repoDir, homeDir, "", "task", "create", "Fix token telemetry rounding bug", "--dry-run")
+	if err != nil {
+		t.Fatalf("task create failed: %v, out: %s", err, createOut)
+	}
+	if !strings.Contains(createOut, "Inference Telemetry & Cost Engine") {
+		t.Errorf("expected telemetry output, got: %s", createOut)
+	}
+	if !strings.Contains(createOut, "Fleet Status & Pacing Engine") {
+		t.Errorf("expected pacing status output, got: %s", createOut)
+	}
+
+	// Verify local staypoint.db indexed the task
+	listOut, err := execStaypoint(t, repoDir, homeDir, "", "task", "list")
+	if err != nil {
+		t.Fatalf("task list failed: %v, out: %s", err, listOut)
+	}
+	if !strings.Contains(listOut, "rounding bug") {
+		t.Errorf("expected task in list output, got: %s", listOut)
+	}
+}
+
 func TestE2E_HandoffList(t *testing.T) {
 	repoDir, homeDir := setupE2ETestRepo(t)
 

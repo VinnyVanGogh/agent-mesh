@@ -9,4 +9,10 @@ docs/DOSSIER.md
 .plan/
 .dist/
 build-dist/
-
+.worktrees/
+dist/
+/staypoint
+/staypointd
+*.log
+.staypoint/
+**/.staypoint/

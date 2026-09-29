@@ -737,4 +737,3 @@ func findGitRoot(path string) string {
 	}
 	return ""
 }
-

@@ -26,9 +26,9 @@ var (
 
 func main() {
 	var (
-		flagService       = flag.Bool("service", false, "Run as a Windows service (SCM-managed)")
-		flagInstallSvc    = flag.Bool("install-service", false, "Register staypointd with the Windows SCM")
-		flagRemoveSvc     = flag.Bool("remove-service", false, "Unregister staypointd from the Windows SCM")
+		flagService    = flag.Bool("service", false, "Run as a Windows service (SCM-managed)")
+		flagInstallSvc = flag.Bool("install-service", false, "Register staypointd with the Windows SCM")
+		flagRemoveSvc  = flag.Bool("remove-service", false, "Unregister staypointd from the Windows SCM")
 	)
 	flag.Parse()
 
