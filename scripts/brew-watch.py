@@ -46,7 +46,9 @@ def notify(title, message):
         subprocess.run(["terminal-notifier", "-title", title, "-message", message], capture_output=True)
 
 def check_ci_status():
-    raw = run_cmd(["gh", "run", "list", "--repo", REPO_MAIN, "--limit", "1", "--json", "status,conclusion,databaseId,headBranch,headSha"])
+    raw = run_cmd(["gh", "run", "list", "--repo", REPO_MAIN, "--workflow", "CI/CD Pipeline", "--limit", "1", "--json", "status,conclusion,databaseId,headBranch,headSha"])
+    if not raw:
+        raw = run_cmd(["gh", "run", "list", "--repo", REPO_MAIN, "--limit", "1", "--json", "status,conclusion,databaseId,headBranch,headSha"])
     if not raw:
         return {"state": "unknown", "id": None}
     try:
@@ -79,7 +81,8 @@ def check_github_release():
             "count": len(assets)
         }
     except Exception:
-        return None
+        pass
+    return None
 
 def check_tap_formula():
     raw = run_cmd(["gh", "api", f"repos/{REPO_TAP}/contents/Formula/staypoint.rb"])
@@ -92,10 +95,20 @@ def check_tap_formula():
         return False
 
 def check_brew_live():
-    # Test if brew can see the formula in the tap
+    # 1. Test if brew CLI can see the formula in the tap
     info = run_cmd(["brew", "info", f"{REPO_TAP}/staypoint"])
     if info and "staypoint" in info and VERSION in info:
         return True
+    # 2. Tap formula inspection fallback
+    try:
+        url = f"https://raw.githubusercontent.com/{REPO_TAP}/main/Formula/staypoint.rb"
+        req = urllib.request.Request(url, headers={"User-Agent": "brew-watch"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            content = resp.read().decode("utf-8")
+            if f'version "{VERSION}"' in content and f'v{VERSION}/staypoint_{VERSION}_darwin_arm64.tar.gz' in content:
+                return True
+    except Exception:
+        pass
     return False
 
 def render_status():
