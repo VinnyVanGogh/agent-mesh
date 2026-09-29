@@ -85,6 +85,7 @@ func parseRawArgs(rawArgs []string) ParsedOptions {
 	var opts ParsedOptions
 	opts.OutputFormat = "stream-json"
 
+	argLoop:
 	for i := 0; i < len(rawArgs); i++ {
 		arg := rawArgs[i]
 		switch {
@@ -171,8 +172,8 @@ func parseRawArgs(rawArgs []string) ParsedOptions {
 		case arg == "--":
 			if i+1 < len(rawArgs) {
 				opts.Prompt = strings.Join(rawArgs[i+1:], " ")
-				break
 			}
+			break argLoop
 		default:
 			if !strings.HasPrefix(arg, "-") && opts.Prompt == "" {
 				opts.Prompt = arg

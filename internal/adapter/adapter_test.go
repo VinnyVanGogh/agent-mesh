@@ -67,6 +67,16 @@ func TestParseRawArgs(t *testing.T) {
 	if hasGeminiModel {
 		t.Errorf("Claude args must not include Gemini model names")
 	}
+
+	// Test double-dash delimiter stops flag parsing
+	delimiterArgs := []string{"--approval-mode", "yolo", "--", "--model", "foo", "hello world"}
+	delimOpts := parseRawArgs(delimiterArgs)
+	if delimOpts.Prompt != "--model foo hello world" {
+		t.Errorf("expected prompt after -- to be '--model foo hello world', got %q", delimOpts.Prompt)
+	}
+	if delimOpts.Model != "" {
+		t.Errorf("expected model to remain empty after --, got %q", delimOpts.Model)
+	}
 }
 
 func TestAdapterKeepalive(t *testing.T) {

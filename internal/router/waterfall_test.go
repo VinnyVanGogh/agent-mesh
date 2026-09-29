@@ -35,6 +35,31 @@ func TestIsWorkRepoDetection(t *testing.T) {
 			t.Errorf("path %s: expected isWork=%v, got %v (source: %s)", tc.path, tc.expected, isWork, src)
 		}
 	}
+
+	// Test git config with branch name containing mansol does not trigger work repo
+	tmpRepo := t.TempDir()
+	gitDir := filepath.Join(tmpRepo, ".git")
+	if err := os.MkdirAll(gitDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfgContent := `[core]
+	repositoryformatversion = 0
+[remote "origin"]
+	url = https://github.com/VinnyVanGogh/personal-tool.git
+[branch "feature/scrub-mansol-mbp"]
+	remote = origin
+	merge = refs/heads/feature/scrub-mansol-mbp
+`
+	if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte(cfgContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	isWork, src, err := IsWorkRepo(tmpRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if isWork {
+		t.Errorf("expected personal repo with mansol in branch name not to be work repo, but got isWork=true (source: %s)", src)
+	}
 }
 
 func TestBalancedPeerPacingRouting(t *testing.T) {

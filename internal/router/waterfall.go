@@ -143,11 +143,25 @@ func IsWorkRepo(cwd string) (bool, string, error) {
 
 		if gitCfgPath != "" {
 			if data, err := os.ReadFile(gitCfgPath); err == nil {
-				contentLower := strings.ToLower(string(data))
-				if strings.Contains(contentLower, "managedsolution") ||
-					strings.Contains(contentLower, "managed-solution") ||
-					strings.Contains(contentLower, "mansol") {
-					return true, "git remote: Managed Solution", nil
+				lines := strings.Split(string(data), "\n")
+				inRemote := false
+				for _, line := range lines {
+					trimmed := strings.TrimSpace(line)
+					if strings.HasPrefix(trimmed, "[remote ") {
+						inRemote = true
+						continue
+					} else if strings.HasPrefix(trimmed, "[") {
+						inRemote = false
+						continue
+					}
+					if inRemote && (strings.HasPrefix(trimmed, "url =") || strings.HasPrefix(trimmed, "url=")) {
+						urlLower := strings.ToLower(trimmed)
+						if strings.Contains(urlLower, "managedsolution") ||
+							strings.Contains(urlLower, "managed-solution") ||
+							strings.Contains(urlLower, "mansol") {
+							return true, "git remote: Managed Solution", nil
+						}
+					}
 				}
 			}
 		}
