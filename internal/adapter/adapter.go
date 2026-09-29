@@ -247,7 +247,7 @@ func isPoolLocked(pool *router.QuotaPool) bool {
 func BuildProviderChain(isWork bool, provider string) []providerCandidate {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		home = "/Users/vincevasile"
+		home = "~"
 	}
 
 	gemini := providerCandidate{

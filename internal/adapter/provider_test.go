@@ -292,7 +292,7 @@ func TestFailoverWhenPrimaryBinaryMissing(t *testing.T) {
 	if err := runWithFailover(ctx, "", nil, "claude", []string{"--prompt", "x"}, nil, &stdout, &stderr, resolve); err != nil {
 		t.Fatalf("expected fallback to succeed: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "ran-fallback") || !strings.Contains(stderr.String(), "failing back to Gemini") {
+	if !strings.Contains(stdout.String(), "ran-fallback") || !strings.Contains(stderr.String(), "trying next provider...") {
 		t.Errorf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
