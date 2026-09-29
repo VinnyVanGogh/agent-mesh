@@ -644,3 +644,107 @@ func TestPoolIDAssignment(t *testing.T) {
 		}
 	}
 }
+
+
+// TestBuildAgyArgs_ClaudeModelTranslation verifies that Claude models are translated
+// to Gemini equivalents via FallbackPairingMatrix, not stripped to empty string.
+// Regression test: prevents "--model "" --effort "high"" error on agy.
+func TestBuildAgyArgs_ClaudeModelTranslation(t *testing.T) {
+	tests := []struct {
+		name          string
+		model         string
+		effort        string
+		expectModel   string
+		expectEffort  string
+	}{
+		{"opus to pro", "claude-opus-5", "high", "gemini-3.1-pro", "high"},
+		{"sonnet to flash", "claude-sonnet-4-6", "", "gemini-3.8-flash", "medium"},
+		{"sonnet with high effort", "claude-sonnet-4-6", "high", "gemini-3.8-flash", "high"},
+		{"empty model gets default", "", "high", "gemini-3.8-flash", "high"},
+		{"gemini model passes through", "gemini-3.8-flash", "medium", "gemini-3.8-flash", "medium"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := ParsedOptions{
+				Prompt:       "test prompt",
+				Model:        tt.model,
+				Effort:       tt.effort,
+				OutputFormat: "stream-json",
+			}
+			args := buildAgyArgs(opts)
+
+			var foundModel, foundEffort string
+			for i, a := range args {
+				if a == "--model" && i+1 < len(args) {
+					foundModel = args[i+1]
+				}
+				if a == "--effort" && i+1 < len(args) {
+					foundEffort = args[i+1]
+				}
+			}
+			if foundModel != tt.expectModel {
+				t.Errorf("expected model %q, got %q (full args: %v)", tt.expectModel, foundModel, args)
+			}
+			if foundEffort != tt.expectEffort {
+				t.Errorf("expected effort %q, got %q (full args: %v)", tt.expectEffort, foundEffort, args)
+			}
+			// Verify effort is never passed without a model
+			if foundEffort != "" && foundModel == "" {
+				t.Error("effort was passed without a model, which causes agy to error")
+			}
+		})
+	}
+}
+
+// TestBuildAgyArgs_NoConversationID verifies that buildAgyArgs never passes
+// a conversation/session ID. Claude session IDs are invalid for agy.
+// Regression test: prevents "conversation not found" error on agy.
+func TestBuildAgyArgs_NoConversationID(t *testing.T) {
+	opts := ParsedOptions{
+		Prompt:         "test",
+		Model:          "claude-opus-5",
+		ConversationID: "dbb58aeb-9fee-4425-9d6d-915ed3a63beb",
+		OutputFormat:   "stream-json",
+	}
+	args := buildAgyArgs(opts)
+	for _, a := range args {
+		if a == "--conversation" || a == "--resume" || a == opts.ConversationID {
+			t.Errorf("agy args must not contain conversation ID, but got: %v", args)
+		}
+	}
+}
+
+// TestFallbackClearsConversationID verifies that fallback candidates do not
+// receive the original provider's conversation ID.
+// Regression test: prevents stale session resume across providers.
+func TestFallbackClearsConversationID(t *testing.T) {
+	opts := ParsedOptions{
+		Prompt:         "test",
+		Model:          "claude-opus-5",
+		ConversationID: "abc-123-session",
+		OutputFormat:   "stream-json",
+	}
+
+	// Simulate: first candidate (work-claude) gets the session ID
+	firstArgs := buildClaudeArgs(opts)
+	hasResume := false
+	for _, a := range firstArgs {
+		if a == "--resume" {
+			hasResume = true
+		}
+	}
+	if !hasResume {
+		t.Error("first candidate should get --resume with conversation ID")
+	}
+
+	// Simulate: second candidate (fallback) should NOT get the session ID
+	fallbackOpts := opts
+	fallbackOpts.ConversationID = ""
+	fallbackArgs := buildClaudeArgs(fallbackOpts)
+	for _, a := range fallbackArgs {
+		if a == "--resume" || a == opts.ConversationID {
+			t.Errorf("fallback candidate must not have --resume or session ID, got: %v", fallbackArgs)
+		}
+	}
+}

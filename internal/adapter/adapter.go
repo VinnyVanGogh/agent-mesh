@@ -220,15 +220,26 @@ func buildAgyArgs(opts ParsedOptions) []string {
 	if opts.Prompt != "" {
 		args = append(args, "--prompt", opts.Prompt)
 	}
-	if opts.Model != "" && !strings.Contains(opts.Model, "claude") && !strings.Contains(opts.Model, "sonnet") && !strings.Contains(opts.Model, "opus") {
-		args = append(args, "--model", opts.Model)
+
+	model := opts.Model
+	effort := opts.Effort
+
+	// Translate Claude models to Gemini equivalents via FallbackPairingMatrix.
+	// Opus -> Gemini 3.1 Pro (high effort), Sonnet -> Gemini 3.8 Flash (medium effort).
+	isClaudeModel := strings.Contains(model, "claude") || strings.Contains(model, "sonnet") || strings.Contains(model, "opus")
+	if isClaudeModel || model == "" {
+		geminiModel, geminiEffort, _ := router.FallbackPairingMatrix(model, effort)
+		model = geminiModel
+		effort = geminiEffort
 	}
-	if opts.Effort != "" {
-		args = append(args, "--effort", opts.Effort)
+
+	if model != "" {
+		args = append(args, "--model", model)
 	}
-	if opts.ConversationID != "" {
-		args = append(args, "--conversation", opts.ConversationID)
+	if effort != "" && model != "" {
+		args = append(args, "--effort", effort)
 	}
+	// Do NOT pass ConversationID: Claude session IDs are invalid for agy.
 	for _, dir := range opts.AddDirs {
 		args = append(args, "--add-dir", dir)
 	}
@@ -384,6 +395,7 @@ func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, 
 	}
 
 	var lastErr error
+	firstAttempt := true
 	for _, candidate := range chain {
 		pool := pacerState.Pools[candidate.PoolID]
 		if isPoolLocked(pool) {
@@ -391,7 +403,15 @@ func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, 
 			continue
 		}
 
-		args := candidate.BuildArgs(opts)
+		// Clear conversation ID for fallback candidates.
+		// Session IDs are provider-specific: a Claude session cannot be resumed in agy.
+		candidateOpts := opts
+		if !firstAttempt {
+			candidateOpts.ConversationID = ""
+		}
+		firstAttempt = false
+
+		args := candidate.BuildArgs(candidateOpts)
 		var buf bytes.Buffer
 		fmt.Fprintf(stderr, "[staypoint-adapter] trying %s...\n", candidate.Name)
 
