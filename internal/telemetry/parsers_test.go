@@ -319,10 +319,11 @@ func TestCursorParser(t *testing.T) {
 
 func TestDetectSourceAndShouldWatchDir(t *testing.T) {
 	src := map[string]string{
-		"/h/.codex/sessions/2026/r.jsonl":                 sourceCodex,
-		"/h/.cursor/projects/p/agent-transcripts/a.jsonl": sourceCursor,
-		"/h/.cursor/projects/p/terminals/a.jsonl":         sourceClaude,
-		"/h/.claude/projects/p/s/subagents/agent-1.jsonl": sourceClaude,
+		"/h/.codex/sessions/2026/r.jsonl":                                             sourceCodex,
+		"/h/.cursor/projects/p/agent-transcripts/a.jsonl":                             sourceCursor,
+		"/h/.cursor/projects/p/terminals/a.jsonl":                                     sourceClaude,
+		"/h/.gemini/antigravity-cli/brain/c1/.system_generated/logs/transcript.jsonl": sourceGemini,
+		"/h/.claude/projects/p/s/subagents/agent-1.jsonl":                             sourceClaude,
 	}
 	for p, want := range src {
 		if got := detectSource(p); got != want {
@@ -340,5 +341,58 @@ func TestDetectSourceAndShouldWatchDir(t *testing.T) {
 		if got := shouldWatchDir(p); got != want {
 			t.Errorf("shouldWatchDir(%s)=%v want %v", p, got, want)
 		}
+	}
+}
+
+func TestGeminiTranscriptIngestion(t *testing.T) {
+	path := "/h/.gemini/antigravity-cli/brain/conv-1/.system_generated/logs/transcript.jsonl"
+	step := func(idx int, typ, usage string) string {
+		return fmt.Sprintf(`{"step_index":%d,"source":"MODEL","type":%q,"status":"DONE","created_at":"2026-09-29T07:09:38Z",%s"content":"x"}`, idx, typ, usage)
+	}
+	flash := `"model":"gemini-3.8-flash","usageMetadata":{"promptTokenCount":1000,"cachedContentTokenCount":200,"candidatesTokenCount":300,"thoughtsTokenCount":100},`
+	pro := `"metadata":{"model":"gemini-3.1-pro-high","usage":{"input_tokens":2000,"output_tokens":500}},`
+
+	w, conn, _ := newParserTestWatcher(t)
+	if _, err := conn.Exec(`ALTER TABLE requests ADD COLUMN cost_usd REAL; ALTER TABLE requests ADD COLUMN cost_usd_micros INTEGER;`); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		step(2, "PLANNER_RESPONSE", flash),
+		step(3, "PLANNER_RESPONSE", pro),
+		step(4, "PLANNER_RESPONSE", ""), // no counts: nothing fabricated
+		step(5, "GENERIC", flash),       // not a model call
+	}
+	for i := 0; i < 2; i++ { // duplicate delivery
+		for _, l := range lines {
+			w.ingestLine([]byte(l), path)
+		}
+	}
+
+	type row struct {
+		model, family string
+		in, out, cr   int64
+		micros        int64
+	}
+	rows, err := conn.Query(`SELECT model, model_family, input_tokens, output_tokens, cache_read_tokens, cost_usd_micros FROM requests WHERE session_id='conv-1' ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var got []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.model, &r.family, &r.in, &r.out, &r.cr, &r.micros); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, r)
+	}
+	want := []row{
+		// 800*0.75 + 200*0.075 + 400*3.75 micro-dollars
+		{"gemini-3.8-flash", "gemini", 800, 400, 200, 2115},
+		// 2000*2.00 + 500*12.00 micro-dollars
+		{"gemini-3.1-pro-high", "gemini", 2000, 500, 0, 10000},
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v want %v", got, want)
 	}
 }

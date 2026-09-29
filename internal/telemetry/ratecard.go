@@ -96,6 +96,16 @@ func lookupModel(c *rateCard, model string) (modelRate, bool) {
 			return m, true
 		}
 	}
+	// Antigravity names models with an effort suffix ("gemini-3.1-pro-high");
+	// the rate card lists the base id, sometimes with a "-preview" suffix.
+	if strings.HasPrefix(id, "gemini-") {
+		base := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(id, "-high"), "-low"), "-medium")
+		for _, cand := range []string{base, base + "-preview"} {
+			if m, ok := c.Models[cand]; ok {
+				return m, true
+			}
+		}
+	}
 	return modelRate{}, false
 }
 
