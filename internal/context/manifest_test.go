@@ -106,15 +106,15 @@ func TestManualPinningAndSymlinks(t *testing.T) {
 
 	// 1. User creates a deliberate manual handoff
 	manualManifest := HandoffManifest{
-		SessionID:       "manual-session-important",
-		Title:           "Critical Auth Architecture",
-		Goal:            "Preserve OAuth2 PKCE design",
-		RepoPath:        repoPath,
-		RepoName:        "auth-service",
-		GitBranch:       "feat/oauth",
-		AgentType:       "claude",
-		CreatedAt:       time.Now().UTC().Add(-10 * time.Minute),
-		Trigger:         "manual",
+		SessionID: "manual-session-important",
+		Title:     "Critical Auth Architecture",
+		Goal:      "Preserve OAuth2 PKCE design",
+		RepoPath:  repoPath,
+		RepoName:  "auth-service",
+		GitBranch: "feat/oauth",
+		AgentType: "claude",
+		CreatedAt: time.Now().UTC().Add(-10 * time.Minute),
+		Trigger:   "manual",
 	}
 	_, err = SaveHandoffWithManifest(tempDir, manualManifest, "# Important Manual Handoff", 3)
 	if err != nil {
@@ -124,15 +124,15 @@ func TestManualPinningAndSymlinks(t *testing.T) {
 	// 2. Automated daemon records 3 background turns
 	for i := 1; i <= 3; i++ {
 		autoManifest := HandoffManifest{
-			SessionID:       "auto-session-" + string(rune('0'+i)),
-			Title:           "Auto turn " + string(rune('0'+i)),
-			Goal:            "Background execution",
-			RepoPath:        repoPath,
-			RepoName:        "auth-service",
-			GitBranch:       "feat/oauth",
-			AgentType:       "gemini",
-			CreatedAt:       time.Now().UTC().Add(time.Duration(i) * time.Minute),
-			Trigger:         "auto_daemon",
+			SessionID: "auto-session-" + string(rune('0'+i)),
+			Title:     "Auto turn " + string(rune('0'+i)),
+			Goal:      "Background execution",
+			RepoPath:  repoPath,
+			RepoName:  "auth-service",
+			GitBranch: "feat/oauth",
+			AgentType: "gemini",
+			CreatedAt: time.Now().UTC().Add(time.Duration(i) * time.Minute),
+			Trigger:   "auto_daemon",
 		}
 		_, err := SaveHandoffWithManifest(tempDir, autoManifest, "# Auto Turn", 3)
 		if err != nil {

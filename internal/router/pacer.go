@@ -71,14 +71,14 @@ type rawStateJSON struct {
 }
 
 type rawSampleJSON struct {
-	Timestamp       string  `json:"ts"`
-	SessionID       string  `json:"session_id"`
-	ModelID         string  `json:"model_id"`
-	FiveHourPct     float64 `json:"five_hour_pct"`
-	SevenDayPct     float64 `json:"seven_day_pct"`
-	FiveHourResets  float64 `json:"five_hour_resets_at"`
-	SevenDayResets  float64 `json:"seven_day_resets_at"`
-	AccountEmail    string  `json:"account_email"`
+	Timestamp      string  `json:"ts"`
+	SessionID      string  `json:"session_id"`
+	ModelID        string  `json:"model_id"`
+	FiveHourPct    float64 `json:"five_hour_pct"`
+	SevenDayPct    float64 `json:"seven_day_pct"`
+	FiveHourResets float64 `json:"five_hour_resets_at"`
+	SevenDayResets float64 `json:"seven_day_resets_at"`
+	AccountEmail   string  `json:"account_email"`
 }
 
 type rawEstimatesJSON struct {
@@ -144,20 +144,20 @@ func LoadPacerState() (*PacerState, error) {
 		Weekly:     QuotaWindow{RemainingPct: 100},
 	}
 	state.Pools[PoolGeminiNative] = &QuotaPool{
-		ID:          PoolGeminiNative,
-		Name:        "Gemini Native",
-		BurnRate5h:  geminiBurn5h,
-		BurnRateW:   geminiBurnW,
-		FiveHour:    QuotaWindow{RemainingPct: 100},
-		Weekly:      QuotaWindow{RemainingPct: 100},
+		ID:         PoolGeminiNative,
+		Name:       "Gemini Native",
+		BurnRate5h: geminiBurn5h,
+		BurnRateW:  geminiBurnW,
+		FiveHour:   QuotaWindow{RemainingPct: 100},
+		Weekly:     QuotaWindow{RemainingPct: 100},
 	}
 	state.Pools[Pool3PClaude] = &QuotaPool{
-		ID:          Pool3PClaude,
-		Name:        "Antigravity 3P",
-		BurnRate5h:  claudeBurn5h,
-		BurnRateW:   claudeBurnW,
-		FiveHour:    QuotaWindow{RemainingPct: 100},
-		Weekly:      QuotaWindow{RemainingPct: 100},
+		ID:         Pool3PClaude,
+		Name:       "Antigravity 3P",
+		BurnRate5h: claudeBurn5h,
+		BurnRateW:  claudeBurnW,
+		FiveHour:   QuotaWindow{RemainingPct: 100},
+		Weekly:     QuotaWindow{RemainingPct: 100},
 	}
 
 	// 1. Read state.json

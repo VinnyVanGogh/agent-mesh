@@ -155,4 +155,3 @@ func TestFindGitRoot(t *testing.T) {
 		t.Errorf("expected empty string or non-git root for /tmp")
 	}
 }
-

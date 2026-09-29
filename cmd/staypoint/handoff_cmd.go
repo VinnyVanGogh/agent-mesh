@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	meshSync "github.com/VinnyVanGogh/staypoint/internal/sync"
+	"github.com/spf13/cobra"
 )
 
 var handoffCmd = &cobra.Command{
@@ -364,7 +364,6 @@ var handoffsCmd = &cobra.Command{
 		handoffListCmd.Run(cmd, args)
 	},
 }
-
 
 func init() {
 	rootCmd.AddCommand(handoffCmd)

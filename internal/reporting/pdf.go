@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
-	"github.com/VinnyVanGogh/staypoint/internal/config"
 )
 
 // Backwards-compatible MemoData struct

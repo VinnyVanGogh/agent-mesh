@@ -38,9 +38,9 @@ type RouteOptions struct {
 
 type RouteDecision struct {
 	Target         RouteTarget `json:"target"`
-	Tool           string      `json:"tool"`            // "claude", "agy", "ssh"
-	Model          string      `json:"model"`           // "gemini-3.8-flash-high", "claude-opus-5", "claude-sonnet-4-6"
-	Command        string      `json:"command"`         // shell invocation command
+	Tool           string      `json:"tool"`    // "claude", "agy", "ssh"
+	Model          string      `json:"model"`   // "gemini-3.8-flash-high", "claude-opus-5", "claude-sonnet-4-6"
+	Command        string      `json:"command"` // shell invocation command
 	Workspace      string      `json:"workspace"`
 	IsWorkRepo     bool        `json:"is_work_repo"`
 	WorkRepoSource string      `json:"work_repo_source,omitempty"`

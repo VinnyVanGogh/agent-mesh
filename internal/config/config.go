@@ -11,20 +11,20 @@ import (
 )
 
 type Config struct {
-	DataDir         string  `json:"data_dir" toml:"data_dir"`
-	DBPath          string  `json:"db_path" toml:"db_path"`
-	TelemetryDBPath string  `json:"telemetry_db_path" toml:"telemetry_db_path"`
-	CompanyName     string  `json:"company_name" toml:"company_name"`
-	EngineerName    string  `json:"engineer_name" toml:"engineer_name"`
-	HourlyRate      float64 `json:"hourly_rate" toml:"hourly_rate"`
-	WorkEmail       string  `json:"work_email" toml:"work_email"`
-	PersonalEmail   string  `json:"personal_email" toml:"personal_email"`
-	WorkRepoRoot    string  `json:"work_repo_root" toml:"work_repo_root"`
-	RemoteHost      string  `json:"remote_host" toml:"remote_host"`
-	RemoteRepoRoot  string  `json:"remote_repo_root" toml:"remote_repo_root"` // e.g. "~/Documents/dev/managed_solution" or "~/Documents/dev/work"
-	MachineRole     string  `json:"machine_role" toml:"machine_role"` // "hybrid" (default), "work", or "personal"
-	GooglePlanTier  string  `json:"google_plan_tier" toml:"google_plan_tier"` // e.g. "Google AI Ultra" or "Ultra"
-	ClaudePlanTier  string  `json:"claude_plan_tier" toml:"claude_plan_tier"` // e.g. "Max 5x" or "Pro"
+	DataDir               string  `json:"data_dir" toml:"data_dir"`
+	DBPath                string  `json:"db_path" toml:"db_path"`
+	TelemetryDBPath       string  `json:"telemetry_db_path" toml:"telemetry_db_path"`
+	CompanyName           string  `json:"company_name" toml:"company_name"`
+	EngineerName          string  `json:"engineer_name" toml:"engineer_name"`
+	HourlyRate            float64 `json:"hourly_rate" toml:"hourly_rate"`
+	WorkEmail             string  `json:"work_email" toml:"work_email"`
+	PersonalEmail         string  `json:"personal_email" toml:"personal_email"`
+	WorkRepoRoot          string  `json:"work_repo_root" toml:"work_repo_root"`
+	RemoteHost            string  `json:"remote_host" toml:"remote_host"`
+	RemoteRepoRoot        string  `json:"remote_repo_root" toml:"remote_repo_root"` // e.g. "~/Documents/dev/managed_solution" or "~/Documents/dev/work"
+	MachineRole           string  `json:"machine_role" toml:"machine_role"`         // "hybrid" (default), "work", or "personal"
+	GooglePlanTier        string  `json:"google_plan_tier" toml:"google_plan_tier"` // e.g. "Google AI Ultra" or "Ultra"
+	ClaudePlanTier        string  `json:"claude_plan_tier" toml:"claude_plan_tier"` // e.g. "Max 5x" or "Pro"
 	MaxHandoffsPerRepo    int     `json:"max_handoffs_per_repo" toml:"max_handoffs_per_repo"`
 	PreferredPersonalTool string  `json:"preferred_personal_tool" toml:"preferred_personal_tool"` // "auto" (default), "claude", or "agy"
 }
@@ -38,19 +38,19 @@ func DefaultConfig() *Config {
 
 	dataDir := filepath.Join(home, ".staypoint")
 	return &Config{
-		DataDir:            dataDir,
-		DBPath:             filepath.Join(dataDir, "staypoint.db"),
-		TelemetryDBPath:    filepath.Join(home, ".config", "token-telemetry", "telemetry.db"),
-		CompanyName:        "",
-		EngineerName:       "",
-		HourlyRate:         0.0,
-		WorkEmail:          "engineer@company.com",
-		PersonalEmail:      "personal@gmail.com",
-		WorkRepoRoot:       filepath.Join(home, "Documents", "dev", "work"),
-		RemoteHost:         "company-mbp",
-		RemoteRepoRoot:     "~/Documents/dev/work",
-		MachineRole:        "hybrid",
-		GooglePlanTier:     "Google AI Ultra",
+		DataDir:               dataDir,
+		DBPath:                filepath.Join(dataDir, "staypoint.db"),
+		TelemetryDBPath:       filepath.Join(home, ".config", "token-telemetry", "telemetry.db"),
+		CompanyName:           "",
+		EngineerName:          "",
+		HourlyRate:            0.0,
+		WorkEmail:             "engineer@company.com",
+		PersonalEmail:         "personal@gmail.com",
+		WorkRepoRoot:          filepath.Join(home, "Documents", "dev", "work"),
+		RemoteHost:            "company-mbp",
+		RemoteRepoRoot:        "~/Documents/dev/work",
+		MachineRole:           "hybrid",
+		GooglePlanTier:        "Google AI Ultra",
 		ClaudePlanTier:        "Pro",
 		MaxHandoffsPerRepo:    3,
 		PreferredPersonalTool: "auto",

@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/spf13/cobra"
 )
 
 var bridgeCmd = &cobra.Command{
@@ -224,7 +224,6 @@ var fetchCmd = &cobra.Command{
 		fmt.Printf("\033[1;32m✔ Fetched client file:\033[0m %s -> \033[1;33m%s\033[0m\n", clientPath, cached)
 	},
 }
-
 
 func init() {
 	rootCmd.AddCommand(bridgeCmd)

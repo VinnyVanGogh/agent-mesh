@@ -372,3 +372,25 @@ func MigrateLegacyRefs(ctx context.Context, workDir string) (int, error) {
 	}
 	return migrated, nil
 }
+
+// DiffCheckpointFull returns a full diff between working directory and the specified checkpoint commit.
+func DiffCheckpointFull(ctx context.Context, workDir, checkpointID string) (string, error) {
+	rootDir, _, err := getGitPaths(ctx, workDir)
+	if err != nil {
+		return "", err
+	}
+
+	targetRef := checkpointID
+	if !strings.HasPrefix(targetRef, "refs/") && len(targetRef) != 40 {
+		if targetRef == "" || targetRef == "latest" {
+			targetRef = "refs/staypoint/checkpoints/latest"
+		} else {
+			refs, _ := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname)", fmt.Sprintf("refs/staypoint/checkpoints/*/%s", targetRef))
+			if len(strings.TrimSpace(refs)) > 0 {
+				targetRef = strings.TrimSpace(refs)
+			}
+		}
+	}
+
+	return runGit(ctx, rootDir, nil, "diff", targetRef)
+}

@@ -36,18 +36,18 @@ const (
 
 // Tokyo Night color palette constants.
 const (
-	ColorCyan    = "\033[38;2;125;207;255m"
-	ColorBlue    = "\033[38;2;122;162;247m"
-	ColorPurple  = "\033[38;2;187;154;247m"
-	ColorGreen   = "\033[38;2;158;206;106m"
-	ColorYellow  = "\033[38;2;224;175;104m"
-	ColorRed     = "\033[38;2;247;118;142m"
-	ColorOrange  = "\033[38;2;255;158;100m"
-	ColorGray    = "\033[38;2;86;95;137m"
-	ColorTeal    = "\033[38;2;115;218;202m"
-	ColorDim     = "\033[2m"
-	ColorBold    = "\033[1m"
-	ColorReset   = "\033[0m"
+	ColorCyan   = "\033[38;2;125;207;255m"
+	ColorBlue   = "\033[38;2;122;162;247m"
+	ColorPurple = "\033[38;2;187;154;247m"
+	ColorGreen  = "\033[38;2;158;206;106m"
+	ColorYellow = "\033[38;2;224;175;104m"
+	ColorRed    = "\033[38;2;247;118;142m"
+	ColorOrange = "\033[38;2;255;158;100m"
+	ColorGray   = "\033[38;2;86;95;137m"
+	ColorTeal   = "\033[38;2;115;218;202m"
+	ColorDim    = "\033[2m"
+	ColorBold   = "\033[1m"
+	ColorReset  = "\033[0m"
 
 	CheckmarkOK   = "\033[38;2;158;206;106m✔\033[0m"
 	CheckmarkWarn = "\033[38;2;224;175;104m⚠\033[0m"
@@ -93,13 +93,13 @@ type Report struct {
 
 // DoctorOptions configures which diagnostics the FleetDoctor runs.
 type DoctorOptions struct {
-	Fast        bool           `json:"fast"`
-	ClaudeOnly  bool           `json:"claude_only"`
-	GeminiOnly  bool           `json:"gemini_only"`
-	RemoteOnly  bool           `json:"remote_only"`
-	BrewOnly    bool           `json:"brew_only"`
-	RemoteHost  string         `json:"remote_host"`
-	Config      *config.Config `json:"-"`
+	Fast       bool           `json:"fast"`
+	ClaudeOnly bool           `json:"claude_only"`
+	GeminiOnly bool           `json:"gemini_only"`
+	RemoteOnly bool           `json:"remote_only"`
+	BrewOnly   bool           `json:"brew_only"`
+	RemoteHost string         `json:"remote_host"`
+	Config     *config.Config `json:"-"`
 }
 
 // FleetDoctor executes modular fleet health diagnostics.

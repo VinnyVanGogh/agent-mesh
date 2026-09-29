@@ -11,7 +11,8 @@ docs/DOSSIER.md
 build-dist/
 .worktrees/
 dist/
-staypoint
-staypointd
+/staypoint
+/staypointd
 *.log
-
+.staypoint/
+**/.staypoint/

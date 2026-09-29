@@ -49,9 +49,21 @@ CREATE TABLE IF NOT EXISTS tasks (
     spent_tokens   INTEGER NOT NULL DEFAULT 0,
     spent_usd      REAL NOT NULL DEFAULT 0.0,
     spent_turns    INTEGER NOT NULL DEFAULT 0,
+    organization   TEXT,
+    project        TEXT,
+    is_blocked     INTEGER NOT NULL DEFAULT 0,
+    block_reason   TEXT,
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     deleted_at     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS task_comments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    author      TEXT NOT NULL DEFAULT 'system',
+    message     TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE TABLE IF NOT EXISTS wire_messages (
@@ -137,9 +149,11 @@ func migrateSchema(conn *sql.DB) error {
 		var cid int
 		var name, ctype string
 		var notnull, pk int
-		var dfltValue sql.NullString
+		var dfltValue interface{}
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err == nil {
 			existingCols[name] = true
+		} else {
+			panic(fmt.Sprintf("Failed to scan table_info for column: %v", err))
 		}
 	}
 
@@ -152,6 +166,10 @@ func migrateSchema(conn *sql.DB) error {
 		{"spent_tokens", "INTEGER NOT NULL DEFAULT 0"},
 		{"spent_usd", "REAL NOT NULL DEFAULT 0.0"},
 		{"spent_turns", "INTEGER NOT NULL DEFAULT 0"},
+		{"organization", "TEXT"},
+		{"project", "TEXT"},
+		{"is_blocked", "INTEGER NOT NULL DEFAULT 0"},
+		{"block_reason", "TEXT"},
 	}
 
 	for _, c := range cols {
