@@ -1,11 +1,11 @@
 package adapter
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -15,11 +15,20 @@ import (
 )
 
 func runCommandWithKeepalive(ctx context.Context, bin string, args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
+	return runCommandWithEnv(ctx, bin, args, nil, stdin, stdout, stderr)
+}
+
+// runCommandWithEnv executes a command with optional extra environment variables,
+// anti-stall keepalive newlines, and unthrottled 32KB chunk streaming.
+func runCommandWithEnv(ctx context.Context, bin string, args []string, extraEnv []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 	cmdExec := exec.CommandContext(ctx, bin, args...)
 	if stdin != nil {
 		cmdExec.Stdin = stdin
 	}
 	cmdExec.Stderr = stderr
+	if len(extraEnv) > 0 {
+		cmdExec.Env = append(os.Environ(), extraEnv...)
+	}
 
 	cmdStdout, err := cmdExec.StdoutPipe()
 	if err != nil {
@@ -30,25 +39,34 @@ func runCommandWithKeepalive(ctx context.Context, bin string, args []string, std
 		return fmt.Errorf("start error: %w", err)
 	}
 
-	// Buffered channel of 10,000 lines to prevent OS pipe backpressure from stalling agy
-	ch := make(chan string, 10000)
+	ch := make(chan []byte, 1000)
+	errCh := make(chan error, 1)
+
 	go func() {
-		scanner := bufio.NewScanner(cmdStdout)
-		buf := make([]byte, 64*1024)
-		scanner.Buffer(buf, 16*1024*1024)
-		for scanner.Scan() {
-			ch <- scanner.Text()
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := cmdStdout.Read(buf)
+			if n > 0 {
+				chunk := make([]byte, n)
+				copy(chunk, buf[:n])
+				ch <- chunk
+			}
+			if err != nil {
+				if err != io.EOF {
+					errCh <- err
+				}
+				close(ch)
+				return
+			}
 		}
-		close(ch)
 	}()
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	var burstCount int
 	for {
 		select {
-		case line, ok := <-ch:
+		case chunk, ok := <-ch:
 			if !ok {
 				err := cmdExec.Wait()
 				if err != nil {
@@ -56,16 +74,18 @@ func runCommandWithKeepalive(ctx context.Context, bin string, args []string, std
 				}
 				return nil
 			}
-			fmt.Fprintln(stdout, line)
-			burstCount++
-			if burstCount >= 20 {
-				time.Sleep(2 * time.Millisecond)
-				burstCount = 0
+			if _, err := stdout.Write(chunk); err != nil {
+				return err
 			}
 		case <-ticker.C:
-			// Emitting an empty string keepalive to prevent Paperclip stream consumer stall
-			fmt.Fprintln(stdout, "")
+			// Emit newline keepalive to keep Paperclip stream consumer alive
+			_, _ = stdout.Write([]byte("\n"))
+		case err := <-errCh:
+			return err
 		case <-ctx.Done():
+			if cmdExec.Process != nil {
+				_ = cmdExec.Process.Kill()
+			}
 			return ctx.Err()
 		}
 	}
@@ -200,15 +220,26 @@ func buildAgyArgs(opts ParsedOptions) []string {
 	if opts.Prompt != "" {
 		args = append(args, "--prompt", opts.Prompt)
 	}
-	if opts.Model != "" && !strings.Contains(opts.Model, "claude") && !strings.Contains(opts.Model, "sonnet") && !strings.Contains(opts.Model, "opus") {
-		args = append(args, "--model", opts.Model)
+
+	model := opts.Model
+	effort := opts.Effort
+
+	// Translate Claude models to Gemini equivalents via FallbackPairingMatrix.
+	// Opus -> Gemini 3.1 Pro (high effort), Sonnet -> Gemini 3.8 Flash (medium effort).
+	isClaudeModel := strings.Contains(model, "claude") || strings.Contains(model, "sonnet") || strings.Contains(model, "opus")
+	if isClaudeModel || model == "" {
+		geminiModel, geminiEffort, _ := router.FallbackPairingMatrix(model, effort)
+		model = geminiModel
+		effort = geminiEffort
 	}
-	if opts.Effort != "" {
-		args = append(args, "--effort", opts.Effort)
+
+	if model != "" {
+		args = append(args, "--model", model)
 	}
-	if opts.ConversationID != "" {
-		args = append(args, "--conversation", opts.ConversationID)
+	if effort != "" && model != "" {
+		args = append(args, "--effort", effort)
 	}
+	// Do NOT pass ConversationID: Claude session IDs are invalid for agy.
 	for _, dir := range opts.AddDirs {
 		args = append(args, "--add-dir", dir)
 	}
@@ -237,7 +268,88 @@ func buildClaudeArgs(opts ParsedOptions) []string {
 	return args
 }
 
-// RunAdapter executes the requested agent provider with anti-stall keepalive and quota failover.
+// providerCandidate represents a single provider in the failover chain.
+type providerCandidate struct {
+	Name     string          // "gemini", "work-claude", "personal-claude"
+	PoolID   router.PoolID   // for quota lock check
+	Bin      string          // binary path
+	BuildArgs func(ParsedOptions) []string
+	ExtraEnv []string        // e.g. CLAUDE_CONFIG_DIR for work claude
+}
+
+// isPoolLocked returns true if the quota pool is hard-locked or has zero 5-hour headroom.
+func isPoolLocked(pool *router.QuotaPool) bool {
+	if pool == nil {
+		return false // no pool data means we cannot confirm it is locked; allow attempt
+	}
+	if pool.IsLocked {
+		return true
+	}
+	if pool.FiveHour.ResetsAt.After(time.Now()) && pool.FiveHour.RemainingPct <= 0.0 {
+		return true
+	}
+	return false
+}
+
+// BuildProviderChain constructs the ordered failover chain based on repo type and starting provider.
+//
+// Work repo chains:
+//   provider=gemini: [gemini, work-claude, personal-claude]
+//   provider=claude: [work-claude, personal-claude, gemini]
+//
+// Personal repo chains:
+//   provider=gemini: [gemini, personal-claude]
+//   provider=claude: [personal-claude, gemini]
+func BuildProviderChain(isWork bool, provider string) []providerCandidate {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "/Users/vincevasile"
+	}
+
+	gemini := providerCandidate{
+		Name:      "gemini",
+		PoolID:    router.PoolGeminiNative,
+		Bin:       home + "/.local/bin/agy",
+		BuildArgs: buildAgyArgs,
+	}
+
+	workClaude := providerCandidate{
+		Name:      "work-claude",
+		PoolID:    router.PoolWorkClaude,
+		Bin:       home + "/.local/bin/claude",
+		BuildArgs: buildClaudeArgs,
+		ExtraEnv:  []string{"CLAUDE_CONFIG_DIR=" + home + "/.claude-work"},
+	}
+
+	personalClaude := providerCandidate{
+		Name:      "personal-claude",
+		PoolID:    router.PoolPersonalClaude,
+		Bin:       home + "/.local/bin/claude",
+		BuildArgs: buildClaudeArgs,
+	}
+
+	if isWork {
+		if provider == "claude" {
+			return []providerCandidate{workClaude, personalClaude, gemini}
+		}
+		// provider == "gemini" (or default)
+		return []providerCandidate{gemini, workClaude, personalClaude}
+	}
+
+	// Personal repo
+	if provider == "claude" {
+		return []providerCandidate{personalClaude, gemini}
+	}
+	return []providerCandidate{gemini, personalClaude}
+}
+
+// RunAdapter executes the requested agent provider with chain-based failover.
+// Every invocation re-evaluates quota fresh. No sticky state between runs.
+//
+// The chain is built from (isWork, provider). Each candidate is checked against
+// its quota pool. Locked candidates are skipped. Candidates that fail at runtime
+// are caught, their stdout is swallowed, and the next candidate is tried.
+// Only successful provider output reaches the caller (Paperclip).
 func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, provider string, rawArgs []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 	opts := parseRawArgs(rawArgs)
 
@@ -259,60 +371,65 @@ func RunAdapter(ctx context.Context, cwd string, pacerState *router.PacerState, 
 		return runCommandWithKeepalive(ctx, bin, args, bytes.NewReader(stdinBytes), stdout, stderr)
 	}
 
-	// Routing logic
-	targetTool := "agy"
-	if provider == "claude" {
-		targetTool = "claude"
+	// Detect work vs personal repo
+	isWork, workSrc, _ := router.IsWorkRepo(cwd)
+
+	// Build the provider chain
+	chain := BuildProviderChain(isWork, provider)
+
+	if isWork && workSrc != "" {
+		fmt.Fprintf(stderr, "[staypoint-adapter] work repo detected (%s), chain: ", workSrc)
+	} else {
+		fmt.Fprintf(stderr, "[staypoint-adapter] personal repo, chain: ")
 	}
+	names := make([]string, len(chain))
+	for i, c := range chain {
+		names[i] = c.Name
+	}
+	fmt.Fprintf(stderr, "%s\n", strings.Join(names, " > "))
 
-	if pacerState != nil {
-		poolGemini := pacerState.Pools[router.PoolGeminiNative]
-		poolClaude := pacerState.Pools[router.PoolPersonalClaude]
-		if poolClaude == nil {
-			poolClaude = pacerState.Pools[router.PoolWorkClaude]
-		}
-
-		claudeLocked := poolClaude != nil && (poolClaude.IsLocked || (poolClaude.FiveHour.ResetsAt.After(time.Now()) && poolClaude.FiveHour.RemainingPct <= 0.0))
-		geminiLocked := poolGemini != nil && (poolGemini.IsLocked || (poolGemini.FiveHour.ResetsAt.After(time.Now()) && poolGemini.FiveHour.RemainingPct <= 0.0))
-		geminiOffPace := poolGemini != nil && !poolGemini.OnWeeklyPace(time.Now())
-
-		if targetTool == "agy" {
-			if (geminiLocked || geminiOffPace) && !claudeLocked {
-				fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Gemini locked or off weekly pace. Failing over to Claude...\n")
-				targetTool = "claude"
-			}
-		} else if targetTool == "claude" {
-			if claudeLocked && !geminiLocked {
-				fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Claude locked or exhausted. Failing over to Gemini...\n")
-				targetTool = "agy"
-			}
+	if pacerState == nil {
+		pacerState = &router.PacerState{
+			Pools: make(map[router.PoolID]*router.QuotaPool),
 		}
 	}
 
-	// Bidirectional execution: try targetTool first; if it fails, silently fail over/back to the alternative tool.
-	if targetTool == "claude" {
-		bin := "/Users/vincevasile/.local/bin/claude"
-		args := buildClaudeArgs(opts)
-		err := runCommandWithKeepalive(ctx, bin, args, bytes.NewReader(stdinBytes), stdout, stderr)
-		if err != nil {
-			fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Claude failed (%v), failing back to Gemini...\n", err)
-			fallbackBin := "/Users/vincevasile/.local/bin/agy"
-			fallbackArgs := buildAgyArgs(opts)
-			return runCommandWithKeepalive(ctx, fallbackBin, fallbackArgs, bytes.NewReader(stdinBytes), stdout, stderr)
+	var lastErr error
+	firstAttempt := true
+	for _, candidate := range chain {
+		pool := pacerState.Pools[candidate.PoolID]
+		if isPoolLocked(pool) {
+			fmt.Fprintf(stderr, "[staypoint-adapter] skipping %s (quota locked)\n", candidate.Name)
+			continue
 		}
-		return nil
+
+		// Clear conversation ID for fallback candidates.
+		// Session IDs are provider-specific: a Claude session cannot be resumed in agy.
+		candidateOpts := opts
+		if !firstAttempt {
+			candidateOpts.ConversationID = ""
+		}
+		firstAttempt = false
+
+		args := candidate.BuildArgs(candidateOpts)
+		var buf bytes.Buffer
+		fmt.Fprintf(stderr, "[staypoint-adapter] trying %s...\n", candidate.Name)
+
+		err := runCommandWithEnv(ctx, candidate.Bin, args, candidate.ExtraEnv, bytes.NewReader(stdinBytes), &buf, stderr)
+		if err == nil {
+			// Success: flush buffered output to real stdout
+			_, _ = io.Copy(stdout, &buf)
+			return nil
+		}
+
+		// Failed: swallow stdout, log to stderr, try next candidate
+		fmt.Fprintf(stderr, "[staypoint-adapter] %s failed (%v), trying next provider...\n", candidate.Name, err)
+		lastErr = err
 	}
 
-	// Try agy first
-	bin := "/Users/vincevasile/.local/bin/agy"
-	args := buildAgyArgs(opts)
-	err := runCommandWithKeepalive(ctx, bin, args, bytes.NewReader(stdinBytes), stdout, stderr)
-	if err != nil {
-		fmt.Fprintf(stderr, "[paperclip-quota-gate] ⚠️ Gemini failed (%v), falling back to Claude...\n", err)
-		fallbackBin := "/Users/vincevasile/.local/bin/claude"
-		fallbackArgs := buildClaudeArgs(opts)
-		return runCommandWithKeepalive(ctx, fallbackBin, fallbackArgs, bytes.NewReader(stdinBytes), stdout, stderr)
+	// All candidates exhausted
+	if lastErr != nil {
+		return fmt.Errorf("[staypoint-adapter] all providers exhausted: last error: %w", lastErr)
 	}
-
-	return nil
+	return fmt.Errorf("[staypoint-adapter] all providers exhausted or locked for this environment")
 }
