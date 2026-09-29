@@ -3,6 +3,7 @@ package wire
 import (
 	"database/sql"
 	"fmt"
+	"github.com/VinnyVanGogh/staypoint/internal/security"
 	"path/filepath"
 	"strings"
 )
@@ -46,7 +47,7 @@ func Post(db *sql.DB, channel, author, repoPath, content string, ttlSeconds int)
 		VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
 		        strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+' || ? || ' seconds'))
 	`
-	res, err := db.Exec(query, channel, author, repoPath, content, ttlSeconds, ttlSeconds)
+	res, err := db.Exec(query, channel, author, repoPath, security.Redact(content), ttlSeconds, ttlSeconds)
 	if err != nil {
 		return nil, fmt.Errorf("failed to post wire message: %w", err)
 	}
