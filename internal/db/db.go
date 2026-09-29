@@ -166,7 +166,7 @@ func migrateLegacyQuotaWindows(conn *sql.DB) error {
 	return err
 }
 
-func migrateSchema(conn *sql.DB) error {
+func migrateSchemaTasksCols(conn *sql.DB) error {
 	if err := migrateLegacyQuotaWindows(conn); err != nil {
 		return err
 	}
@@ -185,7 +185,7 @@ func migrateSchema(conn *sql.DB) error {
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err == nil {
 			existingCols[name] = true
 		} else {
-			panic(fmt.Sprintf("Failed to scan table_info for column: %v", err))
+			return fmt.Errorf("failed to scan table_info for column: %v", err)
 		}
 	}
 
@@ -206,9 +206,99 @@ func migrateSchema(conn *sql.DB) error {
 
 	for _, c := range cols {
 		if !existingCols[c.name] {
-			_, _ = conn.Exec(fmt.Sprintf("ALTER TABLE tasks ADD COLUMN %s %s;", c.name, c.def))
+			if _, err := conn.Exec(fmt.Sprintf("ALTER TABLE tasks ADD COLUMN %s %s;", c.name, c.def)); err != nil { return err }
 		}
 	}
+	return nil
+}
+
+
+type Migration struct {
+	Version int
+	Name    string
+	Up      func(*sql.DB) error
+}
+
+var Migrations = []Migration{
+	{
+		Version: 1,
+		Name:    "baseline",
+		Up: func(conn *sql.DB) error {
+			if err := migrateLegacyQuotaWindows(conn); err != nil {
+				return err
+			}
+			if _, err := conn.Exec(Schema); err != nil {
+				return err
+			}
+			return migrateSchemaTasksCols(conn)
+		},
+	},
+}
+
+func copyFile(src, dst string) error {
+	input, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, input, 0644)
+}
+
+func applyMigrations(dbPath string, conn *sql.DB) error {
+	if _, err := conn.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_versions (
+			version INTEGER PRIMARY KEY,
+			applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		);
+	`); err != nil {
+		return fmt.Errorf("failed to create schema_versions: %w", err)
+	}
+
+	var currentVersion int
+	err := conn.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_versions;`).Scan(&currentVersion)
+	if err != nil {
+		return fmt.Errorf("failed to get current version: %w", err)
+	}
+
+	var pending []Migration
+	for _, m := range Migrations {
+		if m.Version > currentVersion {
+			pending = append(pending, m)
+		}
+	}
+
+	if len(pending) == 0 {
+		return nil
+	}
+
+	// Backup before migrating
+	if _, err := conn.Exec("PRAGMA wal_checkpoint(TRUNCATE);"); err != nil {
+		return fmt.Errorf("failed to checkpoint wal before backup: %w", err)
+	}
+
+	backupPath := dbPath + ".bak"
+	if err := copyFile(dbPath, backupPath); err != nil {
+		return fmt.Errorf("failed to backup database: %w", err)
+	}
+
+	for _, m := range pending {
+		if err := m.Up(conn); err != nil {
+			// Restore backup
+			conn.Close()
+			_ = copyFile(backupPath, dbPath)
+			_ = os.Remove(dbPath + "-wal")
+			_ = os.Remove(dbPath + "-shm")
+			return fmt.Errorf("migration %d (%s) failed, database restored from backup: %w", m.Version, m.Name, err)
+		}
+		if _, err := conn.Exec(`INSERT INTO schema_versions (version) VALUES (?)`, m.Version); err != nil {
+			conn.Close()
+			_ = copyFile(backupPath, dbPath)
+			_ = os.Remove(dbPath + "-wal")
+			_ = os.Remove(dbPath + "-shm")
+			return fmt.Errorf("failed to record migration %d: %w", m.Version, err)
+		}
+	}
+
+	_ = os.Remove(backupPath)
 	return nil
 }
 
@@ -226,14 +316,20 @@ func Open(dbPath string) (*Store, error) {
 
 	conn.SetMaxOpenConns(1)
 
-	if _, err := conn.Exec(Schema); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("failed to apply schema: %w", err)
-	}
-
-	if err := migrateSchema(conn); err != nil {
+	if err := applyMigrations(dbPath, conn); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("failed to migrate schema: %w", err)
+	}
+
+	// Always execute pragmas on connect just in case
+	if _, err := conn.Exec(`
+		PRAGMA journal_mode = WAL;
+		PRAGMA synchronous = NORMAL;
+		PRAGMA busy_timeout = 5000;
+		PRAGMA foreign_keys = ON;
+	`); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to apply pragmas: %w", err)
 	}
 
 	return &Store{db: conn}, nil
