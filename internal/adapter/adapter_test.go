@@ -83,7 +83,8 @@ echo "done"
 	f.Close()
 	os.Chmod(f.Name(), 0755)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 15s budget: script sleeps 3s; extra headroom covers race-detector overhead
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	ctx = context.WithValue(ctx, "testBin", f.Name())
