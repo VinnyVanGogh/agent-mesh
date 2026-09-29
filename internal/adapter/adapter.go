@@ -41,6 +41,7 @@ func runCommandWithKeepalive(ctx context.Context, bin string, args []string, std
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	var burstCount int
 	for {
 		select {
 		case line, ok := <-ch:
@@ -52,6 +53,11 @@ func runCommandWithKeepalive(ctx context.Context, bin string, args []string, std
 				return nil
 			}
 			fmt.Fprintln(stdout, line)
+			burstCount++
+			if burstCount >= 20 {
+				time.Sleep(2 * time.Millisecond)
+				burstCount = 0
+			}
 		case <-ticker.C:
 			// Emitting an empty string keepalive to prevent Paperclip stream consumer stall
 			fmt.Fprintln(stdout, "")

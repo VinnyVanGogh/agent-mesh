@@ -137,3 +137,43 @@ exit 1
 		t.Errorf("Expected error from failing script")
 	}
 }
+
+func TestAdapterPacingBurst(t *testing.T) {
+	script := `#!/bin/sh
+for i in $(seq 1 100); do
+  echo "line $i"
+done
+`
+	f, err := os.CreateTemp("", "dummy-burst-*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	f.WriteString(script)
+	f.Close()
+	os.Chmod(f.Name(), 0755)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ctx = context.WithValue(ctx, "testBin", f.Name())
+
+	var stdout, stderr bytes.Buffer
+	pacerState := &router.PacerState{}
+
+	start := time.Now()
+	err = RunAdapter(ctx, ".", pacerState, "gemini", []string{"--model", "google/gemini-3.8-flash"}, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("RunAdapter failed: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	// 100 lines / 20 lines per pace * 2ms = 10ms minimum
+	if elapsed < 8*time.Millisecond {
+		t.Errorf("Expected pacing to slow down burst, took %v", elapsed)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "line 100") {
+		t.Errorf("Expected burst output to complete, got %d bytes", len(out))
+	}
+}
