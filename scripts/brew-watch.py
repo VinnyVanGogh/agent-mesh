@@ -22,10 +22,10 @@ import time
 import urllib.error
 import urllib.request
 
-REPO_MAIN = "VinnyVanGogh/agent-mesh"
+REPO_MAIN = "VinnyVanGogh/staypoint"
 REPO_TAP = "VinnyVanGogh/homebrew-tap"
-TAG = "v0.1.0"
-VERSION = "0.1.0"
+TAG = "v0.2.0"
+VERSION = "0.2.0"
 
 PEEK = "--peek" in sys.argv
 
@@ -82,7 +82,7 @@ def check_github_release():
         return None
 
 def check_tap_formula():
-    raw = run_cmd(["gh", "api", f"repos/{REPO_TAP}/contents/Formula/mesh.rb"])
+    raw = run_cmd(["gh", "api", f"repos/{REPO_TAP}/contents/Formula/staypoint.rb"])
     if not raw:
         return False
     try:
@@ -93,13 +93,13 @@ def check_tap_formula():
 
 def check_brew_live():
     # Test if brew can see the formula in the tap
-    info = run_cmd(["brew", "info", f"{REPO_TAP}/mesh"])
-    if info and "mesh" in info and VERSION in info:
+    info = run_cmd(["brew", "info", f"{REPO_TAP}/staypoint"])
+    if info and "staypoint" in info and VERSION in info:
         return True
     return False
 
 def render_status():
-    print("\033[1;36m[Agent-Mesh :: Release & Homebrew Pipeline Monitor]\033[0m")
+    print("\033[1;36m[StayPoint :: Release & Homebrew Pipeline Monitor]\033[0m")
     print(f"  • Target Tag:    \033[1;33m{TAG}\033[0m")
     print(f"  • Source Repo:   https://github.com/{REPO_MAIN}")
     print(f"  • Tap Repo:      https://github.com/{REPO_TAP}")
