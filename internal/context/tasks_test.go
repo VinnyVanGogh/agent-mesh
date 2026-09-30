@@ -63,7 +63,10 @@ func TestTaskCRUD(t *testing.T) {
 		t.Errorf("expected task2 ID %s, got %s", task2.ID, foundActive.ID)
 	}
 
-	// 4. Mark Task Done
+	// 4. Mark Task Done (requires a work product)
+	if err := AddWorkProduct(database, task1.ID, "commit", "sha-123456"); err != nil {
+		t.Fatalf("AddWorkProduct failed: %v", err)
+	}
 	if err := MarkTaskDone(database, task1.ID); err != nil {
 		t.Fatalf("MarkTaskDone failed: %v", err)
 	}
