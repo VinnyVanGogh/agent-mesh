@@ -73,11 +73,29 @@ func (a LocalOpenAIAdapter) Execute(ctx context.Context, req ExecRequest) error 
 		model = "default"
 	}
 
-	chatReq := openAIChatRequest{
-		Model: model,
-		Messages: []openAIChatMessage{
+	var messages []openAIChatMessage
+	if len(req.Opts.History) > 0 {
+		for _, h := range req.Opts.History {
+			messages = append(messages, openAIChatMessage{
+				Role:    h.Role,
+				Content: h.Content,
+			})
+		}
+		if req.Opts.Prompt != "" {
+			messages = append(messages, openAIChatMessage{
+				Role:    "user",
+				Content: req.Opts.Prompt,
+			})
+		}
+	} else {
+		messages = []openAIChatMessage{
 			{Role: "user", Content: req.Opts.Prompt},
-		},
+		}
+	}
+
+	chatReq := openAIChatRequest{
+		Model:         model,
+		Messages:      messages,
 		Stream:        true,
 		StreamOptions: &openAIStreamOptions{IncludeUsage: true},
 	}

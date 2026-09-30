@@ -60,16 +60,20 @@ type Model struct {
 	streamStart    time.Time
 	execCancel     context.CancelFunc
 
-	activeModel    string
-	activeProvider string
-	activeTask     string
-	inProcessMode  bool
-	statusMessage  string
+	activeModel          string
+	activeProvider       string
+	activeTask           string
+	inProcessMode        bool
+	statusMessage        string
+	lastExecutedModel    string
+	lastExecutedProvider string
+	lastExecutedFamily   string
+	lastContextWindow    int
 
-	width          int
-	height         int
-	ready          bool
-	quitting       bool
+	width    int
+	height   int
+	ready    bool
+	quitting bool
 }
 
 // NewModel initializes a new Model from Config.
@@ -156,6 +160,12 @@ func NewModel(cfg Config) (*Model, error) {
 			existing, err := store.GetSession(ctx, cfg.SessionID)
 			if err == nil && existing != nil {
 				sess = existing
+				if cfg.Model == "" && sess.Metadata != nil {
+					if m, ok := sess.Metadata["model"].(string); ok && m != "" {
+						modelName = m
+						providerName = ResolveProvider(modelName)
+					}
+				}
 			}
 		}
 		if sess == nil {
@@ -164,11 +174,12 @@ func NewModel(cfg Config) (*Model, error) {
 				sessID = uuid.NewString()
 			}
 			sess = &conversation.Conversation{
-				ID:        sessID,
-				Title:     "StayPoint Chat",
-				RepoPath:  cfg.RepoPath,
-				CreatedAt: time.Now().UTC(),
-				UpdatedAt: time.Now().UTC(),
+				ID:              sessID,
+				Title:           "StayPoint Chat",
+				RepoPath:        cfg.RepoPath,
+				CreatedAt:       time.Now().UTC(),
+				UpdatedAt:       time.Now().UTC(),
+				ProviderHandles: make(map[string]*conversation.ProviderHandle),
 				Metadata: map[string]interface{}{
 					"model":    modelName,
 					"provider": providerName,
@@ -176,11 +187,18 @@ func NewModel(cfg Config) (*Model, error) {
 				},
 			}
 			_ = store.CreateSession(ctx, sess)
+		} else if sess.ProviderHandles == nil {
+			sess.ProviderHandles = make(map[string]*conversation.ProviderHandle)
 		}
 	}
 
 	// Load existing messages into TUI
 	var msgs []ChatMessage
+	lastExecModel := modelName
+	lastExecProv := providerName
+	lastExecFamily := ProviderFamily(providerName)
+	lastCtxWindow := ModelContextWindow(modelName)
+
 	if sess != nil && len(sess.Messages) > 0 {
 		for _, m := range sess.Messages {
 			role := Role(m.Role)
@@ -192,6 +210,30 @@ func NewModel(cfg Config) (*Model, error) {
 				TokenCount: m.TokenCount,
 			})
 		}
+
+		// Find the last assistant turn to restore last executed model and family
+		for i := len(sess.Messages) - 1; i >= 0; i-- {
+			if sess.Messages[i].Role == conversation.RoleAssistant {
+				if sess.Messages[i].Metadata != nil {
+					if mdl, ok := sess.Messages[i].Metadata["model"].(string); ok && mdl != "" {
+						lastExecModel = mdl
+						lastExecProv = ResolveProvider(mdl)
+						lastExecFamily = ProviderFamily(lastExecProv)
+						lastCtxWindow = ModelContextWindow(mdl)
+						if cfg.Model == "" {
+							modelName = mdl
+							providerName = lastExecProv
+						}
+						break
+					}
+				}
+			}
+		}
+	}
+
+	initialStatus := ""
+	if len(msgs) > 0 {
+		initialStatus = fmt.Sprintf("Resumed session (%d messages, active: %s)", len(msgs), modelName)
 	}
 
 	resolver := cfg.CustomResolver
@@ -200,23 +242,28 @@ func NewModel(cfg Config) (*Model, error) {
 	}
 
 	m := &Model{
-		cfg:            cfg,
-		textarea:       ta,
-		spinner:        s,
-		accumulator:    accumulator,
-		renderer:       renderer,
-		store:          store,
-		session:        sess,
-		daemonClient:   daemonClient,
-		adapterResolve: resolver,
-		customAdapter:  cfg.CustomAdapter,
-		messages:       msgs,
-		activeModel:    modelName,
-		activeProvider: providerName,
-		activeTask:     cfg.TaskID,
-		inProcessMode:  inProcess || daemonClient == nil || !daemonClient.IsConnected(),
-		width:          80,
-		height:         24,
+		cfg:                  cfg,
+		textarea:             ta,
+		spinner:              s,
+		accumulator:          accumulator,
+		renderer:             renderer,
+		store:                store,
+		session:              sess,
+		daemonClient:         daemonClient,
+		adapterResolve:       resolver,
+		customAdapter:        cfg.CustomAdapter,
+		messages:             msgs,
+		activeModel:          modelName,
+		activeProvider:       providerName,
+		activeTask:           cfg.TaskID,
+		inProcessMode:        inProcess || daemonClient == nil || !daemonClient.IsConnected(),
+		statusMessage:        initialStatus,
+		lastExecutedModel:    lastExecModel,
+		lastExecutedProvider: lastExecProv,
+		lastExecutedFamily:   lastExecFamily,
+		lastContextWindow:    lastCtxWindow,
+		width:                80,
+		height:               24,
 	}
 
 	return m, nil
@@ -429,15 +476,54 @@ func (m *Model) startAdapterExecution(prompt string) tea.Cmd {
 			}
 		}
 
+		currentFamily := ProviderFamily(m.activeProvider)
+		sameFamily := (m.lastExecutedFamily == currentFamily) && len(m.messages) > 1
+
+		var nativeHandle string
+		if m.session != nil && m.session.ProviderHandles != nil {
+			if h, ok := m.session.ProviderHandles[m.activeProvider]; ok && h != nil {
+				nativeHandle = h.Handle
+			}
+		}
+
+		useNativeResume := sameFamily && nativeHandle != ""
+		downshift := IsDownshift(m.lastExecutedModel, m.activeModel)
+
+		execPrompt := prompt
+		var history []adapter.ChatMessageInput
+
+		if useNativeResume {
+			// Native resume within same family: pass user prompt and native session flag!
+			m.statusMessage = fmt.Sprintf("✓ Native %s resume active (%s)", currentFamily, nativeHandle)
+		} else {
+			// Cross-family switch, first turn, or quota failover: rehydrate from chat_messages!
+			// Exclude the current user message which was just appended (last message in m.messages)
+			priorMsgs := m.messages
+			if len(priorMsgs) > 0 && priorMsgs[len(priorMsgs)-1].Role == RoleUser {
+				priorMsgs = priorMsgs[:len(priorMsgs)-1]
+			}
+			if len(priorMsgs) > 0 {
+				targetWindow := ModelContextWindow(m.activeModel)
+				execPrompt, history = BuildRehydratedTurn(priorMsgs, prompt, downshift, targetWindow)
+				if downshift {
+					m.statusMessage = fmt.Sprintf("⚠ Downshift to %s: rehydrated & condensed history", m.activeModel)
+				} else {
+					m.statusMessage = fmt.Sprintf("⚠ Cross-family switch to %s: rehydrated history", currentFamily)
+				}
+			}
+		}
+
 		pr, pw := io.Pipe()
 
 		execReq := adapter.ExecRequest{
 			Bin: bin,
 			Dir: m.cfg.RepoPath,
 			Opts: adapter.ParsedOptions{
-				Prompt:       prompt,
-				Model:        m.activeModel,
-				OutputFormat: "stream-json",
+				Prompt:         execPrompt,
+				Model:          m.activeModel,
+				ConversationID: nativeHandle,
+				OutputFormat:   "stream-json",
+				History:        history,
 			},
 			Stdout: pw,
 			Stderr: io.Discard,
@@ -465,6 +551,24 @@ func (m *Model) startAdapterExecution(prompt string) tea.Cmd {
 			}
 
 			for _, d := range deltas {
+				if d.SessionID != "" && m.session != nil {
+					// Capture native session ID from the adapter
+					if m.session.ProviderHandles == nil {
+						m.session.ProviderHandles = make(map[string]*conversation.ProviderHandle)
+					}
+					m.session.ProviderHandles[m.activeProvider] = &conversation.ProviderHandle{
+						SessionID: m.session.ID,
+						Provider:  m.activeProvider,
+						Handle:    d.SessionID,
+						Model:     m.activeModel,
+						CreatedAt: time.Now().UTC(),
+						UpdatedAt: time.Now().UTC(),
+					}
+					if m.store != nil {
+						_ = m.store.SetProviderHandle(context.Background(), m.session.ProviderHandles[m.activeProvider])
+					}
+				}
+
 				switch d.Kind {
 				case adapter.DeltaText:
 					m.accumulator.Append(d.Text)
@@ -534,7 +638,22 @@ func (m *Model) finalizeAssistantMessage(usage *adapter.Usage, err error) {
 				"provider": m.activeProvider,
 			},
 		})
+
+		// Update session metadata in store
+		if m.session.Metadata == nil {
+			m.session.Metadata = make(map[string]interface{})
+		}
+		m.session.Metadata["model"] = m.activeModel
+		m.session.Metadata["provider"] = m.activeProvider
+		m.session.Metadata["family"] = ProviderFamily(m.activeProvider)
+		_ = m.store.UpdateSession(context.Background(), m.session)
 	}
+
+	// Update last executed state
+	m.lastExecutedModel = m.activeModel
+	m.lastExecutedProvider = m.activeProvider
+	m.lastExecutedFamily = ProviderFamily(m.activeProvider)
+	m.lastContextWindow = ModelContextWindow(m.activeModel)
 
 	m.refreshViewport(true)
 }
@@ -552,11 +671,15 @@ func (m *Model) handleSlashCommand(line string) tea.Cmd {
 		case "/model":
 			if len(args) == 0 {
 				return slashResultMsg{
-					content: fmt.Sprintf("Active model: **%s** (provider: `%s`)\n\nAvailable models:\n- `gemini-2.5-flash` / `gemini-2.5-pro` / `gemini-3.1-pro-high`\n- `claude-3-7-sonnet` / `claude-3-5-sonnet` / `claude-3-5-haiku`\n- `codex` / `o1` / `o3`\n- `ollama` / `local`\n\nUsage: `/model <name>`", m.activeModel, m.activeProvider),
+					content: fmt.Sprintf("Active model: **%s** (provider: `%s`, family: `%s`)\n\nAvailable models:\n- `gemini-2.5-flash` / `gemini-2.5-pro` / `gemini-3.1-pro-high`\n- `claude-3-7-sonnet` / `claude-3-5-sonnet` / `claude-3-5-haiku`\n- `codex` / `o1` / `o3`\n- `ollama` / `local`\n\nUsage: `/model <name>`", m.activeModel, m.activeProvider, ProviderFamily(m.activeProvider)),
 				}
 			}
 			newModel := args[0]
 			newProv := ResolveProvider(newModel)
+			oldFamily := ProviderFamily(m.activeProvider)
+			newFamily := ProviderFamily(newProv)
+			oldModel := m.activeModel
+
 			m.activeModel = newModel
 			m.activeProvider = newProv
 
@@ -571,8 +694,24 @@ func (m *Model) handleSlashCommand(line string) tea.Cmd {
 					UpdatedAt: time.Now().UTC(),
 				})
 			}
+
+			downshift := IsDownshift(oldModel, newModel)
+			var sb strings.Builder
+			sb.WriteString(fmt.Sprintf("✓ Switched active model to **%s** (provider: `%s`, family: `%s`)", newModel, newProv, newFamily))
+
+			if oldFamily != newFamily && len(m.messages) > 0 {
+				m.statusMessage = fmt.Sprintf("⚠ Warning: Model family switch (%s ➔ %s) reprocesses input tokens from history.", oldFamily, newFamily)
+				sb.WriteString(fmt.Sprintf("\n\n> ⚠ **Family switch (%s ➔ %s)**: Prompt cache invalidated. Input tokens will be reprocessed from conversation history.", oldFamily, newFamily))
+				if downshift {
+					sb.WriteString(fmt.Sprintf("\n> ℹ **Downshifting context window** (%dk ➔ %dk): History will be condensed using `internal/condenser`.", ModelContextWindow(oldModel)/1000, ModelContextWindow(newModel)/1000))
+				}
+			} else if oldFamily == newFamily && len(m.messages) > 0 {
+				m.statusMessage = fmt.Sprintf("✓ Retained %s provider family (native session resume active).", newFamily)
+				sb.WriteString(fmt.Sprintf("\n\n> ✓ **Same family (%s)**: Native session resume active. Prompt cache preserved.", newFamily))
+			}
+
 			return slashResultMsg{
-				content: fmt.Sprintf("✓ Switched active model to **%s** (provider: `%s`)", newModel, newProv),
+				content: sb.String(),
 			}
 
 		case "/task":

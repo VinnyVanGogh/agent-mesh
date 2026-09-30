@@ -94,6 +94,12 @@ func runCommandWithEnv(ctx context.Context, dir string, bin string, args []strin
 	}
 }
 
+// ChatMessageInput represents a normalized message turn passed to an adapter.
+type ChatMessageInput struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 // ParsedOptions holds common execution options extracted from adapter command arguments.
 type ParsedOptions struct {
 	Prompt         string
@@ -102,6 +108,7 @@ type ParsedOptions struct {
 	ConversationID string
 	OutputFormat   string
 	AddDirs        []string
+	History        []ChatMessageInput
 }
 
 func parseRawArgs(rawArgs []string) ParsedOptions {
