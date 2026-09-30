@@ -952,12 +952,30 @@ func renderHTMLToPDF(ctx context.Context, htmlContent string, outputPath string)
 
 	fileURL := "file://" + tmpFile.Name()
 
+	// Create isolated temporary user profile to avoid touching default Chrome profile,
+	// updater services, keychain, or protected directories that trigger macOS App Management prompts.
+	profileDir, err := os.MkdirTemp("", "staypoint-chromedp-*")
+	if err == nil {
+		defer os.RemoveAll(profileDir)
+	}
+
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Headless,
 		chromedp.DisableGPU,
 		chromedp.NoSandbox,
 		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("disable-component-update", true),
+		chromedp.Flag("disable-background-networking", true),
+		chromedp.Flag("disable-sync", true),
+		chromedp.Flag("disable-default-apps", true),
+		chromedp.Flag("no-default-browser-check", true),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("use-mock-keychain", true),
+		chromedp.Flag("password-store", "basic"),
 	)
+	if profileDir != "" {
+		opts = append(opts, chromedp.UserDataDir(profileDir))
+	}
 
 	// Prefer system Google Chrome if present
 	chromePaths := []string{

@@ -244,6 +244,7 @@ func (h *TelemetryHandler) GetReport(w http.ResponseWriter, r *http.Request) {
 	filename := reporting.DefaultReportFilename(reportType, cfg)
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Access-Control-Expose-Headers", "Content-Disposition")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(pdfData)))
 	_, _ = w.Write(pdfData)
 }
