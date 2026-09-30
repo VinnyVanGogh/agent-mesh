@@ -78,8 +78,23 @@ function formatCountdown(targetTs) {
   const mins = Math.floor(diffMs / 60000);
   const hrs = Math.floor(mins / 60);
   const remMins = mins % 60;
-  if (hrs > 0) return `resets in ${hrs}h ${remMins}m`;
-  return `resets in ${remMins}m`;
+  if (hrs >= 24) {
+    const days = Math.floor(hrs / 24);
+    const remHrs = hrs % 24;
+    return `in ${days}d ${remHrs}h`;
+  }
+  if (hrs > 0) return `in ${hrs}h ${remMins}m`;
+  return `in ${remMins}m`;
+}
+
+// Returns exact reset clock time: "3:45 PM" for 5h, "Mon at 3:45 PM" for weekly.
+function formatResetTime(targetTs, isWeekly) {
+  if (!targetTs) return '';
+  const d = new Date(targetTs);
+  const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (!isWeekly) return `at ${timeStr}`;
+  const dayStr = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  return `${dayStr} at ${timeStr}`;
 }
 
 function authHeader() {
@@ -437,8 +452,16 @@ function renderQuotaGauges(quotas) {
 
     const m5Row = el('div', 'gauge-metrics-row');
     m5Row.appendChild(el('span', null, `${used5h.toFixed(1)}% used · ${remaining5h.toFixed(1)}% left`));
-    m5Row.appendChild(el('span', 'gauge-metric-val', formatCountdown(q.five_hour_resets_at) || 'rolling'));
+    const count5h = formatCountdown(q.five_hour_resets_at);
+    const time5h = formatResetTime(q.five_hour_resets_at, false);
+    m5Row.appendChild(el('span', 'gauge-metric-val', count5h ? `resets ${count5h}` : 'rolling'));
     card.appendChild(m5Row);
+    if (time5h) {
+      const t5Row = el('div', 'gauge-metrics-row');
+      t5Row.appendChild(el('span', null, ''));
+      t5Row.appendChild(el('span', 'gauge-reset-time', time5h));
+      card.appendChild(t5Row);
+    }
 
     const b5Row = el('div', 'gauge-metrics-row');
     b5Row.appendChild(el('span', null, `Burn: ${q.burn_rate_5h ? q.burn_rate_5h.toFixed(2) + '%/turn' : '—'}`));
@@ -464,10 +487,18 @@ function renderQuotaGauges(quotas) {
 
     const mWkRow = el('div', 'gauge-metrics-row');
     mWkRow.appendChild(el('span', null, `${usedWk.toFixed(1)}% used · ${remainingWk.toFixed(1)}% left`));
-    if (q.weekly_resets_at) {
-      mWkRow.appendChild(el('span', 'gauge-metric-val', formatCountdown(q.weekly_resets_at)));
+    const countWk = formatCountdown(q.weekly_resets_at);
+    if (countWk) {
+      mWkRow.appendChild(el('span', 'gauge-metric-val', `resets ${countWk}`));
     }
     card.appendChild(mWkRow);
+    const timeWk = formatResetTime(q.weekly_resets_at, true);
+    if (timeWk) {
+      const tWkRow = el('div', 'gauge-metrics-row');
+      tWkRow.appendChild(el('span', null, ''));
+      tWkRow.appendChild(el('span', 'gauge-reset-time', timeWk));
+      card.appendChild(tWkRow);
+    }
 
     const bWkRow = el('div', 'gauge-metrics-row');
     bWkRow.appendChild(el('span', null, `Weekly burn: ${q.burn_rate_weekly ? q.burn_rate_weekly.toFixed(2) + '%/turn' : '—'}`));

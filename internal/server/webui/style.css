@@ -218,6 +218,7 @@ html, body {
 
 .gauge-metrics-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
 .gauge-metric-val { font-weight: 600; color: var(--text); }
+.gauge-reset-time { font-size: 11px; color: var(--muted); font-style: italic; }
 .gauge-projection-box {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 6px; padding: 7px 11px; font-size: 12px; line-height: 1.4;
