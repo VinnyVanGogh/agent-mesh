@@ -276,3 +276,46 @@ func (h *TasksHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
+
+// SetStage handles POST /api/tasks/{id}/stage
+func (h *TasksHandler) SetStage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+
+	var req struct {
+		Stage string `json:"stage"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	req.Stage = strings.TrimSpace(req.Stage)
+	if req.Stage == "" {
+		writeError(w, http.StatusBadRequest, "stage is required")
+		return
+	}
+
+	if err := context.SetTaskExecutionStage(h.db, id, req.Stage); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update task stage: "+err.Error())
+		return
+	}
+
+	if h.hub != nil {
+		h.hub.Publish("task_stage_changed", map[string]string{
+			"task_id": id,
+			"stage":   req.Stage,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"status":  "ok",
+		"task_id": id,
+		"stage":   req.Stage,
+	})
+}
+
