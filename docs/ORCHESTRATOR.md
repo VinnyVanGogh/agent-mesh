@@ -13,6 +13,7 @@ reports left open and replaces unverified performance claims with measurements.
 | `NOTICE` for Paperclip (MIT) | Not added | Added only if Paperclip schemas or prompt text are ported verbatim. Nothing has been ported so far. Revisit in any task that copies such material. |
 | Scheduling model | Event-driven | Nothing wakes an agent on a timer. |
 | Runtime constraints | Pure Go, zero CGO, `modernc.org/sqlite`, no new external daemons | |
+| Monetization gate | NO-GO on paid SaaS / tiers | StayPoint is 100% free, local-first, and open source (Apache-2.0). See `docs/MONETIZATION-DECISION-GATE.md` (T19). |
 
 ## Baselines (measured)
 
