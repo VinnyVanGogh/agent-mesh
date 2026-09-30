@@ -180,10 +180,14 @@ func (h *TasksHandler) AddComment(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Author  string `json:"author"`
 		Message string `json:"message"`
+		Body    string `json:"body"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
+	}
+	if req.Message == "" && req.Body != "" {
+		req.Message = req.Body
 	}
 
 	if strings.TrimSpace(req.Message) == "" {

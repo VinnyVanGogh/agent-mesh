@@ -43,7 +43,7 @@ func isSPARoute(p string) bool {
 		return true
 	}
 	clean := strings.Trim(p, "/")
-	if strings.HasPrefix(clean, "org/") {
+	if strings.HasPrefix(clean, "org/") || strings.HasPrefix(clean, "tasks/") || strings.HasPrefix(clean, "issues/") {
 		return true
 	}
 	return validSPARoutes[clean]

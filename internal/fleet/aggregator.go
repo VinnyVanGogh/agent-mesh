@@ -962,6 +962,18 @@ func (a *Aggregator) populateOrgQuotas(overview *FleetOverview, now time.Time) {
 			}
 
 			if fleetGauge.IsLocked {
+				// Managed Solution is an enterprise work org: check claude_work first before locking claude/personal
+				if (org.Name == "Managed Solution" || strings.Contains(strings.ToLower(org.Name), "managed")) && (key == "claude_personal" || key == "claude") {
+					workGauge := overview.ProviderQuotas["claude_work"]
+					if workGauge != nil && !workGauge.IsLocked {
+						// Work quota has headroom; do not lock org out on Claude
+						orgGauge.IsLocked = false
+						orgGauge.ProjectionStatus = "on_track"
+						orgGauge.ProjectionMessage = "Claude Work prioritized (healthy headroom)"
+						org.ProviderQuotas[key] = orgGauge
+						continue
+					}
+				}
 				orgGauge.ProjectionStatus = "locked_out"
 				if fleetGauge.FiveHourResetsAt != nil && fleetGauge.FiveHourResetsAt.After(now) {
 					orgGauge.ProjectionMessage = fmt.Sprintf("Locked out: resets in %s", formatDuration(fleetGauge.FiveHourResetsAt.Sub(now)))

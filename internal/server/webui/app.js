@@ -312,13 +312,21 @@ function viewToPath(viewName, orgName) {
 
 function pathToRoute(pathname) {
   const p = (pathname || window.location.pathname).replace(/\/+$/, '') || '/';
-  if (p === '/' || p === '/overview') return { view: 'overview', org: null };
+  if (p === '/' || p === '/overview') return { view: 'overview', org: null, taskId: null };
   if (p.startsWith('/org/')) {
     const org = decodeURIComponent(p.slice(5));
-    return { view: 'org-detail', org };
+    return { view: 'org-detail', org, taskId: null };
+  }
+  if (p.startsWith('/tasks/')) {
+    const taskId = decodeURIComponent(p.slice(7));
+    return { view: 'overview', org: null, taskId };
+  }
+  if (p.startsWith('/issues/')) {
+    const taskId = decodeURIComponent(p.slice(8));
+    return { view: 'overview', org: null, taskId };
   }
   const clean = p.replace(/^\//, '');
-  return { view: clean, org: null };
+  return { view: clean, org: null, taskId: null };
 }
 
 function navigateTo(viewName, orgName = null, pushHistory = true) {
@@ -373,7 +381,15 @@ document.querySelectorAll('.sidebar-item').forEach(btn => {
 
 window.addEventListener('popstate', () => {
   const route = pathToRoute();
-  navigateTo(route.view, route.org, false);
+  if (route.taskId) {
+    navigateTo(route.view, route.org, false);
+    openDetail(route.taskId, false);
+  } else {
+    document.getElementById('detail-panel')?.classList.add('hidden');
+    stopChatPoll();
+    state.openDetailTaskId = null;
+    navigateTo(route.view, route.org, false);
+  }
 });
 
 // ── Quick filter buttons ──────────────────────────────────
@@ -606,7 +622,15 @@ function renderOrganizationsGrid(orgs) {
 
     // Organization Rolling Quota & Lockout Indicators
     const orgQuotas = org.provider_quotas || {};
-    const lockouts = Object.values(orgQuotas).filter(q => q.is_locked);
+    const isManagedSol = (org.name || '').toLowerCase().includes('managed');
+    const lockouts = Object.values(orgQuotas).filter(q => {
+      if (!q.is_locked) return false;
+      if (isManagedSol && (q.provider === 'claude_personal' || q.provider === 'claude')) {
+        const workQ = orgQuotas['claude_work'];
+        if (workQ && !workQ.is_locked) return false;
+      }
+      return true;
+    });
     if (lockouts.length) {
       const lockRow = el('div', 'org-lockout-row');
       lockRow.style.cssText = 'color:#f87171;font-size:0.75rem;font-weight:600;margin-top:8px;padding:4px 8px;background:rgba(239,68,68,0.1);border-radius:4px;border:1px solid rgba(239,68,68,0.3);';
@@ -1646,7 +1670,9 @@ function stopChatPoll() {
 async function refreshChatMessages(taskId) {
   if (state.openDetailTaskId !== taskId) { stopChatPoll(); return; }
   try {
-    const cr = await apiFetch(`/api/fleet/tasks/${taskId}/comments`);
+    const isFleet = isFleetTaskId(taskId);
+    const endpoint = isFleet ? `/api/fleet/tasks/${taskId}/comments` : `/api/tasks/${taskId}/comments`;
+    const cr = await apiFetch(endpoint);
     const comments = cr.comments || (Array.isArray(cr) ? cr : []);
     const messagesDiv = document.getElementById('panel-chat-messages');
     const titleEl = document.querySelector('#panel-chat-section .panel-section-title');
@@ -1727,10 +1753,12 @@ function buildChatSection(container, taskId, comments) {
 }
 
 async function sendComment(taskId, body) {
-  const resp = await fetch(`/api/fleet/tasks/${taskId}/comments`, {
+  const isFleet = isFleetTaskId(taskId);
+  const endpoint = isFleet ? `/api/fleet/tasks/${taskId}/comments` : `/api/tasks/${taskId}/comments`;
+  const resp = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeader() },
-    body: JSON.stringify({ body }),
+    body: JSON.stringify({ body, message: body, author: 'user' }),
   });
   if (!resp.ok) throw new Error(`Send failed: ${resp.status}`);
   return resp.json().catch(() => null);
@@ -1938,7 +1966,7 @@ function isFleetTaskId(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
 }
 
-async function openDetail(taskId) {
+async function openDetail(taskId, pushHistory = true) {
   const panel   = document.getElementById('detail-panel');
   const content = document.getElementById('panel-content');
 
@@ -1946,6 +1974,10 @@ async function openDetail(taskId) {
   state.openDetailTaskId = taskId;
   panel.classList.remove('hidden');
   content.innerHTML = '<p style="color:var(--muted)">Loading…</p>';
+
+  if (pushHistory && !window.location.pathname.startsWith('/tasks/' + taskId) && !window.location.pathname.startsWith('/issues/' + taskId)) {
+    history.pushState({ taskId }, '', '/tasks/' + taskId);
+  }
 
   const isFleet = isFleetTaskId(taskId);
   const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
@@ -1965,31 +1997,22 @@ async function openDetail(taskId) {
 
     renderDetailContent(content, task);
 
-    if (isFleet) {
-      let comments = inlineComments;
-      if (!comments.length) {
-        try {
-          const cr = await apiFetch(`${apiBase}/${taskId}/comments`);
-          comments = cr.comments || (Array.isArray(cr) ? cr : []);
-        } catch { /* comments optional */ }
-      }
-      buildChatSection(content, taskId, comments);
-      startChatPoll(taskId);
-    } else {
-      if (inlineComments.length) {
-        appendComments(content, inlineComments);
-      } else {
-        try {
-          const cr = await apiFetch(`${apiBase}/${taskId}/comments`);
-          const comments = cr.comments || (Array.isArray(cr) ? cr : []);
-          if (comments.length) appendComments(content, comments);
-        } catch { /* comments optional */ }
-      }
+    // Chat section is rendered for ALL tasks (native and fleet, todo/in_progress/etc.)
+    let comments = inlineComments;
+    if (!comments.length) {
+      try {
+        const cr = await apiFetch(`${apiBase}/${taskId}/comments`);
+        comments = cr.comments || (Array.isArray(cr) ? cr : []);
+      } catch { /* comments optional */ }
     }
+    buildChatSection(content, taskId, comments);
+    startChatPoll(taskId);
   } catch {
     const cached = state.tasks[taskId];
     if (cached) {
       renderDetailContent(content, cached);
+      buildChatSection(content, taskId, []);
+      startChatPoll(taskId);
     } else {
       const p = el('p', null, 'Task not found or failed to load.');
       p.style.color = 'var(--red)';
@@ -2018,6 +2041,11 @@ document.getElementById('panel-close').addEventListener('click', () => {
   document.getElementById('detail-panel').classList.add('hidden');
   stopChatPoll();
   state.openDetailTaskId = null;
+  if (window.location.pathname.startsWith('/tasks/') || window.location.pathname.startsWith('/issues/')) {
+    const activeBtn = document.querySelector('.sidebar-item.active');
+    const viewName = activeBtn?.dataset?.view || 'overview';
+    navigateTo(viewName, state.currentOrgDetail, true);
+  }
 });
 
 // ── Render All ────────────────────────────────────────────
@@ -2403,5 +2431,8 @@ document.getElementById('projects-org-filter')?.addEventListener('change', () =>
 loadAll().then(() => {
   const initialRoute = pathToRoute();
   navigateTo(initialRoute.view, initialRoute.org, false);
+  if (initialRoute.taskId) {
+    openDetail(initialRoute.taskId, false);
+  }
   connectSSE();
 });
