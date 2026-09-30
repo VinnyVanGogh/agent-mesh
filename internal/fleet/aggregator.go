@@ -527,15 +527,41 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 				// Fetch agents
 				if agents, err := a.PaperclipClient.ListAgents(ctx, c.ID); err == nil {
 					for _, ag := range agents {
-						provider := normalizeProvider(ag.Role + " " + ag.Name)
+						model := extractConfigString(ag.RuntimeConfig, "model", "defaultModel", "default_model")
+						if model == "" {
+							model = extractConfigString(ag.AdapterConfig, "model", "defaultModel", "default_model")
+						}
+						if model == "" {
+							model = ag.Model
+						}
+						provider := ResolveAgentProvider(ag.AdapterType, ag.AdapterConfig, ag.RuntimeConfig, model, ag.Name, ag.Role, ag.Title)
+
+						status := ag.Status
+						if status == "" {
+							status = "active"
+						}
+
+						hb := now
+						if ag.LastHeartbeatAt != "" {
+							if t, err := time.Parse(time.RFC3339Nano, ag.LastHeartbeatAt); err == nil {
+								hb = t
+							} else if t, err := time.Parse(time.RFC3339, ag.LastHeartbeatAt); err == nil {
+								hb = t
+							}
+						}
+
+						quota := getProviderQuotaGauge(overview.ProviderQuotas, provider)
+
 						aItem := AgentItem{
 							ID:            ag.ID,
 							Name:          ag.Name,
 							Role:          ag.Role,
 							Organization:  c.Name,
 							Provider:      provider,
-							Status:        "active",
-							LastHeartbeat: now,
+							Model:         model,
+							Status:        status,
+							LastHeartbeat: hb,
+							Quota:         quota,
 						}
 						orgSummary.ActiveAgents++
 						orgSummary.ActiveAgentsByProvider[provider]++
@@ -678,14 +704,16 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 						} else {
 							hb = now
 						}
+						quota := getProviderQuotaGauge(overview.ProviderQuotas, provider)
 						aItem := AgentItem{
 							ID:            id,
-							Name:          fmt.Sprintf("%s Session (%s)", titleCase(agType), shortID(id)),
+							Name:          fmt.Sprintf("%s Session (%s)", titleCase(provider), shortID(id)),
 							Role:          "Local Agent",
 							Organization:  org,
 							Provider:      provider,
 							Status:        st,
 							LastHeartbeat: hb,
+							Quota:         quota,
 						}
 						orgSummary.ActiveAgents++
 						orgSummary.ActiveAgentsByProvider[provider]++
@@ -851,18 +879,143 @@ func normalizeBlockReason(reason string) string {
 	return reason
 }
 
-func normalizeProvider(s string) string {
-	lower := strings.ToLower(s)
+func detectProviderStr(s string) string {
+	lower := strings.ToLower(strings.TrimSpace(s))
+	if lower == "" || lower == "other" || lower == "unknown" {
+		return ""
+	}
 	switch {
 	case strings.Contains(lower, "gemini") || strings.Contains(lower, "google"):
 		return "gemini"
-	case strings.Contains(lower, "claude") || strings.Contains(lower, "anthropic"):
+	case strings.Contains(lower, "claude") || strings.Contains(lower, "anthropic") || strings.Contains(lower, "fable"):
 		return "claude"
-	case strings.Contains(lower, "codex") || strings.Contains(lower, "openai") || strings.Contains(lower, "gpt"):
+	case strings.Contains(lower, "codex") || strings.Contains(lower, "openai") || strings.Contains(lower, "gpt") || strings.Contains(lower, "o1") || strings.Contains(lower, "o3"):
 		return "openai"
 	default:
-		return "other"
+		if strings.HasSuffix(lower, "_local") {
+			trimmed := strings.TrimSuffix(lower, "_local")
+			if trimmed != "" && trimmed != "other" && trimmed != "unknown" {
+				return trimmed
+			}
+		}
+		return ""
 	}
+}
+
+func extractConfigString(m map[string]interface{}, keys ...string) string {
+	if m == nil {
+		return ""
+	}
+	for _, k := range keys {
+		if val, ok := m[k]; ok && val != nil {
+			if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return ""
+}
+
+// ResolveAgentProvider determines the provider strictly for an agent, never returning "other".
+// It inspects runtime config, adapter type (gemini_local, claude_local, codex_local),
+// adapter config, model, name, title, and role.
+func ResolveAgentProvider(adapterType string, adapterConfig, runtimeConfig map[string]interface{}, model, name, role, title string) string {
+	// 1. Inspect runtime config
+	if rcProv := extractConfigString(runtimeConfig, "provider", "model", "defaultModel", "default_model", "model_family", "modelFamily", "adapter", "adapter_type"); rcProv != "" {
+		if p := detectProviderStr(rcProv); p != "" {
+			return p
+		}
+		if p := extractConfigString(runtimeConfig, "provider"); p != "" && !strings.EqualFold(p, "other") && !strings.EqualFold(p, "unknown") {
+			return strings.ToLower(strings.TrimSpace(p))
+		}
+	}
+
+	// 2. Inspect adapter type
+	if adapterType != "" {
+		if p := detectProviderStr(adapterType); p != "" {
+			return p
+		}
+		lower := strings.ToLower(strings.TrimSpace(adapterType))
+		trimmed := strings.TrimSuffix(lower, "_local")
+		if trimmed != "" && trimmed != "other" && trimmed != "unknown" {
+			return trimmed
+		}
+	}
+
+	// 3. Inspect adapter config
+	if acProv := extractConfigString(adapterConfig, "provider", "model", "defaultModel", "default_model", "model_family", "modelFamily"); acProv != "" {
+		if p := detectProviderStr(acProv); p != "" {
+			return p
+		}
+		if p := extractConfigString(adapterConfig, "provider"); p != "" && !strings.EqualFold(p, "other") && !strings.EqualFold(p, "unknown") {
+			return strings.ToLower(strings.TrimSpace(p))
+		}
+	}
+
+	// 4. Inspect model
+	if model != "" {
+		if p := detectProviderStr(model); p != "" {
+			return p
+		}
+	}
+
+	// 5. Inspect name, title, and role
+	if p := detectProviderStr(name + " " + title + " " + role); p != "" {
+		return p
+	}
+
+	// Default fallback: Never return "other"
+	return "gemini"
+}
+
+func getProviderQuotaGauge(quotas map[string]*ProviderQuotaGauge, provider string) *ProviderQuotaGauge {
+	if quotas == nil || provider == "" {
+		return nil
+	}
+	p := strings.ToLower(provider)
+	if q, ok := quotas[p]; ok && q != nil {
+		return q
+	}
+	if strings.Contains(p, "claude") || strings.Contains(p, "anthropic") || strings.Contains(p, "fable") {
+		if q, ok := quotas["claude"]; ok && q != nil {
+			return q
+		}
+		if q, ok := quotas["claude_personal"]; ok && q != nil {
+			return q
+		}
+		if q, ok := quotas["claude_work"]; ok && q != nil {
+			return q
+		}
+	}
+	if strings.Contains(p, "gemini") || strings.Contains(p, "google") {
+		if q, ok := quotas["gemini"]; ok && q != nil {
+			return q
+		}
+	}
+	if strings.Contains(p, "openai") || strings.Contains(p, "codex") || strings.Contains(p, "gpt") {
+		if q, ok := quotas["openai"]; ok && q != nil {
+			return q
+		}
+	}
+	return quotas["gemini"]
+}
+
+func normalizeProvider(s string) string {
+	detected := detectProviderStr(s)
+	if detected != "" {
+		return detected
+	}
+	lower := strings.ToLower(strings.TrimSpace(s))
+	if lower == "" || lower == "other" || lower == "unknown" {
+		return "gemini"
+	}
+	if strings.HasSuffix(lower, "_local") {
+		trimmed := strings.TrimSuffix(lower, "_local")
+		if trimmed != "" && trimmed != "other" && trimmed != "unknown" {
+			return trimmed
+		}
+	}
+	return "gemini"
 }
 
 func derivePrefix(name string) string {

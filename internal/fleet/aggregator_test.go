@@ -254,3 +254,123 @@ func TestAggregatorWithTelemetryDB(t *testing.T) {
 		t.Fatalf("expected 3 models in spend breakdown, got %d", len(overview.ModelSpend))
 	}
 }
+
+func TestResolveAgentProvider(t *testing.T) {
+	tests := []struct {
+		name          string
+		adapterType   string
+		adapterConfig map[string]interface{}
+		runtimeConfig map[string]interface{}
+		model         string
+		agentName     string
+		role          string
+		title         string
+		expected      string
+	}{
+		{
+			name:        "gemini_local adapter type",
+			adapterType: "gemini_local",
+			agentName:   "Telemetry & Quota Pacing Engineer",
+			role:        "engineer",
+			expected:    "gemini",
+		},
+		{
+			name:        "claude_local adapter type",
+			adapterType: "claude_local",
+			agentName:   "Lead Systems & Daemon Architect",
+			role:        "cto",
+			expected:    "claude",
+		},
+		{
+			name:        "codex_local adapter type",
+			adapterType: "codex_local",
+			agentName:   "Code Synthesis Specialist",
+			role:        "engineer",
+			expected:    "openai",
+		},
+		{
+			name:          "runtimeConfig with model claude",
+			adapterType:   "",
+			runtimeConfig: map[string]interface{}{"model": "claude-sonnet-4-6"},
+			agentName:     "Research Engineer",
+			role:          "engineer",
+			expected:      "claude",
+		},
+		{
+			name:          "runtimeConfig with provider openai",
+			adapterType:   "",
+			runtimeConfig: map[string]interface{}{"provider": "openai"},
+			agentName:     "General Assistant",
+			role:          "general",
+			expected:      "openai",
+		},
+		{
+			name:          "adapterConfig with defaultModel gemini",
+			adapterType:   "",
+			adapterConfig: map[string]interface{}{"defaultModel": "gemini-2.5-flash"},
+			agentName:     "Build Worker",
+			role:          "devops",
+			expected:      "gemini",
+		},
+		{
+			name:        "name contains Claude Fable",
+			adapterType: "",
+			agentName:   "Claude Fable Engineer",
+			role:        "engineer",
+			expected:    "claude",
+		},
+		{
+			name:        "completely unknown agent with no indicators defaults to gemini, never other",
+			adapterType: "",
+			agentName:   "Generic Helper",
+			role:        "assistant",
+			expected:    "gemini",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ResolveAgentProvider(tc.adapterType, tc.adapterConfig, tc.runtimeConfig, tc.model, tc.agentName, tc.role, tc.title)
+			if got != tc.expected {
+				t.Errorf("ResolveAgentProvider() = %q, expected %q", got, tc.expected)
+			}
+			if got == "other" {
+				t.Errorf("ResolveAgentProvider() returned 'other' which is strictly forbidden")
+			}
+		})
+	}
+}
+
+func TestAgentQuotaBinding(t *testing.T) {
+	testDB := setupTestDB(t)
+	defer testDB.Close()
+
+	agg := &Aggregator{
+		DB: testDB,
+		Now: func() time.Time {
+			return time.Date(2026, 9, 30, 8, 0, 0, 0, time.UTC)
+		},
+	}
+
+	overview, err := agg.Gather(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error gathering fleet overview: %v", err)
+	}
+
+	if len(overview.GlobalAgents.Items) == 0 {
+		t.Fatalf("expected aggregated agents in overview")
+	}
+
+	for _, ag := range overview.GlobalAgents.Items {
+		if ag.Provider == "other" || ag.Provider == "" {
+			t.Errorf("agent %s has invalid provider %q", ag.Name, ag.Provider)
+		}
+		if ag.Quota == nil {
+			t.Errorf("agent %s (%s) does not have 5h quota bound", ag.Name, ag.Provider)
+		} else {
+			if ag.Quota.Provider != ag.Provider && (ag.Provider == "openai" && ag.Quota.Provider != "openai") {
+				t.Errorf("agent %s provider %q mismatched with quota %q", ag.Name, ag.Provider, ag.Quota.Provider)
+			}
+		}
+	}
+}

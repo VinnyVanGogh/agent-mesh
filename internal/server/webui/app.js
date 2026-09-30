@@ -1286,23 +1286,45 @@ function getAgentQuota(providerQuotas, provider) {
     }
   }
 
+  // Ensure cascading filters are populated
+  const orgSel = document.getElementById('agents-org-filter');
+  if (orgSel && orgSel.options.length <= 1) {
+    populateAgentsFilters();
+  }
+
   // Filter agents
   const searchTerm = (state.agentsFilter.search || '').toLowerCase();
   const provFilter = state.agentsFilter.provider || 'all';
   const orgFilter = state.agentsFilter.org || 'all';
+  const projFilter = state.agentsFilter.project || 'all';
   const statusFilter = state.agentsFilter.status || 'all';
 
   const filtered = enrichedAgents.filter(a => {
     if (statusFilter !== 'all' && a.normalizedStatus !== statusFilter) return false;
-    if (provFilter !== 'all' && (a.provider || 'other').toLowerCase() !== provFilter.toLowerCase()) return false;
-    if (orgFilter !== 'all' && a.org !== orgFilter) return false;
+    if (provFilter !== 'all' && (a.provider || '').toLowerCase() !== provFilter.toLowerCase()) return false;
+    if (orgFilter !== 'all' && (a.org || a.organization || '') !== orgFilter) return false;
+
+    // Project filter (cascading dependency)
+    if (projFilter !== 'all') {
+      const agentProjects = getAgentProjects(a);
+      if (!agentProjects.includes(projFilter)) return false;
+    }
     if (searchTerm) {
       const name = (a.name || '').toLowerCase();
       const role = (a.role || '').toLowerCase();
       const org = (a.org || '').toLowerCase();
       const prov = (a.provider || '').toLowerCase();
+      const id   = (a.id || '').toLowerCase();
       const task = (a.runningTask?.title || a.runningTask?.identifier || '').toLowerCase();
-      if (!name.includes(searchTerm) && !role.includes(searchTerm) && !org.includes(searchTerm) && !prov.includes(searchTerm) && !task.includes(searchTerm)) {
+      const agentProjs = getAgentProjects(a).join(' ').toLowerCase();
+
+      if (!name.includes(searchTerm) &&
+          !role.includes(searchTerm) &&
+          !org.includes(searchTerm) &&
+          !prov.includes(searchTerm) &&
+          !id.includes(searchTerm) &&
+          !task.includes(searchTerm) &&
+          !agentProjs.includes(searchTerm)) {
         return false;
       }
     }
@@ -1354,6 +1376,10 @@ function getAgentQuota(providerQuotas, provider) {
     }
     if (a.model) {
       meta.appendChild(el('span', 'agent-model-badge', a.model));
+    }
+    const agentProjs = getAgentProjects(a);
+    for (const p of agentProjs) {
+      meta.appendChild(el('span', 'pill', p));
     }
     card.appendChild(meta);
 
