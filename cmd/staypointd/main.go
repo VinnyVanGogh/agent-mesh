@@ -10,11 +10,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/ipc"
 	"github.com/VinnyVanGogh/staypoint/internal/logging"
 	"github.com/VinnyVanGogh/staypoint/internal/mcp"
+	"github.com/VinnyVanGogh/staypoint/internal/server"
 	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 )
 
@@ -147,6 +150,37 @@ func runDaemon(ctx context.Context) error {
 	watcher, err := telemetry.NewWatcher(cfg)
 	if err != nil {
 		return fmt.Errorf("init watcher: %w", err)
+	}
+
+	// 4. Start HTTP & SSE Local Daemon Server (127.0.0.1 only)
+	dbStore, err := db.Open(cfg.DBPath)
+	if err != nil {
+		slog.Warn("Failed to open database for HTTP server", slog.Any("error", err))
+	} else {
+		tokenPath := filepath.Join(cfg.DataDir, "auth_token")
+		httpServer, err := server.New(server.Options{
+			BindHost:  "127.0.0.1",
+			Port:      41421,
+			TokenPath: tokenPath,
+			DB:        dbStore.DB(),
+		})
+		if err != nil {
+			slog.Warn("Failed to initialize HTTP server", slog.Any("error", err))
+		} else if err := httpServer.Start(); err != nil {
+			slog.Warn("Failed to start HTTP server", slog.Any("error", err))
+		} else {
+			slog.Info("HTTP and SSE server active",
+				slog.String("url", httpServer.URL()),
+				slog.String("token_path", tokenPath),
+			)
+			go func() {
+				<-ctx.Done()
+				shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				_ = httpServer.Shutdown(shutCtx)
+				_ = dbStore.Close()
+			}()
+		}
 	}
 
 	slog.Info("Background daemon ready and running")
