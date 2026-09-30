@@ -12,6 +12,7 @@ import (
 	"github.com/VinnyVanGogh/staypoint/internal/checkpoint"
 	"github.com/VinnyVanGogh/staypoint/internal/condenser"
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
 	"github.com/VinnyVanGogh/staypoint/internal/router"
 	"github.com/VinnyVanGogh/staypoint/internal/wire"
 )
@@ -166,6 +167,28 @@ func (s *Server) getToolsList() []Tool {
 				Properties: map[string]Property{},
 			},
 		},
+		{
+			Name:        "staypoint_wake",
+			Description: "trigger an event-driven wake for an agent task",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"task_id": {
+						Type:        "string",
+						Description: "ID of the task to wake",
+					},
+					"reason": {
+						Type:        "string",
+						Description: "Reason for the wake (e.g. assignment, comment, blocker_cleared)",
+					},
+					"idempotency_key": {
+						Type:        "string",
+						Description: "Unique key to prevent duplicate wakes for the same event",
+					},
+				},
+				Required: []string{"task_id", "reason"},
+			},
+		},
 	}
 }
 
@@ -185,6 +208,8 @@ func (s *Server) handleCallTool(ctx context.Context, params CallToolParams) *Too
 		return s.handleCondense(ctx, params.Arguments)
 	case "staypoint_status":
 		return s.handleStatus(ctx, params.Arguments)
+	case "staypoint_wake":
+		return s.handleWake(ctx, params.Arguments)
 	default:
 		return toolError(fmt.Sprintf("unknown tool: %s", params.Name))
 	}
@@ -432,4 +457,23 @@ func (s *Server) handleStatus(ctx context.Context, rawArgs json.RawMessage) *Too
 		return toolError(fmt.Sprintf("status marshal error: %v", err))
 	}
 	return toolSuccess(string(data))
+}
+
+func (s *Server) handleWake(ctx context.Context, rawArgs json.RawMessage) *ToolCallResult {
+	var args struct {
+		TaskID         string `json:"task_id"`
+		Reason         string `json:"reason"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if len(rawArgs) > 0 {
+		_ = json.Unmarshal(rawArgs, &args)
+	}
+
+	if args.TaskID == "" || args.Reason == "" {
+		return toolError("task_id and reason are required")
+	}
+
+	orchestrator.GlobalDispatcher.Wake(args.TaskID, args.Reason, args.IdempotencyKey)
+
+	return toolSuccess("wake dispatched")
 }

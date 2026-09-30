@@ -12,9 +12,11 @@ import (
 	"syscall"
 
 	"github.com/VinnyVanGogh/staypoint/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/ipc"
 	"github.com/VinnyVanGogh/staypoint/internal/logging"
 	"github.com/VinnyVanGogh/staypoint/internal/mcp"
+	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
 	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 )
 
@@ -121,6 +123,14 @@ func runDaemon(ctx context.Context) error {
 	if err := config.EnsureDataDir(cfg); err != nil {
 		return fmt.Errorf("ensure data dir: %w", err)
 	}
+
+	// 0. Recovery Scan
+	dbConn, err := db.Open(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("failed to open database for recovery scan: %w", err)
+	}
+	_ = orchestrator.RecoveryScan(ctx, dbConn.DB())
+	dbConn.Close()
 
 	// 1. Start Rate Limit Notifier
 	notifier := telemetry.NewNotifier()
