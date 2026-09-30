@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS task_relations (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
     blocks_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    rationale     TEXT,
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     UNIQUE(task_id, blocks_id)
 );
@@ -566,6 +567,23 @@ var Migrations = []Migration{
 			}
 			for _, q := range queries {
 				if _, err := conn.Exec(q); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
+	{
+		Version: 8,
+		Name:    "blocker_graph_and_rationales",
+		Up: func(conn *sql.DB) error {
+			queries := []string{
+				`ALTER TABLE task_relations ADD COLUMN rationale TEXT;`,
+				`CREATE INDEX IF NOT EXISTS idx_task_relations_blocks ON task_relations (blocks_id);`,
+				`CREATE INDEX IF NOT EXISTS idx_task_relations_task ON task_relations (task_id);`,
+			}
+			for _, q := range queries {
+				if _, err := conn.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 					return err
 				}
 			}

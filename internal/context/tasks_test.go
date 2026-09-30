@@ -212,3 +212,110 @@ func TestTaskBudget(t *testing.T) {
 		t.Errorf("expected unblocked after increasing budget to $10.00")
 	}
 }
+
+func TestBlockerGraphAndRationales(t *testing.T) {
+	database := setupTestDB(t)
+
+	// Create 3 tasks: Task 1 (DB migration), Task 2 (Auth API), Task 3 (Frontend UI)
+	t1, err := CreateTask(database, "Database Migration", ".", "feature/db", "work")
+	if err != nil {
+		t.Fatalf("failed to create task 1: %v", err)
+	}
+	t2, err := CreateTask(database, "Auth API Endpoints", ".", "feature/auth", "work")
+	if err != nil {
+		t.Fatalf("failed to create task 2: %v", err)
+	}
+	t3, err := CreateTask(database, "Frontend Dashboard", ".", "feature/ui", "work")
+	if err != nil {
+		t.Fatalf("failed to create task 3: %v", err)
+	}
+
+	// Block Task 3 on Task 1 and Task 2 with explicit rationales
+	blockers := []BlockerInput{
+		{ID: t1.ID, Rationale: "Requires database schema migration to complete"},
+		{ID: t2.ID, Rationale: "Requires OAuth JWT verification endpoints"},
+	}
+	if err := BlockTaskWithBlockers(database, t3.ID, "Waiting on backend services", blockers); err != nil {
+		t.Fatalf("BlockTaskWithBlockers failed: %v", err)
+	}
+
+	// Verify Task 3 is blocked and has BlockedBy relations with rationales
+	task3, err := GetTask(database, t3.ID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if !task3.IsBlocked {
+		t.Fatalf("expected task 3 to be blocked")
+	}
+	if task3.ExecutionStage != "blocked" {
+		t.Errorf("expected execution stage 'blocked', got %s", task3.ExecutionStage)
+	}
+	if len(task3.BlockedBy) != 2 {
+		t.Fatalf("expected 2 BlockedBy relations, got %d", len(task3.BlockedBy))
+	}
+	if task3.BlockedBy[0].Rationale == "" || task3.BlockedBy[1].Rationale == "" {
+		t.Errorf("expected non-empty rationales for blockers, got: %+v", task3.BlockedBy)
+	}
+
+	// Verify Task 1 has Task 3 in Blocks
+	task1, err := GetTask(database, t1.ID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if len(task1.Blocks) != 1 || task1.Blocks[0].ID != t3.ID {
+		t.Fatalf("expected task 1 to block task 3, got: %+v", task1.Blocks)
+	}
+
+	// Test GetTaskDependencyGraph
+	graph, err := GetTaskDependencyGraph(database, t3.ID)
+	if err != nil {
+		t.Fatalf("GetTaskDependencyGraph failed: %v", err)
+	}
+	if len(graph.BlockedBy) != 2 {
+		t.Errorf("expected graph.BlockedBy to have 2 items, got %d", len(graph.BlockedBy))
+	}
+	if graph.UpstreamTree == nil || len(graph.UpstreamTree.Children) != 2 {
+		t.Errorf("expected upstream tree with 2 children")
+	}
+
+	// Test Unblocking from one blocker (Task 1)
+	if err := RemoveTaskBlocker(database, t3.ID, t1.ID); err != nil {
+		t.Fatalf("RemoveTaskBlocker failed: %v", err)
+	}
+	task3After1, err := GetTask(database, t3.ID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	// Task 3 should still be blocked because Task 2 is still blocking it
+	if !task3After1.IsBlocked {
+		t.Errorf("expected task 3 to still be blocked by task 2")
+	}
+	if len(task3After1.BlockedBy) != 1 {
+		t.Fatalf("expected 1 remaining blocker, got %d", len(task3After1.BlockedBy))
+	}
+	if task3After1.BlockedBy[0].ID != t2.ID {
+		t.Errorf("expected remaining blocker to be task 2, got %s", task3After1.BlockedBy[0].ID)
+	}
+
+	// Now complete Task 2 (MarkTaskDone) -> should automatically unblock Task 3
+	if err := AddWorkProduct(database, t2.ID, "commit", "sha256:abc123"); err != nil {
+		t.Fatalf("AddWorkProduct failed: %v", err)
+	}
+	if err := MarkTaskDone(database, t2.ID); err != nil {
+		t.Fatalf("MarkTaskDone failed: %v", err)
+	}
+	task3Unblocked, err := GetTask(database, t3.ID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+	if task3Unblocked.IsBlocked {
+		t.Errorf("expected task 3 to be unblocked after task 2 completed")
+	}
+	if len(task3Unblocked.BlockedBy) != 0 {
+		t.Errorf("expected 0 remaining blockers, got %d", len(task3Unblocked.BlockedBy))
+	}
+	if task3Unblocked.ExecutionStage != "todo" {
+		t.Errorf("expected execution stage restored to 'todo', got %s", task3Unblocked.ExecutionStage)
+	}
+}
+

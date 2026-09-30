@@ -1912,28 +1912,227 @@ function renderDetailContent(content, task) {
     content.appendChild(govSection);
   }
 
-  // Blocker — Bug 2 fix: show normalized reason
-  if (task.is_blocked || task.status === 'blocked') {
+  // Blocker Status & Upstream Dependencies
+  const isBlocked = Boolean(task.is_blocked || task.status === 'blocked');
+  const hasBlockers = Boolean(task.blocked_by && task.blocked_by.length > 0);
+  const rawReason = task.block_reason || '';
+  const hasExplicitReason = rawReason && rawReason.toLowerCase() !== 'blocked via tui' && rawReason.trim() !== '';
+
+  if (isBlocked || hasBlockers) {
     const blockerWrap = el('div', 'panel-field');
     blockerWrap.appendChild(el('div', 'panel-field-label', 'Blocked'));
-    const rawReason = task.block_reason || '';
-    const normalizedReason = rawReason && rawReason.toLowerCase() !== 'blocked via tui' && rawReason !== ''
-      ? rawReason
-      : 'Blocked — no specific reason recorded';
-    const tag = el('span', 'panel-blocker-tag', `⚠ ${normalizedReason}`);
+
+    let blockerSummary = '';
+    if (hasBlockers) {
+      const count = task.blocked_by.length;
+      blockerSummary = `⚠ Blocked by ${count} upstream task${count > 1 ? 's' : ''}`;
+      if (hasExplicitReason && !rawReason.toLowerCase().startsWith('blocked by')) {
+        blockerSummary += ` · ${rawReason}`;
+      }
+    } else if (hasExplicitReason) {
+      blockerSummary = `⚠ ${rawReason}`;
+    } else {
+      blockerSummary = '⚠ Blocked — no specific reason recorded';
+    }
+
+    const tag = el('span', 'panel-blocker-tag', blockerSummary);
     blockerWrap.appendChild(tag);
     content.appendChild(blockerWrap);
   }
 
-  // Blocked by issues
+  // Clickable Upstream Blockers ("Blocked By")
   if (task.blocked_by?.length) {
-    const bbField = el('div', 'panel-field');
-    bbField.appendChild(el('div', 'panel-field-label', 'Blocked By'));
+    const bbSection = el('div', 'panel-field');
+    bbSection.appendChild(el('div', 'panel-field-label', `Blocked By (${task.blocked_by.length})`));
+
+    const bbList = el('div', 'panel-blocker-list');
+    bbList.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:6px;';
+
     for (const bb of task.blocked_by) {
-      const tag = el('div', 'panel-field-value', `${bb.identifier || bb.id?.slice(0,8)} — ${bb.title || ''}`);
-      bbField.appendChild(tag);
+      const card = el('div', 'panel-blocker-card');
+      card.style.cssText = 'padding:8px 10px;background:rgba(255,255,255,0.04);border:1px solid rgba(248,81,73,0.3);border-radius:6px;cursor:pointer;transition:all 0.15s ease;display:flex;flex-direction:column;gap:3px;';
+      card.addEventListener('mouseenter', () => { card.style.background = 'rgba(248,81,73,0.1)'; card.style.borderColor = 'var(--red)'; });
+      card.addEventListener('mouseleave', () => { card.style.background = 'rgba(255,255,255,0.04)'; card.style.borderColor = 'rgba(248,81,73,0.3)'; });
+      card.addEventListener('click', () => openDetail(bb.id));
+
+      const headerRow = el('div', null);
+      headerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:0.8rem;';
+
+      const left = el('div', null);
+      left.style.cssText = 'display:flex;align-items:center;gap:6px;min-width:0;';
+      const linkId = el('span', 'panel-task-link', `${bb.identifier || bb.id?.slice(0, 10)} ↗`);
+      linkId.style.cssText = 'font-weight:600;color:var(--accent, #38bdf8);text-decoration:underline;';
+      const title = el('span', null, bb.title || bb.name || 'Untitled Task');
+      title.style.cssText = 'color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;';
+      left.appendChild(linkId);
+      left.appendChild(title);
+
+      const stage = bb.execution_stage || bb.status || 'todo';
+      const stagePill = el('span', 'status-pill', stage);
+      stagePill.style.fontSize = '0.7rem';
+      stagePill.style.padding = '1px 6px';
+
+      headerRow.appendChild(left);
+      headerRow.appendChild(stagePill);
+      card.appendChild(headerRow);
+
+      if (bb.rationale) {
+        const rat = el('div', 'panel-blocker-rationale');
+        rat.style.cssText = 'font-size:0.75rem;color:var(--amber, #f59e0b);margin-top:2px;font-style:italic;';
+        rat.textContent = `↳ Rationale: ${bb.rationale}`;
+        card.appendChild(rat);
+      }
+
+      bbList.appendChild(card);
     }
-    content.appendChild(bbField);
+    bbSection.appendChild(bbList);
+    content.appendChild(bbSection);
+  }
+
+  // Clickable Downstream Tasks ("Blocks")
+  if (task.blocks?.length) {
+    const blocksSection = el('div', 'panel-field');
+    blocksSection.appendChild(el('div', 'panel-field-label', `Blocks (${task.blocks.length})`));
+
+    const blocksList = el('div', 'panel-blocker-list');
+    blocksList.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-top:6px;';
+
+    for (const b of task.blocks) {
+      const card = el('div', 'panel-blocker-card');
+      card.style.cssText = 'padding:8px 10px;background:rgba(255,255,255,0.04);border:1px solid rgba(56,189,248,0.3);border-radius:6px;cursor:pointer;transition:all 0.15s ease;display:flex;flex-direction:column;gap:3px;';
+      card.addEventListener('mouseenter', () => { card.style.background = 'rgba(56,189,248,0.1)'; card.style.borderColor = 'var(--accent, #38bdf8)'; });
+      card.addEventListener('mouseleave', () => { card.style.background = 'rgba(255,255,255,0.04)'; card.style.borderColor = 'rgba(56,189,248,0.3)'; });
+      card.addEventListener('click', () => openDetail(b.id));
+
+      const headerRow = el('div', null);
+      headerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:0.8rem;';
+
+      const left = el('div', null);
+      left.style.cssText = 'display:flex;align-items:center;gap:6px;min-width:0;';
+      const linkId = el('span', 'panel-task-link', `${b.identifier || b.id?.slice(0, 10)} ↗`);
+      linkId.style.cssText = 'font-weight:600;color:var(--accent, #38bdf8);text-decoration:underline;';
+      const title = el('span', null, b.title || b.name || 'Untitled Task');
+      title.style.cssText = 'color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;';
+      left.appendChild(linkId);
+      left.appendChild(title);
+
+      const stage = b.execution_stage || b.status || 'todo';
+      const stagePill = el('span', 'status-pill', stage);
+      stagePill.style.fontSize = '0.7rem';
+      stagePill.style.padding = '1px 6px';
+
+      headerRow.appendChild(left);
+      headerRow.appendChild(stagePill);
+      card.appendChild(headerRow);
+
+      if (b.rationale) {
+        const rat = el('div', 'panel-blocker-rationale');
+        rat.style.cssText = 'font-size:0.75rem;color:var(--muted);margin-top:2px;font-style:italic;';
+        rat.textContent = `↳ Rationale: ${b.rationale}`;
+        card.appendChild(rat);
+      }
+
+      blocksList.appendChild(card);
+    }
+    blocksSection.appendChild(blocksList);
+    content.appendChild(blocksSection);
+  }
+
+  // Dependency Hierarchy Visualization Section
+  const hasDeps = Boolean(task.blocked_by?.length || task.blocks?.length || task.parent_id || task.dependencies?.subtasks?.length);
+  if (hasDeps) {
+    const depSection = el('div', 'panel-gov-section');
+    depSection.style.cssText = 'margin-top:16px;padding:12px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:6px;';
+    depSection.appendChild(el('div', 'panel-section-title', 'Dependency Hierarchy'));
+
+    const treeBox = el('div', 'panel-dep-tree');
+    treeBox.style.cssText = 'font-family:monospace;font-size:0.8rem;line-height:1.6;margin-top:8px;padding:8px 10px;background:rgba(0,0,0,0.25);border-radius:4px;overflow-x:auto;';
+
+    // Parent task line if present
+    if (task.parent_id || task.dependencies?.parent) {
+      const p = task.dependencies?.parent || { id: task.parent_id, name: task.parent_identifier || task.parent_id };
+      const pLine = el('div', null);
+      pLine.style.cssText = 'color:var(--muted);margin-bottom:4px;cursor:pointer;';
+      pLine.innerHTML = `◆ Parent: <span style="color:var(--accent,#38bdf8);text-decoration:underline;">#${p.identifier || p.id?.slice(0, 10)}</span> ${escapeHtml(p.title || p.name || '')}`;
+      pLine.addEventListener('click', () => openDetail(p.id));
+      treeBox.appendChild(pLine);
+    }
+
+    // Upstream blockers
+    if (task.blocked_by?.length) {
+      const upHeader = el('div', null, '▲ Upstream Blockers (Must resolve first):');
+      upHeader.style.cssText = 'color:var(--red,#f85149);font-weight:600;margin-top:4px;';
+      treeBox.appendChild(upHeader);
+
+      task.blocked_by.forEach((bb, idx) => {
+        const isLast = idx === task.blocked_by.length - 1;
+        const prefix = isLast ? '  └── ⏳ ' : '  ├── ⏳ ';
+        const row = el('div', null);
+        row.style.cssText = 'cursor:pointer;padding:2px 0;transition:color 0.15s;';
+        row.innerHTML = `${prefix}<span style="color:var(--accent,#38bdf8);text-decoration:underline;font-weight:600;">#${bb.identifier || bb.id?.slice(0, 10)}</span> <span style="color:var(--fg);">${escapeHtml(bb.title || bb.name || '')}</span> <span style="font-size:0.7rem;padding:0 4px;border-radius:3px;background:rgba(255,255,255,0.08);">${bb.execution_stage || bb.status || 'todo'}</span>`;
+        row.addEventListener('click', () => openDetail(bb.id));
+        treeBox.appendChild(row);
+
+        if (bb.rationale) {
+          const subPrefix = isLast ? '      └─ ' : '  │   └─ ';
+          const ratRow = el('div', null);
+          ratRow.style.cssText = 'color:var(--amber,#f59e0b);font-size:0.75rem;';
+          ratRow.textContent = `${subPrefix}Rationale: ${bb.rationale}`;
+          treeBox.appendChild(ratRow);
+        }
+      });
+    }
+
+    // Current task
+    const currLine = el('div', null);
+    currLine.style.cssText = 'color:var(--fg);font-weight:700;margin:6px 0;padding:2px 6px;background:rgba(255,255,255,0.06);border-left:3px solid var(--accent,#38bdf8);border-radius:2px;';
+    currLine.innerHTML = `● Current: #${task.identifier || task.id?.slice(0, 10)} ${escapeHtml(task.title || task.name || '')} <span style="font-size:0.7rem;font-weight:normal;padding:0 4px;border-radius:3px;background:rgba(255,255,255,0.1);">${task.execution_stage || task.status || 'todo'}</span>`;
+    treeBox.appendChild(currLine);
+
+    // Downstream blocked tasks
+    if (task.blocks?.length) {
+      const downHeader = el('div', null, '▼ Blocks (Downstream tasks waiting):');
+      downHeader.style.cssText = 'color:var(--cyan,#38bdf8);font-weight:600;margin-top:4px;';
+      treeBox.appendChild(downHeader);
+
+      task.blocks.forEach((b, idx) => {
+        const isLast = idx === task.blocks.length - 1;
+        const prefix = isLast ? '  └── 🔒 ' : '  ├── 🔒 ';
+        const row = el('div', null);
+        row.style.cssText = 'cursor:pointer;padding:2px 0;transition:color 0.15s;';
+        row.innerHTML = `${prefix}<span style="color:var(--accent,#38bdf8);text-decoration:underline;font-weight:600;">#${b.identifier || b.id?.slice(0, 10)}</span> <span style="color:var(--fg);">${escapeHtml(b.title || b.name || '')}</span> <span style="font-size:0.7rem;padding:0 4px;border-radius:3px;background:rgba(255,255,255,0.08);">${b.execution_stage || b.status || 'todo'}</span>`;
+        row.addEventListener('click', () => openDetail(b.id));
+        treeBox.appendChild(row);
+
+        if (b.rationale) {
+          const subPrefix = isLast ? '      └─ ' : '  │   └─ ';
+          const ratRow = el('div', null);
+          ratRow.style.cssText = 'color:var(--muted);font-size:0.75rem;';
+          ratRow.textContent = `${subPrefix}Rationale: ${b.rationale}`;
+          treeBox.appendChild(ratRow);
+        }
+      });
+    }
+
+    // Subtasks
+    if (task.dependencies?.subtasks?.length) {
+      const subHeader = el('div', null, `◇ Subtasks (${task.dependencies.subtasks.length}):`);
+      subHeader.style.cssText = 'color:var(--muted);font-weight:600;margin-top:4px;';
+      treeBox.appendChild(subHeader);
+
+      task.dependencies.subtasks.forEach((st, idx) => {
+        const isLast = idx === task.dependencies.subtasks.length - 1;
+        const prefix = isLast ? '  └── ' : '  ├── ';
+        const row = el('div', null);
+        row.style.cssText = 'cursor:pointer;padding:2px 0;';
+        row.innerHTML = `${prefix}<span style="color:var(--accent,#38bdf8);text-decoration:underline;">#${st.identifier || st.id?.slice(0, 10)}</span> ${escapeHtml(st.title || st.name || '')}`;
+        row.addEventListener('click', () => openDetail(st.id));
+        treeBox.appendChild(row);
+      });
+    }
+
+    depSection.appendChild(treeBox);
+    content.appendChild(depSection);
   }
 
   // Parent task
@@ -1985,6 +2184,9 @@ async function openDetail(taskId, pushHistory = true) {
   try {
     const resp = await apiFetch(`${apiBase}/${taskId}`);
     const task = resp.task || resp;
+    if (resp.dependencies) {
+      task.dependencies = resp.dependencies;
+    }
     const inlineComments = resp.comments || [];
 
     // Also fetch native StayPoint governance snapshot if available

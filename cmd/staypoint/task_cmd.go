@@ -172,7 +172,28 @@ var taskShowCmd = &cobra.Command{
 		fmt.Printf("Name: %s\n", task.Name)
 		fmt.Printf("Status: %s\n", task.Status)
 		if task.IsBlocked {
-			fmt.Printf("Blocked: YES (Reason: %s)\n", task.BlockReason)
+			reason := task.BlockReason
+			if reason == "" {
+				reason = "Blocked — no specific reason recorded"
+			}
+			fmt.Printf("Blocked: YES (Reason: %s)\n", reason)
+		}
+		if len(task.BlockedBy) > 0 {
+			fmt.Println("\nBlocked By (Upstream Tasks):")
+			for _, b := range task.BlockedBy {
+				r := b.Rationale
+				if r != "" {
+					fmt.Printf("  • %s (%s, stage: %s) — Rationale: %s\n", b.ID, b.Name, b.ExecutionStage, r)
+				} else {
+					fmt.Printf("  • %s (%s, stage: %s)\n", b.ID, b.Name, b.ExecutionStage)
+				}
+			}
+		}
+		if len(task.Blocks) > 0 {
+			fmt.Println("\nBlocks (Downstream Tasks):")
+			for _, b := range task.Blocks {
+				fmt.Printf("  • %s (%s, stage: %s)\n", b.ID, b.Name, b.ExecutionStage)
+			}
 		}
 		fmt.Printf("Repository: %s (Branch: %s)\n", task.RepoPath, task.GitBranch)
 		if task.Organization != "" {
