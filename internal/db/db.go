@@ -402,6 +402,83 @@ var Migrations = []Migration{
 			return err
 		},
 	},
+	{
+		Version: 5,
+		Name:    "task_governance_engine",
+		Up: func(conn *sql.DB) error {
+			queries := []string{
+				`CREATE TABLE IF NOT EXISTS task_governance (
+					task_id            TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+					approval_threshold INTEGER NOT NULL DEFAULT 1,
+					require_review     INTEGER NOT NULL DEFAULT 0,
+					watchdog_agent_id  TEXT,
+					watchdog_prompt    TEXT,
+					created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+					updated_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				);`,
+				`CREATE TABLE IF NOT EXISTS task_reviewers (
+					id            INTEGER PRIMARY KEY AUTOINCREMENT,
+					task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+					reviewer_id   TEXT NOT NULL,
+					reviewer_type TEXT NOT NULL DEFAULT 'agent',
+					assigned_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+					UNIQUE(task_id, reviewer_id)
+				);`,
+				`CREATE TABLE IF NOT EXISTS task_approvers (
+					id            INTEGER PRIMARY KEY AUTOINCREMENT,
+					task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+					approver_id   TEXT NOT NULL,
+					approver_type TEXT NOT NULL DEFAULT 'agent',
+					assigned_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+					UNIQUE(task_id, approver_id)
+				);`,
+				`CREATE TABLE IF NOT EXISTS task_approval_votes (
+					id          INTEGER PRIMARY KEY AUTOINCREMENT,
+					task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+					approver_id TEXT NOT NULL,
+					vote        TEXT NOT NULL CHECK (vote IN ('approved', 'rejected', 'abstain')),
+					reason      TEXT,
+					voted_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+					UNIQUE(task_id, approver_id)
+				);`,
+				`CREATE TABLE IF NOT EXISTS task_review_decisions (
+					id          INTEGER PRIMARY KEY AUTOINCREMENT,
+					task_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+					reviewer_id TEXT NOT NULL,
+					decision    TEXT NOT NULL CHECK (decision IN ('approved', 'rejected', 'changes_requested')),
+					notes       TEXT,
+					decided_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+					UNIQUE(task_id, reviewer_id)
+				);`,
+				`CREATE TABLE IF NOT EXISTS task_watchdog_evals (
+					id            INTEGER PRIMARY KEY AUTOINCREMENT,
+					task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+					trigger_event TEXT NOT NULL,
+					passed        INTEGER NOT NULL DEFAULT 0,
+					verdict       TEXT NOT NULL,
+					evaluated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				);`,
+				`CREATE TABLE IF NOT EXISTS governance_audit_log (
+					id         INTEGER PRIMARY KEY AUTOINCREMENT,
+					task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+					actor_id   TEXT NOT NULL,
+					event_type TEXT NOT NULL,
+					from_state TEXT,
+					to_state   TEXT,
+					payload    TEXT,
+					created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				);`,
+				`CREATE INDEX IF NOT EXISTS idx_governance_audit_task ON governance_audit_log(task_id, created_at DESC);`,
+				`CREATE INDEX IF NOT EXISTS idx_watchdog_evals_task ON task_watchdog_evals(task_id, evaluated_at DESC);`,
+			}
+			for _, q := range queries {
+				if _, err := conn.Exec(q); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
 }
 
 func copyFile(src, dst string) error {

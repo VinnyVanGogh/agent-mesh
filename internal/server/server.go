@@ -97,6 +97,20 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("POST /api/sessions/{id}/heartbeat", sessionsH.Heartbeat)
 		mux.HandleFunc("POST /api/sessions/{id}/close", sessionsH.CloseSession)
 
+		// Governance REST API
+		govH := NewGovernanceHandler(s.opts.DB, s.hub)
+		mux.HandleFunc("GET /api/tasks/{id}/governance", govH.GetGovernance)
+		mux.HandleFunc("POST /api/tasks/{id}/governance", govH.SetGovernance)
+		mux.HandleFunc("POST /api/tasks/{id}/reviewers", govH.AddReviewer)
+		mux.HandleFunc("DELETE /api/tasks/{id}/reviewers/{rid}", govH.RemoveReviewer)
+		mux.HandleFunc("POST /api/tasks/{id}/approvers", govH.AddApprover)
+		mux.HandleFunc("DELETE /api/tasks/{id}/approvers/{aid}", govH.RemoveApprover)
+		mux.HandleFunc("POST /api/tasks/{id}/watchdog", govH.SetWatchdog)
+		mux.HandleFunc("POST /api/tasks/{id}/review", govH.SubmitReview)
+		mux.HandleFunc("POST /api/tasks/{id}/approve", govH.SubmitApproval)
+		mux.HandleFunc("POST /api/tasks/{id}/transition", govH.Transition)
+		mux.HandleFunc("GET /api/tasks/{id}/audit", govH.GetAuditLog)
+
 		// Telemetry & Fleet REST API
 		telemetryH := NewTelemetryHandler(s.opts.DB, s.hub, s.opts.TelemetryDBPath)
 		mux.HandleFunc("GET /api/telemetry", telemetryH.GetTelemetry)
