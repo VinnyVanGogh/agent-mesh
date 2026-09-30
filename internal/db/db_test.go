@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -31,7 +32,7 @@ func TestDB_OpenAndSchema(t *testing.T) {
 	}
 
 	// Verify tables exist
-	tables := []string{"accounts", "quota_windows", "tasks", "wire_messages", "wire_cursors", "agent_sessions", "agent_working_files", "agent_circuit_breakers"}
+	tables := []string{"schema_versions", "accounts", "quota_windows", "tasks", "wire_messages", "wire_cursors", "agent_sessions", "agent_working_files", "agent_circuit_breakers"}
 	for _, tbl := range tables {
 		var count int
 		err := store.DB().QueryRow(fmt.Sprintf("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='%s';", tbl)).Scan(&count)
@@ -101,8 +102,65 @@ func TestDB_SchemaMigration(t *testing.T) {
 	}
 
 	// Re-run migrateSchema on existing database to verify idempotency
-	if err := migrateSchema(store.DB()); err != nil {
-		t.Fatalf("idempotent migrateSchema failed: %v", err)
+	if err := applyMigrations(dbPath, store.DB()); err != nil {
+		t.Fatalf("idempotent applyMigrations failed: %v", err)
 	}
 	store.Close()
+}
+
+
+func TestDB_SchemaMigration_FailureRestore(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "migrate_fail.db")
+
+	store, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	// populate db
+	_, err = store.DB().Exec("INSERT INTO accounts (account_key, label, plan_tier, role) VALUES ('acc1', 'lbl1', 'free', 'work')")
+	if err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+	store.Close()
+
+	origMigrations := Migrations
+	defer func() { Migrations = origMigrations }()
+
+	Migrations = append(Migrations, Migration{
+		Version: 99,
+		Name:    "bad_migration",
+		Up: func(conn *sql.DB) error {
+			_, _ = conn.Exec("CREATE TABLE bad_table (id INTEGER);")
+			// Insert some data into an existing table to see if it rolls back
+			_, _ = conn.Exec("INSERT INTO accounts (account_key, label, plan_tier, role) VALUES ('acc2', 'lbl2', 'free', 'work')")
+			return fmt.Errorf("forced failure")
+		},
+	})
+
+	// Open should fail and restore
+	store2, err := Open(dbPath)
+	if err == nil {
+		store2.Close()
+		t.Fatalf("expected error from Open due to failed migration")
+	}
+
+	// Verify backup was restored
+	Migrations = origMigrations
+	store, err = Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed after restore: %v", err)
+	}
+	defer store.Close()
+
+	var count int
+	_ = store.DB().QueryRow("SELECT count(*) FROM accounts").Scan(&count)
+	if count != 1 {
+		t.Errorf("expected 1 account, got %d", count)
+	}
+
+	_ = store.DB().QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='bad_table';").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected bad_table to be reverted")
+	}
 }
