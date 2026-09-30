@@ -1,0 +1,136 @@
+package fleet
+
+import (
+	"time"
+)
+
+// TaskStatusCounts contains counts of tasks across states.
+type TaskStatusCounts struct {
+	Total   int `json:"total"`
+	Running int `json:"running"` // in_progress / running
+	Active  int `json:"active"`  // todo / backlog / active
+	Stopped int `json:"stopped"` // paused / stopped / cancelled
+	Blocked int `json:"blocked"` // blocked
+	Errored int `json:"errored"` // error / failed
+	Done    int `json:"done"`    // done / closed
+}
+
+// TaskItem represents an individual task in the consolidated fleet view.
+type TaskItem struct {
+	ID             string    `json:"id"`
+	Identifier     string    `json:"identifier"`
+	Title          string    `json:"title"`
+	Organization   string    `json:"organization"`
+	Project        string    `json:"project,omitempty"`
+	Status         string    `json:"status"` // running, active, stopped, blocked, errored, done
+	ExecutionStage string    `json:"execution_stage,omitempty"`
+	Priority       string    `json:"priority,omitempty"`
+	SpentUSD       float64   `json:"spent_usd"`
+	SpentTokens    int64     `json:"spent_tokens"`
+	IsBlocked      bool      `json:"is_blocked"`
+	BlockReason    string    `json:"block_reason,omitempty"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
+// AgentItem represents an active or registered agent in an organization.
+type AgentItem struct {
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	Role          string    `json:"role"`
+	Organization  string    `json:"organization"`
+	Provider      string    `json:"provider"` // gemini, claude, openai, other
+	Model         string    `json:"model,omitempty"`
+	Status        string    `json:"status"` // running, active, idle, closed
+	LastHeartbeat time.Time `json:"last_heartbeat"`
+}
+
+// GlobalAgentMetrics aggregates agent statistics fleet-wide.
+type GlobalAgentMetrics struct {
+	Total          int            `json:"total"`
+	ActiveRunning  int            `json:"active_running"`
+	Idle           int            `json:"idle"`
+	ByProvider     map[string]int `json:"by_provider"`
+	ByOrganization map[string]int `json:"by_organization"`
+	Items          []AgentItem    `json:"items,omitempty"`
+}
+
+// TokenSummary aggregates token consumption across all providers and orgs.
+type TokenSummary struct {
+	InputTokens         int64   `json:"input_tokens"`
+	OutputTokens        int64   `json:"output_tokens"`
+	CacheReadTokens     int64   `json:"cache_read_tokens"`
+	CacheCreationTokens int64   `json:"cache_creation_tokens"`
+	TotalTokens         int64   `json:"total_tokens"`
+	TotalCostUSD        float64 `json:"total_cost_usd"`
+}
+
+// ModelSpendBreakdown summarizes spend by specific model.
+type ModelSpendBreakdown struct {
+	Model        string  `json:"model"`
+	Family       string  `json:"family"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	TotalTokens  int64   `json:"total_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
+	Percentage   float64 `json:"percentage"`
+}
+
+// OrgSpendBreakdown summarizes token and financial spend per organization.
+type OrgSpendBreakdown struct {
+	Organization string  `json:"organization"`
+	TotalTokens  int64   `json:"total_tokens"`
+	InputTokens  int64   `json:"input_tokens"`
+	OutputTokens int64   `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
+	Percentage   float64 `json:"percentage"`
+	ActiveTasks  int     `json:"active_tasks"`
+	ActiveAgents int     `json:"active_agents"`
+}
+
+// ProviderQuotaGauge displays 5-hour rolling limits, burn rates, and pacing projections.
+type ProviderQuotaGauge struct {
+	Provider             string     `json:"provider"` // gemini, claude, openai
+	DisplayName          string     `json:"display_name"`
+	FiveHourUsedPct      float64    `json:"five_hour_used_pct"`
+	FiveHourRemainingPct float64    `json:"five_hour_remaining_pct"`
+	FiveHourResetsAt     *time.Time `json:"five_hour_resets_at,omitempty"`
+	BurnRate5h           float64    `json:"burn_rate_5h"` // % per turn / hour
+	LockoutThresholdPct  float64    `json:"lockout_threshold_pct"`
+	IsLocked             bool       `json:"is_locked"`
+	LockoutReason        string     `json:"lockout_reason,omitempty"`
+	LockoutUntil         *time.Time `json:"lockout_until,omitempty"`
+	WeeklyUsedPct        float64    `json:"weekly_used_pct"`
+	WeeklyRemainingPct   float64    `json:"weekly_remaining_pct"`
+	WeeklyResetsAt       *time.Time `json:"weekly_resets_at,omitempty"`
+	BurnRateWeekly       float64    `json:"burn_rate_weekly"`
+	ProjectionStatus     string     `json:"projection_status"` // on_track, overpaced, locked_out, unknown
+	ProjectionMessage    string     `json:"projection_message"`
+	RunwayTurns          int        `json:"runway_turns"`
+}
+
+// OrgFleetSummary summarizes an individual organization's fleet metrics.
+type OrgFleetSummary struct {
+	ID                     string           `json:"id"`
+	Name                   string           `json:"name"`
+	IssuePrefix            string           `json:"issue_prefix"`
+	TaskCounts             TaskStatusCounts `json:"task_counts"`
+	ActiveAgents           int              `json:"active_agents"`
+	ActiveAgentsByProvider map[string]int   `json:"active_agents_by_provider"`
+	SpentUSD               float64          `json:"spent_usd"`
+	SpentTokens            int64            `json:"spent_tokens"`
+	Tasks                  []TaskItem       `json:"tasks,omitempty"`
+	Agents                 []AgentItem      `json:"agents,omitempty"`
+}
+
+// FleetOverview is the unified root response for the All Organizations overview screen.
+type FleetOverview struct {
+	Timestamp      time.Time                      `json:"timestamp"`
+	Organizations  []OrgFleetSummary              `json:"organizations"`
+	GlobalTasks    TaskStatusCounts               `json:"global_tasks"`
+	GlobalAgents   GlobalAgentMetrics             `json:"global_agents"`
+	TokenTelemetry TokenSummary                   `json:"token_telemetry"`
+	ModelSpend     []ModelSpendBreakdown          `json:"model_spend"`
+	OrgSpend       []OrgSpendBreakdown            `json:"org_spend"`
+	ProviderQuotas map[string]*ProviderQuotaGauge `json:"provider_quotas"`
+	Tasks          []TaskItem                     `json:"tasks,omitempty"`
+}
