@@ -13,7 +13,11 @@ const state = {
     org: 'all',
     status: 'all',
   },
-  currentOrgDetail: null, // currently open org name in org-detail view
+  tsFilter: { search: '', org: 'all', status: 'all' },
+  agentsFilter: { search: '', provider: 'all' },
+  currentOrgDetail: null,
+  openDetailTaskId: null,
+  chatPollTimer:    null,
 };
 
 // ── Token (injected by Go template) ─────────────────────
@@ -69,6 +73,18 @@ function fmtDateTime(ts) {
   catch { return ''; }
 }
 
+function fmtRelTime(ts) {
+  if (!ts) return '';
+  const diffMs = Date.now() - new Date(ts).getTime();
+  const secs = Math.floor(diffMs / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return fmtDateTime(ts);
+}
+
 function formatCountdown(targetTs) {
   if (!targetTs) return '';
   const diffMs = new Date(targetTs).getTime() - Date.now();
@@ -76,13 +92,32 @@ function formatCountdown(targetTs) {
   const mins = Math.floor(diffMs / 60000);
   const hrs = Math.floor(mins / 60);
   const remMins = mins % 60;
-  if (hrs > 0) return `resets in ${hrs}h ${remMins}m`;
-  return `resets in ${remMins}m`;
+  if (hrs >= 24) {
+    const days = Math.floor(hrs / 24);
+    const remHrs = hrs % 24;
+    return `in ${days}d ${remHrs}h`;
+  }
+  if (hrs > 0) return `in ${hrs}h ${remMins}m`;
+  return `in ${remMins}m`;
+}
+
+function formatResetTime(targetTs, isWeekly) {
+  if (!targetTs) return '';
+  const d = new Date(targetTs);
+  const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (!isWeekly) return `at ${timeStr}`;
+  const dayStr = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  return `${dayStr} at ${timeStr}`;
 }
 
 function authHeader() {
   return TOKEN ? { 'Authorization': `Bearer ${TOKEN}` } : {};
 }
+
+// Close any open .report-dl-menu when clicking outside its wrapper.
+document.addEventListener('click', () => {
+  document.querySelectorAll('.report-dl-menu').forEach(m => { m.hidden = true; });
+});
 
 // ── Simple markdown renderer ──────────────────────────────
 function escapeHtml(s) {
@@ -95,41 +130,21 @@ function escapeHtml(s) {
 
 function renderMarkdown(text) {
   if (!text) return '';
-  // Escape HTML first, then apply markdown transformations.
   let s = escapeHtml(text);
-
-  // Fenced code blocks (``` ... ```)
   s = s.replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
     `<pre><code>${code.trimEnd()}</code></pre>`);
-
-  // Inline code
   s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-
-  // Headers
   s = s.replace(/^### (.+)$/gm, '<h3>$1</h3>');
   s = s.replace(/^## (.+)$/gm, '<h2>$1</h2>');
   s = s.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-
-  // Bold + italic
   s = s.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
-
-  // Blockquote
   s = s.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
-
-  // Unordered list items
   s = s.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
-  // Wrap consecutive <li> in <ul>
   s = s.replace(/(<li>[\s\S]*?<\/li>)(\n<li>[\s\S]*?<\/li>)*/g, m => `<ul>${m}</ul>`);
-
-  // Ordered list items
   s = s.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
-
-  // Horizontal rule
   s = s.replace(/^---+$/gm, '<hr>');
-
-  // Paragraphs: split on double newlines, wrap non-block lines in <p>
   const lines = s.split(/\n\n+/);
   const wrapped = lines.map(chunk => {
     chunk = chunk.trim();
@@ -166,7 +181,6 @@ async function loadAll() {
     for (const t of (tasksResp.tasks || [])) state.tasks[t.id] = t;
     for (const s of (sessionsResp.sessions || [])) state.sessions[s.id] = s;
 
-    // Merge fleet tasks into state.tasks with normalized status
     if (fleetResp?.tasks) {
       for (const t of fleetResp.tasks) {
         if (!state.tasks[t.id]) {
@@ -176,6 +190,7 @@ async function loadAll() {
     }
 
     populateOrgFilter();
+    populateTSOrgFilter();
     renderAll();
     renderSidebarOrgTree();
   } catch (err) {
@@ -242,6 +257,7 @@ async function refreshFleetData() {
     if (fleetResp) {
       state.fleet = fleetResp;
       populateOrgFilter();
+      populateTSOrgFilter();
       renderOverview();
       renderSidebarOrgTree();
     }
@@ -295,6 +311,14 @@ document.querySelectorAll('.sidebar-item').forEach(btn => {
     showView(btn.dataset.view);
     state.currentOrgDetail = null;
     renderSidebarOrgTree();
+    // Render the new view on first visit
+    const v = btn.dataset.view;
+    if (v === 'projects')     renderProjects();
+    if (v === 'agents')       renderAgentsPage();
+    if (v === 'recent-tasks') renderRecentTasks();
+    if (v === 'task-status')  renderTaskStatusPage();
+    if (v === 'cost')         renderCostPage();
+    if (v === 'settings')     renderSettings();
   });
 });
 
@@ -394,83 +418,101 @@ function updateFleetPacingBadge(quotas) {
   }
 }
 
+function buildGaugeCard(key, q) {
+  const card = el('div', 'gauge-card');
+  const hdr = el('div', 'gauge-card-header');
+  hdr.appendChild(el('span', 'gauge-provider-name', q.display_name || key));
+
+  let sCls = 'pill-green', sTxt = '✔ On Track';
+  if (q.is_locked || q.projection_status === 'locked_out') { sCls = 'pill-red'; sTxt = '✖ Locked Out'; }
+  else if (q.projection_status === 'overpaced') { sCls = 'pill-amber'; sTxt = '⚠ Overpaced'; }
+  hdr.appendChild(el('span', `pill ${sCls}`, sTxt));
+  card.appendChild(hdr);
+
+  // 5-Hour Rolling
+  const remaining5h = Math.max(0, Math.min(100, q.five_hour_remaining_pct ?? 100));
+  const used5h = 100 - remaining5h;
+  const bar5hOuter = el('div', 'gauge-bar-outer');
+  const bar5hInner = el('div', 'gauge-bar-inner');
+  bar5hInner.style.width = `${used5h}%`;
+  bar5hInner.className = `gauge-bar-inner ${
+    (q.is_locked || used5h >= 95) ? 'gauge-bar-red' :
+    used5h >= 75 ? 'gauge-bar-amber' : 'gauge-bar-green'
+  }`;
+  bar5hOuter.appendChild(bar5hInner);
+  card.appendChild(el('div', 'gauge-window-label', '5-Hour Rolling'));
+  card.appendChild(bar5hOuter);
+
+  const m5Row = el('div', 'gauge-metrics-row');
+  m5Row.appendChild(el('span', null, `${used5h.toFixed(1)}% used · ${remaining5h.toFixed(1)}% left`));
+  const count5h = formatCountdown(q.five_hour_resets_at);
+  const time5h = formatResetTime(q.five_hour_resets_at, false);
+  m5Row.appendChild(el('span', 'gauge-metric-val', count5h ? `resets ${count5h}` : 'rolling'));
+  card.appendChild(m5Row);
+  if (time5h) {
+    const t5Row = el('div', 'gauge-metrics-row');
+    t5Row.appendChild(el('span', null, ''));
+    t5Row.appendChild(el('span', 'gauge-reset-time', time5h));
+    card.appendChild(t5Row);
+  }
+
+  const b5Row = el('div', 'gauge-metrics-row');
+  b5Row.appendChild(el('span', null, `Burn: ${q.burn_rate_5h ? q.burn_rate_5h.toFixed(2) + '%/turn' : '—'}`));
+  b5Row.appendChild(el('span', null, q.is_locked ? '🔒 Locked Out' : `Limit: ${q.lockout_threshold_pct || 100}%`));
+  card.appendChild(b5Row);
+
+  // Weekly Budget
+  const remainingWk = Math.max(0, Math.min(100, q.weekly_remaining_pct ?? 100));
+  const usedWk = 100 - remainingWk;
+  const labelWk = el('div', 'gauge-window-label', 'Weekly Budget');
+  labelWk.style.marginTop = '10px';
+  card.appendChild(labelWk);
+
+  const barWkOuter = el('div', 'gauge-bar-outer');
+  const barWkInner = el('div', 'gauge-bar-inner');
+  barWkInner.style.width = `${usedWk}%`;
+  barWkInner.className = `gauge-bar-inner ${
+    usedWk >= 90 ? 'gauge-bar-red' :
+    usedWk >= 70 ? 'gauge-bar-amber' : 'gauge-bar-green'
+  }`;
+  barWkOuter.appendChild(barWkInner);
+  card.appendChild(barWkOuter);
+
+  const mWkRow = el('div', 'gauge-metrics-row');
+  mWkRow.appendChild(el('span', null, `${usedWk.toFixed(1)}% used · ${remainingWk.toFixed(1)}% left`));
+  const countWk = formatCountdown(q.weekly_resets_at);
+  if (countWk) mWkRow.appendChild(el('span', 'gauge-metric-val', `resets ${countWk}`));
+  card.appendChild(mWkRow);
+  const timeWk = formatResetTime(q.weekly_resets_at, true);
+  if (timeWk) {
+    const tWkRow = el('div', 'gauge-metrics-row');
+    tWkRow.appendChild(el('span', null, ''));
+    tWkRow.appendChild(el('span', 'gauge-reset-time', timeWk));
+    card.appendChild(tWkRow);
+  }
+
+  const bWkRow = el('div', 'gauge-metrics-row');
+  bWkRow.appendChild(el('span', null, `Weekly burn: ${q.burn_rate_weekly ? q.burn_rate_weekly.toFixed(2) + '%/turn' : '—'}`));
+  if (q.runway_turns) bWkRow.appendChild(el('span', 'gauge-metric-val', `${q.runway_turns} turns left`));
+  card.appendChild(bWkRow);
+
+  card.appendChild(el('div', 'gauge-projection-box', q.projection_message || 'Sustainable pacing'));
+  return card;
+}
+
 function renderQuotaGauges(quotas) {
   const grid = document.getElementById('quota-gauges-grid');
   if (!grid || !quotas) return;
   grid.innerHTML = '';
 
-  for (const key of ['gemini', 'claude', 'openai']) {
+  // Render in a logical order: gemini, claude work, claude personal, claude (aggregate), openai
+  const order = ['gemini', 'claude_work', 'claude_personal', 'claude', 'openai'];
+  for (const key of order) {
     const q = quotas[key];
     if (!q) continue;
-
-    const card = el('div', 'gauge-card');
-    const hdr = el('div', 'gauge-card-header');
-    hdr.appendChild(el('span', 'gauge-provider-name', q.display_name || key));
-
-    let sCls = 'pill-green', sTxt = '✔ On Track';
-    if (q.is_locked || q.projection_status === 'locked_out') { sCls = 'pill-red'; sTxt = '✖ Locked Out'; }
-    else if (q.projection_status === 'overpaced') { sCls = 'pill-amber'; sTxt = '⚠ Overpaced'; }
-    hdr.appendChild(el('span', `pill ${sCls}`, sTxt));
-    card.appendChild(hdr);
-
-    // ── 5-Hour Rolling Window ──────────────────────────────
-    const remaining5h = Math.max(0, Math.min(100, q.five_hour_remaining_pct ?? 100));
-    const used5h = 100 - remaining5h;
-    const bar5hOuter = el('div', 'gauge-bar-outer');
-    const bar5hInner = el('div', 'gauge-bar-inner');
-    bar5hInner.style.width = `${used5h}%`;
-    bar5hInner.className = `gauge-bar-inner ${
-      (q.is_locked || used5h >= 95) ? 'gauge-bar-red' :
-      used5h >= 75 ? 'gauge-bar-amber' : 'gauge-bar-green'
-    }`;
-    bar5hOuter.appendChild(bar5hInner);
-    const label5h = el('div', 'gauge-window-label', '5-Hour Rolling');
-    card.appendChild(label5h);
-    card.appendChild(bar5hOuter);
-
-    const m5Row = el('div', 'gauge-metrics-row');
-    m5Row.appendChild(el('span', null, `${used5h.toFixed(1)}% used · ${remaining5h.toFixed(1)}% left`));
-    m5Row.appendChild(el('span', 'gauge-metric-val', formatCountdown(q.five_hour_resets_at) || 'rolling'));
-    card.appendChild(m5Row);
-
-    const b5Row = el('div', 'gauge-metrics-row');
-    b5Row.appendChild(el('span', null, `Burn: ${q.burn_rate_5h ? q.burn_rate_5h.toFixed(2) + '%/turn' : '—'}`));
-    b5Row.appendChild(el('span', null, q.is_locked ? '🔒 Locked Out' : `Limit: ${q.lockout_threshold_pct || 100}%`));
-    card.appendChild(b5Row);
-
-    // ── Weekly Budget ──────────────────────────────────────
-    const remainingWk = Math.max(0, Math.min(100, q.weekly_remaining_pct ?? 100));
-    const usedWk = 100 - remainingWk;
-    const labelWk = el('div', 'gauge-window-label', 'Weekly Budget');
-    labelWk.style.marginTop = '10px';
-    card.appendChild(labelWk);
-
-    const barWkOuter = el('div', 'gauge-bar-outer');
-    const barWkInner = el('div', 'gauge-bar-inner');
-    barWkInner.style.width = `${usedWk}%`;
-    barWkInner.className = `gauge-bar-inner ${
-      usedWk >= 90 ? 'gauge-bar-red' :
-      usedWk >= 70 ? 'gauge-bar-amber' : 'gauge-bar-green'
-    }`;
-    barWkOuter.appendChild(barWkInner);
-    card.appendChild(barWkOuter);
-
-    const mWkRow = el('div', 'gauge-metrics-row');
-    mWkRow.appendChild(el('span', null, `${usedWk.toFixed(1)}% used · ${remainingWk.toFixed(1)}% left`));
-    if (q.weekly_resets_at) {
-      mWkRow.appendChild(el('span', 'gauge-metric-val', formatCountdown(q.weekly_resets_at)));
-    }
-    card.appendChild(mWkRow);
-
-    const bWkRow = el('div', 'gauge-metrics-row');
-    bWkRow.appendChild(el('span', null, `Weekly burn: ${q.burn_rate_weekly ? q.burn_rate_weekly.toFixed(2) + '%/turn' : '—'}`));
-    if (q.runway_turns) bWkRow.appendChild(el('span', 'gauge-metric-val', `${q.runway_turns} turns left`));
-    card.appendChild(bWkRow);
-
-    const projBox = el('div', 'gauge-projection-box', q.projection_message || 'Sustainable pacing');
-    card.appendChild(projBox);
-
-    grid.appendChild(card);
+    // Skip the aggregate 'claude' card if we have the split cards
+    if (key === 'claude' && (quotas['claude_work'] || quotas['claude_personal'])) continue;
+    grid.appendChild(buildGaugeCard(key, q));
   }
 }
 
@@ -514,9 +556,7 @@ function renderOrganizationsGrid(orgs) {
     spendRow.appendChild(el('span', null, `Tokens: ${fmtCompactNum(org.spent_tokens)}`));
     card.appendChild(spendRow);
 
-    // Make org card clickable → org detail view
     card.addEventListener('click', () => openOrgDetail(org.name));
-
     container.appendChild(card);
   }
 }
@@ -585,6 +625,20 @@ function populateOrgFilter() {
   select.value = current || 'all';
 }
 
+function populateTSOrgFilter() {
+  const select = document.getElementById('ts-org-filter');
+  if (!select || !state.fleet?.organizations) return;
+  const current = select.value;
+  select.innerHTML = '<option value="all">All Organizations</option>';
+  for (const org of state.fleet.organizations) {
+    const opt = document.createElement('option');
+    opt.value = org.name;
+    opt.textContent = org.name;
+    select.appendChild(opt);
+  }
+  select.value = current || 'all';
+}
+
 function renderGlobalTaskTable() {
   const tbody = document.getElementById('global-task-tbody');
   if (!tbody) return;
@@ -597,7 +651,27 @@ function renderGlobalTaskTable() {
   const orgFilter = state.taskFilter.org || 'all';
   const statusFilter = state.taskFilter.status || 'all';
 
-  const filtered = tasks.filter(t => {
+  const filtered = filterTasks(tasks, sTerm, orgFilter, statusFilter);
+
+  if (!filtered.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 7;
+    td.textContent = 'No tasks match current filter criteria.';
+    td.style.cssText = 'text-align:center;color:var(--muted);padding:24px;';
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    return;
+  }
+
+  for (const t of filtered) {
+    const tr = makeTaskTableRow(t, 7);
+    tbody.appendChild(tr);
+  }
+}
+
+function filterTasks(tasks, sTerm, orgFilter, statusFilter) {
+  return tasks.filter(t => {
     if (orgFilter !== 'all' && t.organization !== orgFilter) return false;
     if (statusFilter !== 'all') {
       const st = (t.status || 'active').toLowerCase();
@@ -616,15 +690,332 @@ function renderGlobalTaskTable() {
     }
     return true;
   });
+}
+
+function makeTaskTableRow(t, colCount) {
+  const tr = document.createElement('tr');
+
+  const tdId = el('td', null, t.identifier || (t.id ? `#${t.id.slice(0, 8)}` : '—'));
+  tdId.style.cssText = 'font-family:monospace;font-weight:600;';
+
+  const tdTitle  = el('td', null, t.title || t.name || '(untitled)');
+  const tdOrg    = el('td', null, t.organization || 'StayPoint');
+  const tdStat   = el('td'); tdStat.appendChild(statusPill(t.status));
+  const tdPri    = el('td', null, t.priority || 'medium');
+
+  const spendVal = t.spent_usd > 0
+    ? `${fmtCurrency(t.spent_usd)} (${fmtCompactNum(t.spent_tokens)} tok)`
+    : `—`;
+  const tdSpend  = el('td', null, spendVal);
+  const tdUp     = el('td', null, fmtRelTime(t.updated_at || Date.now()));
+
+  for (const td of [tdId, tdTitle, tdOrg, tdStat, tdPri, tdSpend, tdUp]) tr.appendChild(td);
+  tr.addEventListener('click', () => openDetail(t.id));
+  return tr;
+}
+
+// ── Projects View ─────────────────────────────────────────
+function renderProjects() {
+  const grid = document.getElementById('projects-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
+  const seenIds = new Set();
+  const dedupTasks = [];
+  for (const t of allTasks) {
+    if (!seenIds.has(t.id)) { seenIds.add(t.id); dedupTasks.push(t); }
+  }
+
+  // Group by project
+  const projectMap = {};
+  for (const t of dedupTasks) {
+    const proj = t.project || '(No Project)';
+    if (!projectMap[proj]) {
+      projectMap[proj] = { name: proj, org: t.organization || '', tasks: [] };
+    }
+    projectMap[proj].tasks.push(t);
+  }
+
+  const orgFilter = document.getElementById('projects-org-filter')?.value || 'all';
+  const projects = Object.values(projectMap).filter(p =>
+    orgFilter === 'all' || p.org === orgFilter
+  );
+
+  if (!projects.length) {
+    grid.appendChild(el('p', 'muted-text', 'No projects found.'));
+    return;
+  }
+
+  for (const p of projects.sort((a, b) => b.tasks.length - a.tasks.length)) {
+    const card = el('div', 'project-card');
+
+    const hdr = el('div', 'project-card-header');
+    const titleWrap = el('div');
+    titleWrap.appendChild(el('div', 'project-name', p.name));
+    titleWrap.appendChild(el('div', 'project-org', p.org));
+    hdr.appendChild(titleWrap);
+    const totalBadge = el('span', 'pill', `${p.tasks.length} task${p.tasks.length !== 1 ? 's' : ''}`);
+    hdr.appendChild(totalBadge);
+    card.appendChild(hdr);
+
+    // Status counts
+    const counts = { running: 0, blocked: 0, done: 0, active: 0 };
+    let totalSpend = 0;
+    for (const t of p.tasks) {
+      const st = (t.status || '').toLowerCase();
+      if (st === 'running' || st === 'in_progress') counts.running++;
+      else if (st === 'blocked') counts.blocked++;
+      else if (st === 'done') counts.done++;
+      else counts.active++;
+      totalSpend += t.spent_usd || 0;
+    }
+
+    const statsRow = el('div', 'project-stats-row');
+    for (const [label, val, cls] of [
+      ['Running', counts.running, 'highlight-cyan'],
+      ['Blocked', counts.blocked, 'highlight-red'],
+      ['Done', counts.done, 'highlight-green'],
+      ['Active', counts.active, ''],
+    ]) {
+      const s = el('div', 'project-stat');
+      s.appendChild(el('div', `project-stat-n ${cls}`, String(val)));
+      s.appendChild(el('div', 'project-stat-l', label));
+      statsRow.appendChild(s);
+    }
+    if (totalSpend > 0) {
+      const s = el('div', 'project-stat');
+      s.appendChild(el('div', 'project-stat-n highlight-gold', fmtCurrency(totalSpend)));
+      s.appendChild(el('div', 'project-stat-l', 'Spend'));
+      statsRow.appendChild(s);
+    }
+    card.appendChild(statsRow);
+
+    // Task preview
+    const taskList = el('div', 'project-task-list');
+    for (const t of p.tasks.slice(0, 5)) {
+      const item = el('div', 'project-task-item');
+      item.appendChild(statusPill(t.status));
+      const titleEl = el('span', null, t.title || t.name || '(untitled)');
+      titleEl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      item.appendChild(titleEl);
+      item.addEventListener('click', () => openDetail(t.id));
+      taskList.appendChild(item);
+    }
+    if (p.tasks.length > 5) {
+      taskList.appendChild(el('div', 'muted-text', `+${p.tasks.length - 5} more tasks`));
+    }
+    card.appendChild(taskList);
+
+    grid.appendChild(card);
+  }
+
+  // Populate org filter for projects
+  const sel = document.getElementById('projects-org-filter');
+  if (sel && state.fleet?.organizations) {
+    const cur = sel.value;
+    sel.innerHTML = '<option value="all">All Organizations</option>';
+    for (const org of state.fleet.organizations) {
+      const opt = document.createElement('option');
+      opt.value = org.name; opt.textContent = org.name;
+      sel.appendChild(opt);
+    }
+    sel.value = cur || 'all';
+  }
+}
+
+// ── Agents Dedicated View ─────────────────────────────────
+function renderAgentsPage() {
+  const grid = document.getElementById('agents-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+
+  const f = state.fleet;
+  const allAgents = [];
+
+  // Collect from fleet orgs
+  for (const org of (f?.organizations || [])) {
+    for (const a of (org.agents || [])) {
+      allAgents.push({ ...a, org: org.name });
+    }
+  }
+
+  // Add local sessions not already in fleet
+  for (const s of Object.values(state.sessions)) {
+    const exists = allAgents.find(a => a.id === s.id);
+    if (!exists) {
+      allAgents.push({
+        id: s.id,
+        name: s.agent_type || 'Local Agent',
+        role: 'Local Session',
+        provider: s.agent_type || 'other',
+        status: s.status || 'active',
+        last_heartbeat: s.last_heartbeat_at,
+        org: 'StayPoint',
+      });
+    }
+  }
+
+  const searchTerm = (state.agentsFilter.search || '').toLowerCase();
+  const provFilter = state.agentsFilter.provider || 'all';
+
+  const filtered = allAgents.filter(a => {
+    if (provFilter !== 'all' && a.provider !== provFilter) return false;
+    if (searchTerm) {
+      const name = (a.name || '').toLowerCase();
+      const role = (a.role || '').toLowerCase();
+      if (!name.includes(searchTerm) && !role.includes(searchTerm)) return false;
+    }
+    return true;
+  });
+
+  if (!filtered.length) {
+    grid.appendChild(el('p', 'muted-text', 'No agents match filter.'));
+    return;
+  }
+
+  for (const a of filtered) {
+    const card = el('div', 'agent-card');
+
+    const hdr = el('div', 'agent-card-header');
+    const nameWrap = el('div');
+    nameWrap.appendChild(el('div', 'agent-card-name', a.name || a.id?.slice(0, 12) || 'Agent'));
+    nameWrap.appendChild(el('div', 'agent-card-role', a.role || 'agent'));
+    hdr.appendChild(nameWrap);
+    const provBadge = el('span', `fleet-provider-badge provider-${a.provider || 'other'}`, a.provider || 'other');
+    hdr.appendChild(provBadge);
+    card.appendChild(hdr);
+
+    const meta = el('div', 'agent-card-meta');
+    meta.appendChild(statusPill(a.status || 'active'));
+    if (a.org) meta.appendChild(el('span', 'muted-text', a.org));
+    card.appendChild(meta);
+
+    if (a.last_heartbeat) {
+      card.appendChild(el('div', 'agent-card-task',
+        `Last heartbeat: ${fmtRelTime(a.last_heartbeat)}`));
+    }
+
+    // If agent has a current task in fleet
+    const agentTasks = (state.fleet?.tasks || []).filter(t =>
+      t.checkout_agent_id === a.id || t.assignee_name === a.name
+    );
+    if (agentTasks.length) {
+      const running = agentTasks.find(t => t.status === 'running' || t.status === 'in_progress');
+      const taskEl = el('div', 'agent-card-task');
+      taskEl.innerHTML = `<strong>Task:</strong> ${running ? (running.title || running.identifier || running.id?.slice(0,8)) : `${agentTasks.length} tasks`}`;
+      card.appendChild(taskEl);
+    }
+
+    // Quota bar if provider quota available
+    const quotaKey = a.provider;
+    const quota = f?.provider_quotas?.[quotaKey];
+    if (quota) {
+      const used = 100 - (quota.five_hour_remaining_pct ?? 100);
+      const qDiv = el('div', 'agent-quota-bar');
+      qDiv.appendChild(el('div', 'agent-quota-label', '5h quota'));
+      const qRow = el('div', 'agent-quota-row');
+      const track = el('div', 'agent-quota-track');
+      const fill = el('div', 'agent-quota-fill');
+      fill.style.width = `${Math.min(100, used)}%`;
+      fill.style.background = used >= 95 ? 'var(--red)' : used >= 75 ? 'var(--amber)' : 'var(--green)';
+      track.appendChild(fill);
+      qRow.appendChild(track);
+      qRow.appendChild(el('span', 'muted-text', `${used.toFixed(1)}%`));
+      qDiv.appendChild(qRow);
+      card.appendChild(qDiv);
+    }
+
+    grid.appendChild(card);
+  }
+}
+
+// ── Recent Tasks View ─────────────────────────────────────
+function renderRecentTasks() {
+  const feed = document.getElementById('recent-tasks-feed');
+  if (!feed) return;
+  feed.innerHTML = '';
+
+  const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
+  const seenIds = new Set();
+  const dedupTasks = [];
+  for (const t of allTasks) {
+    if (!seenIds.has(t.id)) { seenIds.add(t.id); dedupTasks.push(t); }
+  }
+
+  const sorted = dedupTasks
+    .filter(t => t.updated_at)
+    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+    .slice(0, 50);
+
+  if (!sorted.length) {
+    feed.appendChild(el('p', 'muted-text', 'No recent task activity.'));
+    return;
+  }
+
+  sorted.forEach((t, i) => {
+    const item = el('div', 'activity-item');
+
+    const dotCol = el('div', 'activity-dot-col');
+    const dot = el('span', 'activity-dot');
+    const st = (t.status || '').toLowerCase();
+    dot.style.background =
+      (st === 'running' || st === 'in_progress') ? 'var(--cyan)' :
+      st === 'blocked' ? 'var(--red)' :
+      st === 'done'    ? 'var(--green)' : 'var(--muted)';
+    dotCol.appendChild(dot);
+    if (i < sorted.length - 1) dotCol.appendChild(el('span', 'activity-line'));
+    item.appendChild(dotCol);
+
+    const body = el('div', 'activity-body');
+    const titleEl = el('div', 'activity-title', t.title || t.name || '(untitled)');
+    titleEl.style.cursor = 'pointer';
+    titleEl.addEventListener('click', () => openDetail(t.id));
+    body.appendChild(titleEl);
+
+    const metaParts = [
+      t.identifier || (t.id ? `#${t.id.slice(0, 8)}` : ''),
+      t.organization,
+      t.priority,
+      fmtRelTime(t.updated_at),
+    ].filter(Boolean);
+    body.appendChild(el('div', 'activity-meta', metaParts.join(' · ')));
+
+    item.appendChild(body);
+    item.appendChild(statusPill(t.status));
+    feed.appendChild(item);
+  });
+}
+
+// ── Task Status Dedicated Page ────────────────────────────
+function renderTaskStatusPage() {
+  const tbody = document.getElementById('ts-task-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
+  const seenIds = new Set();
+  const dedupTasks = [];
+  for (const t of allTasks) {
+    if (!seenIds.has(t.id)) { seenIds.add(t.id); dedupTasks.push(t); }
+  }
+
+  const sTerm     = (state.tsFilter.search || '').toLowerCase().trim();
+  const orgFilter = state.tsFilter.org || 'all';
+  const stFilter  = state.tsFilter.status || 'all';
+
+  const filtered = filterTasks(dedupTasks, sTerm, orgFilter, stFilter)
+    .sort((a, b) => {
+      const order = { running: 0, in_progress: 0, blocked: 1, active: 2, todo: 2, done: 3, stopped: 4 };
+      return (order[a.status] ?? 5) - (order[b.status] ?? 5);
+    });
 
   if (!filtered.length) {
     const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 7;
-    td.textContent = 'No tasks match current filter criteria.';
+    const td = document.createElement('td'); td.colSpan = 9;
+    td.textContent = 'No tasks match filter.';
     td.style.cssText = 'text-align:center;color:var(--muted);padding:24px;';
-    tr.appendChild(td);
-    tbody.appendChild(tr);
+    tr.appendChild(td); tbody.appendChild(tr);
     return;
   }
 
@@ -634,17 +1025,227 @@ function renderGlobalTaskTable() {
     const tdId = el('td', null, t.identifier || (t.id ? `#${t.id.slice(0, 8)}` : '—'));
     tdId.style.cssText = 'font-family:monospace;font-weight:600;';
 
-    const tdTitle  = el('td', null, t.title || t.name || '(untitled)');
-    const tdOrg    = el('td', null, t.organization || 'StayPoint');
-    const tdStat   = el('td'); tdStat.appendChild(statusPill(t.status));
-    const tdPri    = el('td', null, t.priority || 'medium');
-    const tdSpend  = el('td', null, `${fmtCurrency(t.spent_usd)} (${fmtCompactNum(t.spent_tokens)} tok)`);
-    const tdUp     = el('td', null, fmtTime(t.updated_at || Date.now()));
+    const tdTitle    = el('td', null, t.title || t.name || '(untitled)');
+    const tdOrg      = el('td', null, t.organization || '—');
+    const tdProj     = el('td', null, t.project || '—');
+    const tdAssignee = el('td', null, t.assignee_name || t.checkout_agent_id?.slice(0, 8) || '—');
+    const tdStat     = el('td'); tdStat.appendChild(statusPill(t.status));
+    const tdPri      = el('td', null, t.priority || '—');
+    const tdSpend    = el('td', null, t.spent_usd > 0 ? fmtCurrency(t.spent_usd) : '—');
+    const tdUp       = el('td', null, fmtRelTime(t.updated_at));
 
-    for (const td of [tdId, tdTitle, tdOrg, tdStat, tdPri, tdSpend, tdUp]) tr.appendChild(td);
+    for (const td of [tdId, tdTitle, tdOrg, tdProj, tdAssignee, tdStat, tdPri, tdSpend, tdUp])
+      tr.appendChild(td);
     tr.addEventListener('click', () => openDetail(t.id));
     tbody.appendChild(tr);
   }
+}
+
+// ── Cost & Accounting Page ────────────────────────────────
+function renderCostPage() {
+  const kpis = document.getElementById('cost-kpis');
+  const grid = document.getElementById('cost-grid-container');
+  if (!grid) return;
+  kpis.innerHTML = '';
+  grid.innerHTML = '';
+
+  const f = state.fleet;
+  const tel = f?.token_telemetry || {};
+
+  // KPI row
+  for (const { label, val, cls } of [
+    { label: 'Total Spend', val: fmtCurrency(tel.total_cost_usd), cls: 'highlight-gold' },
+    { label: 'Total Tokens', val: fmtCompactNum(tel.total_tokens), cls: '' },
+    { label: 'Input Tokens', val: fmtCompactNum(tel.input_tokens), cls: '' },
+    { label: 'Output Tokens', val: fmtCompactNum(tel.output_tokens), cls: '' },
+    { label: 'Cache Reuse', val: fmtCompactNum(tel.cache_read_tokens), cls: 'highlight-green' },
+  ]) {
+    const card = el('div', 'kpi-card');
+    card.appendChild(el('div', 'kpi-label', label));
+    card.appendChild(el('div', `kpi-value ${cls}`, val));
+    kpis.appendChild(card);
+  }
+
+  // By model
+  const modelCard = el('div', 'cost-card');
+  modelCard.appendChild(el('div', 'cost-card-title', 'Spend by Model'));
+  const models = (f?.model_spend || []).slice(0, 8);
+  if (!models.length) {
+    modelCard.appendChild(el('p', 'muted-text', 'No model telemetry recorded yet.'));
+  } else {
+    for (const m of models) {
+      const row = el('div', 'cost-bar-row');
+      const hdr = el('div', 'cost-bar-header');
+      hdr.appendChild(el('span', 'cost-bar-label', m.model));
+      hdr.appendChild(el('span', null, `${fmtCurrency(m.cost_usd)} · ${m.percentage || 0}%`));
+      row.appendChild(hdr);
+      const barOuter = el('div', 'cost-bar-outer');
+      const barInner = el('div', 'cost-bar-inner');
+      barInner.style.width = `${Math.min(100, m.percentage || 0)}%`;
+      barOuter.appendChild(barInner);
+      row.appendChild(barOuter);
+      modelCard.appendChild(row);
+    }
+  }
+  grid.appendChild(modelCard);
+
+  // By organization
+  const orgCard = el('div', 'cost-card');
+  orgCard.appendChild(el('div', 'cost-card-title', 'Spend by Organization'));
+  const orgs = f?.org_spend || [];
+  if (!orgs.length) {
+    orgCard.appendChild(el('p', 'muted-text', 'No per-org spend data.'));
+  } else {
+    for (const o of orgs) {
+      const row = el('div', 'cost-bar-row');
+      const hdr = el('div', 'cost-bar-header');
+      hdr.appendChild(el('span', 'cost-bar-label', o.organization));
+      hdr.appendChild(el('span', null, `${fmtCurrency(o.cost_usd)} · ${o.percentage || 0}%`));
+      row.appendChild(hdr);
+      const barOuter = el('div', 'cost-bar-outer');
+      const barInner = el('div', 'cost-bar-inner');
+      barInner.style.width = `${Math.min(100, o.percentage || 0)}%`;
+      barOuter.appendChild(barInner);
+      row.appendChild(barOuter);
+      orgCard.appendChild(row);
+    }
+  }
+  grid.appendChild(orgCard);
+
+  // By provider (derived from model spend)
+  const providerCard = el('div', 'cost-card');
+  providerCard.appendChild(el('div', 'cost-card-title', 'Spend by Provider'));
+  const provTotals = {};
+  for (const m of (f?.model_spend || [])) {
+    const lower = (m.model || '').toLowerCase();
+    let prov = 'other';
+    if (lower.includes('claude') || lower.includes('anthropic')) prov = 'claude';
+    else if (lower.includes('gemini') || lower.includes('google')) prov = 'gemini';
+    else if (lower.includes('gpt') || lower.includes('openai') || lower.includes('codex')) prov = 'openai';
+    provTotals[prov] = (provTotals[prov] || 0) + (m.cost_usd || 0);
+  }
+  const totalProvSpend = Object.values(provTotals).reduce((a, b) => a + b, 0);
+  const provEntries = Object.entries(provTotals).sort((a, b) => b[1] - a[1]);
+  if (!provEntries.length) {
+    providerCard.appendChild(el('p', 'muted-text', 'No provider spend data recorded yet. Ensure telemetry watcher is active.'));
+  } else {
+    for (const [prov, cost] of provEntries) {
+      const pct = totalProvSpend > 0 ? (cost / totalProvSpend * 100) : 0;
+      const row = el('div', 'cost-bar-row');
+      const hdr = el('div', 'cost-bar-header');
+      hdr.appendChild(el('span', 'cost-bar-label', prov.charAt(0).toUpperCase() + prov.slice(1)));
+      hdr.appendChild(el('span', null, `${fmtCurrency(cost)} · ${pct.toFixed(1)}%`));
+      row.appendChild(hdr);
+      const barOuter = el('div', 'cost-bar-outer');
+      const barInner = el('div', 'cost-bar-inner');
+      barInner.style.width = `${Math.min(100, pct)}%`;
+      barOuter.appendChild(barInner);
+      row.appendChild(barOuter);
+      providerCard.appendChild(row);
+    }
+  }
+  grid.appendChild(providerCard);
+
+  // Per-task spend (top 10 by cost)
+  const taskSpendCard = el('div', 'cost-card');
+  taskSpendCard.appendChild(el('div', 'cost-card-title', 'Top Tasks by Spend'));
+  const allTasks = [...(f?.tasks || []), ...Object.values(state.tasks)]
+    .filter(t => t.spent_usd > 0)
+    .sort((a, b) => b.spent_usd - a.spent_usd)
+    .slice(0, 10);
+  if (!allTasks.length) {
+    taskSpendCard.appendChild(el('p', 'muted-text', 'No per-task spend recorded yet.'));
+  } else {
+    for (const t of allTasks) {
+      const row = el('div', 'cost-row');
+      const lbl = el('div', 'cost-row-label');
+      lbl.appendChild(el('div', null, t.title || t.name || t.identifier || '—'));
+      lbl.appendChild(el('div', 'muted-text', t.organization || ''));
+      row.appendChild(lbl);
+      row.appendChild(el('span', 'cost-row-val', fmtCurrency(t.spent_usd)));
+      taskSpendCard.appendChild(row);
+    }
+  }
+  grid.appendChild(taskSpendCard);
+}
+
+// ── Settings Page ─────────────────────────────────────────
+function renderSettings() {
+  const container = document.getElementById('settings-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const f = state.fleet;
+
+  // Connection section
+  const connSec = el('div', 'settings-section');
+  const connHdr = el('div', 'settings-section-header');
+  connHdr.appendChild(el('div', 'settings-section-title', 'Connection'));
+  connHdr.appendChild(el('div', 'settings-section-desc', 'StayPoint daemon connection and authentication.'));
+  connSec.appendChild(connHdr);
+
+  for (const { label, val } of [
+    { label: 'API Endpoint', val: window.location.host },
+    { label: 'Auth', val: TOKEN ? 'Token (session cookie active)' : 'No token' },
+    { label: 'SSE Status', val: sseSource?.readyState === 1 ? 'Connected' : 'Reconnecting' },
+  ]) {
+    const row = el('div', 'settings-row');
+    row.appendChild(el('div', 'settings-row-label', label));
+    row.appendChild(el('span', 'settings-val', val));
+    connSec.appendChild(row);
+  }
+  container.appendChild(connSec);
+
+  // Provider accounts
+  const provSec = el('div', 'settings-section');
+  const provHdr = el('div', 'settings-section-header');
+  provHdr.appendChild(el('div', 'settings-section-title', 'Provider Accounts'));
+  provHdr.appendChild(el('div', 'settings-section-desc', 'Detected quota pools and account seat status.'));
+  provSec.appendChild(provHdr);
+
+  const quotas = f?.provider_quotas || {};
+  if (Object.keys(quotas).length === 0) {
+    const row = el('div', 'settings-row');
+    row.appendChild(el('span', 'muted-text', 'No quota data available.'));
+    provSec.appendChild(row);
+  } else {
+    for (const [key, q] of Object.entries(quotas)) {
+      if (key === 'claude' && (quotas['claude_work'] || quotas['claude_personal'])) continue;
+      const row = el('div', 'settings-row');
+      const lbl = el('div');
+      lbl.appendChild(el('div', 'settings-row-label', q.display_name || key));
+      lbl.appendChild(el('div', 'settings-row-sub', q.projection_status || 'unknown'));
+      row.appendChild(lbl);
+      const statusEl = el('span', null,
+        q.is_locked ? '🔒 Locked' :
+        q.projection_status === 'overpaced' ? '⚠️ Overpaced' : '✅ Active');
+      row.appendChild(statusEl);
+      provSec.appendChild(row);
+    }
+  }
+  container.appendChild(provSec);
+
+  // Fleet info
+  const fleetSec = el('div', 'settings-section');
+  const fleetHdr = el('div', 'settings-section-header');
+  fleetHdr.appendChild(el('div', 'settings-section-title', 'Fleet Info'));
+  fleetSec.appendChild(fleetHdr);
+
+  for (const { label, sub, val } of [
+    { label: 'Organizations', sub: '', val: String((f?.organizations || []).length) },
+    { label: 'Total Tasks', sub: '', val: String(f?.global_tasks?.total || 0) },
+    { label: 'Active Agents', sub: '', val: String(f?.global_agents?.active_running || 0) },
+    { label: 'Last Update', sub: '', val: f?.timestamp ? fmtDateTime(f.timestamp) : '—' },
+  ]) {
+    const row = el('div', 'settings-row');
+    const lbl = el('div');
+    lbl.appendChild(el('div', 'settings-row-label', label));
+    if (sub) lbl.appendChild(el('div', 'settings-row-sub', sub));
+    row.appendChild(lbl);
+    row.appendChild(el('span', 'settings-val', val));
+    fleetSec.appendChild(row);
+  }
+  container.appendChild(fleetSec);
 }
 
 // ── Org Detail View ────────────────────────────────────────
@@ -655,7 +1256,6 @@ function openOrgDetail(orgName) {
   state.currentOrgDetail = orgName;
   showView('org-detail');
 
-  // Mark sidebar nav inactive (no tab selected), update org tree highlight
   document.querySelectorAll('.sidebar-item').forEach(b => b.classList.remove('active'));
   renderSidebarOrgTree();
 
@@ -667,7 +1267,6 @@ function renderOrgDetailView(org) {
   if (!container) return;
   container.innerHTML = '';
 
-  // Header with back button
   const hdr = el('div', 'org-detail-header');
   const backBtn = el('button', 'back-btn', '← Back');
   backBtn.addEventListener('click', () => {
@@ -707,7 +1306,7 @@ function renderOrgDetailView(org) {
   }
   container.appendChild(statsRow);
 
-  // Active Tasks section
+  // Tasks section
   const orgTasks = (org.tasks || []).concat(
     Object.values(state.tasks).filter(t =>
       t.organization === org.name && !(org.tasks || []).find(ot => ot.id === t.id)
@@ -731,7 +1330,7 @@ function renderOrgDetailView(org) {
       const tdTitle = el('td', null, t.title || t.name || '(untitled)');
       const tdStat  = el('td'); tdStat.appendChild(statusPill(t.status));
       const tdPri   = el('td', null, t.priority || '—');
-      const tdSpend = el('td', null, fmtCurrency(t.spent_usd));
+      const tdSpend = el('td', null, t.spent_usd > 0 ? fmtCurrency(t.spent_usd) : '—');
       for (const td of [tdId, tdTitle, tdStat, tdPri, tdSpend]) tr.appendChild(td);
       tr.addEventListener('click', () => openDetail(t.id));
       tbody.appendChild(tr);
@@ -756,13 +1355,12 @@ function renderOrgDetailView(org) {
       card.appendChild(el('div', 'agent-roster-meta',
         `${a.role || 'agent'} · ${a.provider || 'unknown'} · ${a.status || 'active'}`));
       if (a.last_heartbeat) {
-        card.appendChild(el('div', 'muted-text', `Last: ${fmtDateTime(a.last_heartbeat)}`));
+        card.appendChild(el('div', 'muted-text', `Last: ${fmtRelTime(a.last_heartbeat)}`));
       }
       rosterGrid.appendChild(card);
     }
     agentsSec.appendChild(rosterGrid);
   } else {
-    // Fall back to provider breakdown
     const provs = org.active_agents_by_provider || {};
     const provBreakdown = el('div', 'agent-roster-grid');
     for (const [provider, count] of Object.entries(provs)) {
@@ -835,67 +1433,11 @@ function makeTaskCard(task) {
 
 // ── Render: Fleet (Sessions) ──────────────────────────────
 function renderFleet() {
-  const grid = document.getElementById('fleet-grid');
-  if (!grid) return;
-  grid.innerHTML = '';
-
-  const sessions = Object.values(state.sessions);
-  if (!sessions.length) {
-    grid.appendChild(el('p', null, 'No agent sessions registered yet.'));
-    return;
+  // Fleet view is now "Agents" — redirect rendering to agents view if active
+  const agentsView = document.getElementById('view-agents');
+  if (agentsView?.classList.contains('active')) {
+    renderAgentsPage();
   }
-
-  // Provider legend
-  const legend = document.getElementById('provider-legend');
-  if (legend) {
-    legend.innerHTML = '';
-    const byCounts = {};
-    for (const s of sessions) {
-      const p = s.agent_type || 'other';
-      byCounts[p] = (byCounts[p] || 0) + 1;
-    }
-    for (const [provider, count] of Object.entries(byCounts)) {
-      const badge = el('span', `fleet-provider-badge provider-${provider}`, `${provider}: ${count}`);
-      legend.appendChild(badge);
-    }
-  }
-
-  sessions.sort((a, b) => new Date(b.last_heartbeat_at || 0) - new Date(a.last_heartbeat_at || 0));
-  for (const s of sessions) grid.appendChild(makeFleetCard(s));
-}
-
-function makeFleetCard(s) {
-  const card = el('div', 'fleet-card');
-
-  const topRow = el('div', 'fleet-status');
-  topRow.style.justifyContent = 'space-between';
-  topRow.style.marginBottom = '6px';
-
-  const agentLine = el('div', 'fleet-agent', s.agent_type || 'agent');
-  const provBadge = el('span', `fleet-provider-badge provider-${s.agent_type || 'other'}`,
-    s.agent_type || 'other');
-
-  topRow.appendChild(agentLine);
-  topRow.appendChild(provBadge);
-  card.appendChild(topRow);
-
-  card.appendChild(el('div', 'fleet-repo',
-    `${s.repo_path || '—'} (${s.git_branch || '—'})`));
-
-  const statusRow = el('div', 'fleet-status');
-  const dotCls = s.status === 'active' ? 'fleet-dot fleet-active'
-               : s.status === 'idle'   ? 'fleet-dot fleet-idle'
-               : 'fleet-dot fleet-closed';
-  statusRow.appendChild(el('span', dotCls));
-  statusRow.appendChild(el('span', null, s.status || 'unknown'));
-  if (s.last_heartbeat_at) {
-    statusRow.appendChild(el('span', 'muted-text', ` · ${fmtTime(s.last_heartbeat_at)}`));
-  }
-  if (s.hostname && s.hostname !== 'local') {
-    statusRow.appendChild(el('span', 'muted-text', ` · ${s.hostname}`));
-  }
-  card.appendChild(statusRow);
-  return card;
 }
 
 // ── Render: Boss Card ─────────────────────────────────────
@@ -910,8 +1452,6 @@ function renderBoss() {
   const done    = tasks.filter(t => t.status === 'done').length;
   const total   = tasks.length;
 
-  // Prefer fleet aggregator's active_running count (includes Gemini/remote agents);
-  // fall back to local session DB count if fleet data is unavailable.
   const sessions = Object.values(state.sessions);
   const active = state.fleet?.global_agents?.active_running
     ?? sessions.filter(s => s.status === 'active').length;
@@ -925,6 +1465,56 @@ function renderBoss() {
   titleWrap.appendChild(el('div', 'boss-subtitle',
     `${total} task${total !== 1 ? 's' : ''} · ${active} agent${active !== 1 ? 's' : ''} active`));
   header.appendChild(titleWrap);
+
+  // Download Report dropdown
+  const dlWrap = el('div', 'report-dl-wrap');
+  const dlBtn = el('button', 'report-dl-btn', 'Download Report');
+  dlBtn.type = 'button';
+  const dlMenu = el('div', 'report-dl-menu');
+  dlMenu.hidden = true;
+  for (const { type, label } of [
+    { type: 'work',     label: 'Work / Boss Card' },
+    { type: 'personal', label: 'Personal' },
+    { type: 'gemini',   label: 'Gemini / Antigravity' },
+    { type: 'combined', label: 'Combined Fleet' },
+  ]) {
+    const item = el('button', 'report-dl-item', label);
+    item.type = 'button';
+    item.dataset.reportType = type;
+    item.addEventListener('click', async () => {
+      dlMenu.hidden = true;
+      // Bug 4 fix: show loading state
+      const origText = item.textContent;
+      const spinner = el('span', 'dl-spinner');
+      item.prepend(spinner);
+      item.disabled = true;
+      try {
+        const url = `/api/report?type=${type}&token=${encodeURIComponent(TOKEN)}`;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `staypoint-${type}-report.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        // Give browser a moment to start the download before re-enabling
+        await new Promise(r => setTimeout(r, 1500));
+      } finally {
+        spinner.remove();
+        item.textContent = origText;
+        item.disabled = false;
+      }
+    });
+    dlMenu.appendChild(item);
+  }
+  dlBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dlMenu.hidden = !dlMenu.hidden;
+  });
+  dlWrap.addEventListener('click', (e) => e.stopPropagation());
+  dlWrap.appendChild(dlBtn);
+  dlWrap.appendChild(dlMenu);
+  header.appendChild(dlWrap);
+
   card.appendChild(header);
 
   const grid = el('div', 'boss-stat-grid');
@@ -966,7 +1556,111 @@ function renderEventStream() {
   }
 }
 
-// ── Detail panel ──────────────────────────────────────────
+// ── Chat helpers ──────────────────────────────────────────
+
+function startChatPoll(taskId) {
+  stopChatPoll();
+  state.chatPollTimer = setInterval(() => refreshChatMessages(taskId), 8000);
+}
+
+function stopChatPoll() {
+  if (state.chatPollTimer) { clearInterval(state.chatPollTimer); state.chatPollTimer = null; }
+}
+
+async function refreshChatMessages(taskId) {
+  if (state.openDetailTaskId !== taskId) { stopChatPoll(); return; }
+  try {
+    const cr = await apiFetch(`/api/fleet/tasks/${taskId}/comments`);
+    const comments = cr.comments || (Array.isArray(cr) ? cr : []);
+    const messagesDiv = document.getElementById('panel-chat-messages');
+    const titleEl = document.querySelector('#panel-chat-section .panel-section-title');
+    if (!messagesDiv) return;
+    const atBottom = messagesDiv.scrollHeight - messagesDiv.scrollTop <= messagesDiv.clientHeight + 30;
+    renderChatMessages(messagesDiv, comments);
+    if (atBottom) messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    if (titleEl) titleEl.textContent = `Chat (${comments.length})`;
+  } catch { /* silent */ }
+}
+
+function renderChatMessages(container, comments) {
+  container.innerHTML = '';
+  if (!comments.length) {
+    container.appendChild(el('p', 'panel-field-muted', 'No messages yet.'));
+    return;
+  }
+  for (const c of comments) {
+    const authorType = (c.authorType || c.author_type || '').toLowerCase();
+    const isAgent = authorType === 'agent' || authorType === 'system';
+    const authorLabel = isAgent
+      ? (c.authorName || c.author_name || 'Agent')
+      : (c.author || 'You');
+    const ts = c.createdAt || c.created_at || c.timestamp || '';
+
+    const msg = el('div', `chat-msg ${isAgent ? 'chat-msg-agent' : 'chat-msg-user'}`);
+    msg.appendChild(el('div', 'chat-msg-meta', `${authorLabel}${ts ? ' · ' + fmtDateTime(ts) : ''}`));
+    const bubble = el('div', 'chat-msg-bubble');
+    bubble.appendChild(mdEl(c.body || c.message || ''));
+    msg.appendChild(bubble);
+    container.appendChild(msg);
+  }
+}
+
+function buildChatSection(container, taskId, comments) {
+  const section = el('div', 'chat-section');
+  section.id = 'panel-chat-section';
+  section.appendChild(el('div', 'panel-section-title', `Chat (${comments.length})`));
+
+  const messagesDiv = el('div', 'chat-messages');
+  messagesDiv.id = 'panel-chat-messages';
+  renderChatMessages(messagesDiv, comments);
+  section.appendChild(messagesDiv);
+
+  const compose = el('div', 'chat-compose');
+  const textarea = document.createElement('textarea');
+  textarea.className = 'chat-textarea';
+  textarea.placeholder = 'Message the agent… (⌘↵ to send)';
+  textarea.rows = 2;
+  const sendBtn = el('button', 'chat-send-btn', 'Send');
+  sendBtn.type = 'button';
+
+  const doSend = async () => {
+    const body = textarea.value.trim();
+    if (!body) return;
+    textarea.value = '';
+    sendBtn.disabled = true;
+    try {
+      await sendComment(taskId, body);
+      await refreshChatMessages(taskId);
+    } catch { /* ignore send error visually */ } finally {
+      sendBtn.disabled = false;
+      textarea.focus();
+    }
+  };
+
+  sendBtn.addEventListener('click', doSend);
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); doSend(); }
+  });
+
+  compose.appendChild(textarea);
+  compose.appendChild(sendBtn);
+  section.appendChild(compose);
+  container.appendChild(section);
+
+  messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+async function sendComment(taskId, body) {
+  const resp = await fetch(`/api/fleet/tasks/${taskId}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify({ body }),
+  });
+  if (!resp.ok) throw new Error(`Send failed: ${resp.status}`);
+  return resp.json().catch(() => null);
+}
+
+// ── Detail panel (Right sidebar / Properties) ─────────────
 function addPanelField(content, label, value) {
   if (!value && value !== 0) return;
   const field = el('div', 'panel-field');
@@ -994,8 +1688,8 @@ function renderDetailContent(content, task) {
   if (task.organization) metaRow.appendChild(el('span', 'pill', task.organization));
   content.appendChild(metaRow);
 
-  // Description (markdown)
-  const desc = task.description || task.block_reason || '';
+  // Description
+  const desc = task.description || '';
   if (desc) {
     const descField = el('div', 'panel-field');
     descField.appendChild(el('div', 'panel-field-label', 'Description'));
@@ -1007,7 +1701,9 @@ function renderDetailContent(content, task) {
   addPanelField(content, 'Stage',    task.execution_stage || task.status);
   addPanelField(content, 'Assignee', task.assignee_name || task.checkout_agent_id || null);
   addPanelField(content, 'Project',  task.project || null);
+  addPanelField(content, 'Goal',     task.goal_title || task.goal_id ? (task.goal_title || task.goal_id?.slice(0, 12)) : null);
   addPanelField(content, 'Repo',     task.repo_path ? `${task.repo_path} (${task.git_branch || 'main'})` : null);
+  addPanelField(content, 'Labels',   task.labels?.join(', ') || null);
 
   // Spend
   if (task.spent_usd || task.spent_tokens) {
@@ -1020,18 +1716,34 @@ function renderDetailContent(content, task) {
     addPanelField(content, 'Budget', `${fmtCurrency(task.max_budget_usd)} · ${task.max_turns || 50} turns max`);
   }
 
-  // Blocker
-  if (task.is_blocked) {
+  // Blocker — Bug 2 fix: show normalized reason
+  if (task.is_blocked || task.status === 'blocked') {
     const blockerWrap = el('div', 'panel-field');
     blockerWrap.appendChild(el('div', 'panel-field-label', 'Blocked'));
-    const tag = el('span', 'panel-blocker-tag', `⚠ ${task.block_reason || 'blocked'}`);
+    const rawReason = task.block_reason || '';
+    const normalizedReason = rawReason && rawReason.toLowerCase() !== 'blocked via tui' && rawReason !== ''
+      ? rawReason
+      : 'Blocked — no specific reason recorded';
+    const tag = el('span', 'panel-blocker-tag', `⚠ ${normalizedReason}`);
     blockerWrap.appendChild(tag);
     content.appendChild(blockerWrap);
   }
 
-  // Linked issues (parent)
-  if (task.parent_id) {
-    addPanelField(content, 'Parent Task', `#${task.parent_id.slice(0, 12)}`);
+  // Blocked by issues
+  if (task.blocked_by?.length) {
+    const bbField = el('div', 'panel-field');
+    bbField.appendChild(el('div', 'panel-field-label', 'Blocked By'));
+    for (const bb of task.blocked_by) {
+      const tag = el('div', 'panel-field-value', `${bb.identifier || bb.id?.slice(0,8)} — ${bb.title || ''}`);
+      bbField.appendChild(tag);
+    }
+    content.appendChild(bbField);
+  }
+
+  // Parent task
+  if (task.parent_id || task.parent_identifier) {
+    addPanelField(content, 'Parent Task',
+      task.parent_identifier || `#${task.parent_id?.slice(0, 12)}`);
   }
 
   // Timestamps
@@ -1039,8 +1751,10 @@ function renderDetailContent(content, task) {
     const tsField = el('div', 'panel-field');
     tsField.appendChild(el('div', 'panel-field-label', 'Timestamps'));
     const tsVal = el('div', 'panel-field-muted');
-    if (task.created_at) tsVal.textContent = `Created: ${fmtDateTime(task.created_at)}`;
-    if (task.updated_at) tsVal.textContent += `  ·  Updated: ${fmtDateTime(task.updated_at)}`;
+    const parts = [];
+    if (task.created_at) parts.push(`Created: ${fmtDateTime(task.created_at)}`);
+    if (task.updated_at) parts.push(`Updated: ${fmtRelTime(task.updated_at)}`);
+    tsVal.textContent = parts.join('  ·  ');
     tsField.appendChild(tsVal);
     content.appendChild(tsField);
   }
@@ -1052,8 +1766,6 @@ function renderDetailContent(content, task) {
   content.appendChild(idField);
 }
 
-// Fleet tasks have UUID format (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).
-// Local tasks use the "task-XXXXXXXX" prefix format.
 function isFleetTaskId(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
 }
@@ -1062,33 +1774,43 @@ async function openDetail(taskId) {
   const panel   = document.getElementById('detail-panel');
   const content = document.getElementById('panel-content');
 
+  stopChatPoll();
+  state.openDetailTaskId = taskId;
   panel.classList.remove('hidden');
   content.innerHTML = '<p style="color:var(--muted)">Loading…</p>';
 
-  const apiBase = isFleetTaskId(taskId) ? '/api/fleet/tasks' : '/api/tasks';
+  const isFleet = isFleetTaskId(taskId);
+  const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
 
   try {
     const resp = await apiFetch(`${apiBase}/${taskId}`);
-    // Local handler returns { task: {...}, comments: [...] }
-    // Fleet proxy returns the Paperclip issue object directly
     const task = resp.task || resp;
     const inlineComments = resp.comments || [];
 
     renderDetailContent(content, task);
 
-    if (inlineComments.length) {
-      appendComments(content, inlineComments);
+    if (isFleet) {
+      let comments = inlineComments;
+      if (!comments.length) {
+        try {
+          const cr = await apiFetch(`${apiBase}/${taskId}/comments`);
+          comments = cr.comments || (Array.isArray(cr) ? cr : []);
+        } catch { /* comments optional */ }
+      }
+      buildChatSection(content, taskId, comments);
+      startChatPoll(taskId);
     } else {
-      // Try loading comments separately (fleet tasks)
-      try {
-        const commResp = await apiFetch(`${apiBase}/${taskId}/comments`);
-        const comments = commResp.comments || (Array.isArray(commResp) ? commResp : []);
-        if (comments.length) appendComments(content, comments);
-      } catch { /* comments optional */ }
+      if (inlineComments.length) {
+        appendComments(content, inlineComments);
+      } else {
+        try {
+          const cr = await apiFetch(`${apiBase}/${taskId}/comments`);
+          const comments = cr.comments || (Array.isArray(cr) ? cr : []);
+          if (comments.length) appendComments(content, comments);
+        } catch { /* comments optional */ }
+      }
     }
-
   } catch {
-    // Fall back to cached fleet task data if API fails
     const cached = state.tasks[taskId];
     if (cached) {
       renderDetailContent(content, cached);
@@ -1118,13 +1840,14 @@ function appendComments(container, comments) {
 
 document.getElementById('panel-close').addEventListener('click', () => {
   document.getElementById('detail-panel').classList.add('hidden');
+  stopChatPoll();
+  state.openDetailTaskId = null;
 });
 
 // ── Render All ────────────────────────────────────────────
 function renderAll() {
   renderOverview();
   renderKanban();
-  renderFleet();
   renderBoss();
 
   // Re-render org detail if one is open and fleet data refreshed
@@ -1134,22 +1857,56 @@ function renderAll() {
   }
 
   renderSidebarOrgTree();
+
+  // Re-render any open dynamic pages
+  if (document.getElementById('view-projects')?.classList.contains('active')) renderProjects();
+  if (document.getElementById('view-agents')?.classList.contains('active'))   renderAgentsPage();
+  if (document.getElementById('view-recent-tasks')?.classList.contains('active')) renderRecentTasks();
+  if (document.getElementById('view-task-status')?.classList.contains('active'))  renderTaskStatusPage();
+  if (document.getElementById('view-cost')?.classList.contains('active'))         renderCostPage();
 }
 
-// ── Filter listeners ──────────────────────────────────────
+// ── Filter listeners (overview) ───────────────────────────
 document.getElementById('task-search-input')?.addEventListener('input', (e) => {
   state.taskFilter.search = e.target.value;
   renderGlobalTaskTable();
 });
-
 document.getElementById('task-org-filter')?.addEventListener('change', (e) => {
   state.taskFilter.org = e.target.value;
   renderGlobalTaskTable();
 });
-
 document.getElementById('task-status-filter')?.addEventListener('change', (e) => {
   state.taskFilter.status = e.target.value;
   renderGlobalTaskTable();
+});
+
+// ── Filter listeners (task status page) ──────────────────
+document.getElementById('ts-search-input')?.addEventListener('input', (e) => {
+  state.tsFilter.search = e.target.value;
+  renderTaskStatusPage();
+});
+document.getElementById('ts-org-filter')?.addEventListener('change', (e) => {
+  state.tsFilter.org = e.target.value;
+  renderTaskStatusPage();
+});
+document.getElementById('ts-status-filter')?.addEventListener('change', (e) => {
+  state.tsFilter.status = e.target.value;
+  renderTaskStatusPage();
+});
+
+// ── Filter listeners (agents page) ───────────────────────
+document.getElementById('agents-search')?.addEventListener('input', (e) => {
+  state.agentsFilter.search = e.target.value;
+  renderAgentsPage();
+});
+document.getElementById('agents-provider-filter')?.addEventListener('change', (e) => {
+  state.agentsFilter.provider = e.target.value;
+  renderAgentsPage();
+});
+
+// ── Filter listeners (projects page) ─────────────────────
+document.getElementById('projects-org-filter')?.addEventListener('change', () => {
+  renderProjects();
 });
 
 // ── Boot ──────────────────────────────────────────────────

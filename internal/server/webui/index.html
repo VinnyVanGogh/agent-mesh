@@ -27,14 +27,46 @@
       <button class="sidebar-item active" data-view="overview">
         <span class="sidebar-icon">&#9632;</span>All Organizations
       </button>
+      <button class="sidebar-item" data-view="projects">
+        <span class="sidebar-icon">&#9726;</span>Projects
+      </button>
+      <button class="sidebar-item" data-view="agents">
+        <span class="sidebar-icon">&#9702;</span>Agents
+      </button>
       <button class="sidebar-item" data-view="kanban">
         <span class="sidebar-icon">&#9723;</span>Kanban
       </button>
-      <button class="sidebar-item" data-view="fleet">
-        <span class="sidebar-icon">&#9702;</span>Agents &amp; Sessions
+      <div class="sidebar-nav-divider"></div>
+      <button class="sidebar-item" data-view="recent-tasks">
+        <span class="sidebar-icon">&#9670;</span>Recent Tasks
+      </button>
+      <button class="sidebar-item" data-view="task-status">
+        <span class="sidebar-icon">&#9776;</span>Task Status
+      </button>
+      <button class="sidebar-item" data-view="cost">
+        <span class="sidebar-icon">&#9670;</span>Cost &amp; Accounting
       </button>
       <button class="sidebar-item" data-view="boss">
         <span class="sidebar-icon">&#9670;</span>Boss Card
+      </button>
+      <div class="sidebar-nav-divider"></div>
+      <button class="sidebar-item" data-view="settings">
+        <span class="sidebar-icon">&#9881;</span>Settings
+      </button>
+      <button class="sidebar-item" data-view="routines">
+        <span class="sidebar-icon">&#9203;</span>Routines
+      </button>
+      <button class="sidebar-item" data-view="artifacts">
+        <span class="sidebar-icon">&#9741;</span>Artifacts
+      </button>
+      <button class="sidebar-item" data-view="skills">
+        <span class="sidebar-icon">&#9889;</span>Skills
+      </button>
+      <button class="sidebar-item" data-view="connectors">
+        <span class="sidebar-icon">&#9741;</span>Connectors
+      </button>
+      <button class="sidebar-item" data-view="audit">
+        <span class="sidebar-icon">&#9998;</span>Audit
       </button>
     </nav>
 
@@ -170,6 +202,36 @@
       </div>
     </section>
 
+    <!-- Projects view -->
+    <section id="view-projects" class="view">
+      <div class="view-header">
+        <h1 class="view-title">Projects</h1>
+        <div class="table-controls">
+          <select id="projects-org-filter" class="select-filter">
+            <option value="all">All Organizations</option>
+          </select>
+        </div>
+      </div>
+      <div id="projects-grid" class="projects-grid"></div>
+    </section>
+
+    <!-- Agents view (full dedicated page) -->
+    <section id="view-agents" class="view">
+      <div class="view-header">
+        <h1 class="view-title">Agents</h1>
+        <div class="table-controls">
+          <input type="text" id="agents-search" placeholder="Filter by name or provider…" class="search-input">
+          <select id="agents-provider-filter" class="select-filter">
+            <option value="all">All Providers</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </div>
+      </div>
+      <div id="agents-grid" class="agents-grid"></div>
+    </section>
+
     <!-- Kanban view -->
     <section id="view-kanban" class="view">
       <div class="view-header">
@@ -195,13 +257,67 @@
       </div>
     </section>
 
-    <!-- Fleet view -->
-    <section id="view-fleet" class="view">
+    <!-- Recent Tasks view -->
+    <section id="view-recent-tasks" class="view">
       <div class="view-header">
-        <h1 class="view-title">Agents &amp; Sessions</h1>
-        <div class="provider-legend" id="provider-legend"></div>
+        <h1 class="view-title">Recent Tasks</h1>
+        <span class="refresh-indicator">Activity feed — all agents</span>
       </div>
-      <div id="fleet-grid" class="fleet-grid"></div>
+      <div class="dashboard-section">
+        <div id="recent-tasks-feed" class="activity-feed"></div>
+      </div>
+    </section>
+
+    <!-- Task Status dedicated page -->
+    <section id="view-task-status" class="view">
+      <div class="view-header">
+        <h1 class="view-title">Global Task Status</h1>
+        <div class="table-controls">
+          <input type="text" id="ts-search-input" placeholder="Filter by name, id, or org…" class="search-input">
+          <select id="ts-org-filter" class="select-filter">
+            <option value="all">All Organizations</option>
+          </select>
+          <select id="ts-status-filter" class="select-filter">
+            <option value="all">All Statuses</option>
+            <option value="running">Running</option>
+            <option value="active">Active / Todo</option>
+            <option value="blocked">Blocked</option>
+            <option value="stopped">Stopped</option>
+            <option value="errored">Errored</option>
+            <option value="done">Done</option>
+          </select>
+        </div>
+      </div>
+      <div class="dashboard-section" style="padding:0">
+        <div class="task-table-wrapper" style="border:none;border-radius:0">
+          <table class="global-task-table">
+            <thead>
+              <tr>
+                <th>Identifier</th>
+                <th>Task</th>
+                <th>Organization</th>
+                <th>Project</th>
+                <th>Assignee</th>
+                <th>Status</th>
+                <th>Priority</th>
+                <th>Cost</th>
+                <th>Updated</th>
+              </tr>
+            </thead>
+            <tbody id="ts-task-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cost & Accounting page -->
+    <section id="view-cost" class="view">
+      <div class="view-header">
+        <h1 class="view-title">Cost &amp; Accounting</h1>
+        <span class="refresh-indicator">Ratecard-estimated spend · real-time</span>
+      </div>
+      <div id="cost-kpis" class="overview-kpis"></div>
+      <div id="cost-grid-container" class="cost-grid"></div>
     </section>
 
     <!-- Boss Card view -->
@@ -210,6 +326,69 @@
         <h1 class="view-title">Boss Card</h1>
       </div>
       <div id="boss-container" class="boss-container"></div>
+    </section>
+
+    <!-- Settings page -->
+    <section id="view-settings" class="view">
+      <div class="view-header">
+        <h1 class="view-title">Settings</h1>
+      </div>
+      <div id="settings-container" class="settings-grid"></div>
+    </section>
+
+    <!-- Routines stub -->
+    <section id="view-routines" class="view">
+      <div class="view-header"><h1 class="view-title">Routines</h1></div>
+      <div class="stub-page">
+        <div class="stub-icon">&#9203;</div>
+        <div class="stub-title">Routines</div>
+        <div class="stub-desc">Create and manage recurring agent routines that fire on a cron schedule.</div>
+        <div class="stub-phase">Coming in Phase 2</div>
+      </div>
+    </section>
+
+    <!-- Artifacts stub -->
+    <section id="view-artifacts" class="view">
+      <div class="view-header"><h1 class="view-title">Artifacts</h1></div>
+      <div class="stub-page">
+        <div class="stub-icon">&#9741;</div>
+        <div class="stub-title">Artifacts</div>
+        <div class="stub-desc">Work products, uploaded files, and agent-generated deliverables.</div>
+        <div class="stub-phase">Coming in Phase 2</div>
+      </div>
+    </section>
+
+    <!-- Skills stub -->
+    <section id="view-skills" class="view">
+      <div class="view-header"><h1 class="view-title">Skills</h1></div>
+      <div class="stub-page">
+        <div class="stub-icon">&#9889;</div>
+        <div class="stub-title">Skills</div>
+        <div class="stub-desc">Agent skill catalog — install, remove, and configure skills per agent.</div>
+        <div class="stub-phase">Coming in Phase 2</div>
+      </div>
+    </section>
+
+    <!-- Connectors stub -->
+    <section id="view-connectors" class="view">
+      <div class="view-header"><h1 class="view-title">Connectors</h1></div>
+      <div class="stub-page">
+        <div class="stub-icon">&#9741;</div>
+        <div class="stub-title">Connectors</div>
+        <div class="stub-desc">External service connections — GitHub, Linear, Slack, and more.</div>
+        <div class="stub-phase">Coming in Phase 2</div>
+      </div>
+    </section>
+
+    <!-- Audit stub -->
+    <section id="view-audit" class="view">
+      <div class="view-header"><h1 class="view-title">Audit</h1></div>
+      <div class="stub-page">
+        <div class="stub-icon">&#9998;</div>
+        <div class="stub-title">Audit Log</div>
+        <div class="stub-desc">Event log of all agent actions, approvals, and system events.</div>
+        <div class="stub-phase">Coming in Phase 2</div>
+      </div>
     </section>
 
     <!-- Org Detail view (dynamically rendered) -->
