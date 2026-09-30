@@ -16,15 +16,15 @@ import (
 
 // InferredTask represents the structured engineering issue inferred by the AI engine.
 type InferredTask struct {
-	Organization string   `json:"organization"`
-	Project      string   `json:"project"`
-	Title        string   `json:"title"`
-	Description  string   `json:"description"`
-	Priority     string   `json:"priority"` // low, medium, high, urgent
-	Labels       []string `json:"labels"`
-	AssigneeRole string   `json:"assigneeRole"`
-	Status       string   `json:"status,omitempty"`
-	AskClarification string `json:"askClarification,omitempty"`
+	Organization     string   `json:"organization"`
+	Project          string   `json:"project"`
+	Title            string   `json:"title"`
+	Description      string   `json:"description"`
+	Priority         string   `json:"priority"` // low, medium, high, urgent
+	Labels           []string `json:"labels"`
+	AssigneeRole     string   `json:"assigneeRole"`
+	Status           string   `json:"status,omitempty"`
+	AskClarification string   `json:"askClarification,omitempty"`
 }
 
 // GenerationResult holds the task and generation telemetry.
@@ -323,13 +323,13 @@ func (g *TaskGenerator) CallGemini(ctx context.Context, prompt string) (*Generat
 						"items":       map[string]interface{}{"type": "string"},
 						"description": "array of lowercase tags",
 					},
-										"status": map[string]interface{}{
-						"type": "string",
-						"enum": []string{"backlog", "todo", "in_progress"},
+					"status": map[string]interface{}{
+						"type":        "string",
+						"enum":        []string{"backlog", "todo", "in_progress"},
 						"description": "If prompt implies parking (e.g. idea, someday) use 'backlog'. If active (e.g. urgent, now) use 'todo'.",
 					},
 					"askClarification": map[string]interface{}{
-						"type": "string",
+						"type":        "string",
 						"description": "If brief has architectural forks or high ambiguity, write a clarification question here.",
 					},
 					"assigneeRole": map[string]interface{}{
@@ -636,7 +636,7 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 
 	// 6. Assignee Role
 	role := "CLI & Statusline Presentation Specialist"
-	
+
 	// Mask out negative directives (e.g. "not PR Reviewer", "don't assign to Security", "instead of Chief of Staff")
 	reNegative := regexp.MustCompile(`(?i)(?:not|don't|do not|never|instead of)\s+(?:a\s+|the\s+)?(?:senior\s+)?(?:pr\s+reviewer|pull\s+request|pr\b|code\s+review|chief\s+of\s+staff|cos\b|cto\b|devops|qa|test|security|ci\b)`)
 	roleNorm := reNegative.ReplaceAllString(lowerNorm, " ")
@@ -651,20 +651,20 @@ func (g *TaskGenerator) GenerateHeuristicTask(comment string) InferredTask {
 	} else if strings.Contains(roleNorm, "devops") {
 		role = "DevOps & Release Engineer"
 	} else {
-	switch {
-	case strings.Contains(roleNorm, "security") || strings.Contains(roleNorm, "auth") || strings.Contains(roleNorm, "secret"):
-		role = "Security & Deep Remediation Fixer"
-	case strings.Contains(roleNorm, "pull request") || strings.Contains(roleNorm, "pr ") || strings.Contains(roleNorm, "git diff") || strings.Contains(roleNorm, "code review"):
-		role = "Senior PR Reviewer"
-	case strings.Contains(roleNorm, "research") || strings.Contains(roleNorm, "copilot") || strings.Contains(roleNorm, "eval"):
-		role = "Research & Architecture Specialist"
-	case strings.Contains(roleNorm, "wire") || strings.Contains(roleNorm, "architecture") || strings.Contains(roleNorm, "rfc") || strings.Contains(roleNorm, "daemon"):
-		role = "Architecture Lead"
-	case strings.Contains(roleNorm, "ci") || strings.Contains(roleNorm, "lint") || strings.Contains(roleNorm, "hook") || strings.Contains(roleNorm, "test"):
-		role = "CI/CD Engineer"
-	case strings.Contains(roleNorm, "release") || strings.Contains(roleNorm, "deploy") || strings.Contains(roleNorm, "package") || strings.Contains(roleNorm, "homebrew"):
-		role = "DevOps & Release Engineer"
-	}
+		switch {
+		case strings.Contains(roleNorm, "security") || strings.Contains(roleNorm, "auth") || strings.Contains(roleNorm, "secret"):
+			role = "Security & Deep Remediation Fixer"
+		case strings.Contains(roleNorm, "pull request") || strings.Contains(roleNorm, "pr ") || strings.Contains(roleNorm, "git diff") || strings.Contains(roleNorm, "code review"):
+			role = "Senior PR Reviewer"
+		case strings.Contains(roleNorm, "research") || strings.Contains(roleNorm, "copilot") || strings.Contains(roleNorm, "eval"):
+			role = "Research & Architecture Specialist"
+		case strings.Contains(roleNorm, "wire") || strings.Contains(roleNorm, "architecture") || strings.Contains(roleNorm, "rfc") || strings.Contains(roleNorm, "daemon"):
+			role = "Architecture Lead"
+		case strings.Contains(roleNorm, "ci") || strings.Contains(roleNorm, "lint") || strings.Contains(roleNorm, "hook") || strings.Contains(roleNorm, "test"):
+			role = "CI/CD Engineer"
+		case strings.Contains(roleNorm, "release") || strings.Contains(roleNorm, "deploy") || strings.Contains(roleNorm, "package") || strings.Contains(roleNorm, "homebrew"):
+			role = "DevOps & Release Engineer"
+		}
 	}
 
 	// Extract questions if present

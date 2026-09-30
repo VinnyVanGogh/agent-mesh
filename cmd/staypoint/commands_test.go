@@ -93,6 +93,7 @@ func TestCommands_InProcess(t *testing.T) {
 			tasks, _ := meshContext.ListTasks(store.DB(), true)
 			if len(tasks) > 0 {
 				_ = runInProcess(t, repoDir, "task", "budget", tasks[0].ID, "--usd", "10.0", "--turns", "30")
+				_ = meshContext.AddWorkProduct(store.DB(), tasks[0].ID, "commit", "sha123")
 				_ = runInProcess(t, repoDir, "task", "done", tasks[0].ID)
 			}
 			store.Close()

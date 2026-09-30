@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/router"
@@ -108,7 +108,7 @@ func parseRawArgs(rawArgs []string) ParsedOptions {
 	var opts ParsedOptions
 	opts.OutputFormat = "stream-json"
 
-	argLoop:
+argLoop:
 	for i := 0; i < len(rawArgs); i++ {
 		arg := rawArgs[i]
 		switch {
@@ -217,10 +217,10 @@ func parseRawArgs(rawArgs []string) ParsedOptions {
 
 // providerCandidate represents a single provider in the failover chain.
 type providerCandidate struct {
-	Name     string          // "gemini", "work-claude", "personal-claude"
-	PoolID   router.PoolID   // for quota lock check
+	Name     string        // "gemini", "work-claude", "personal-claude"
+	PoolID   router.PoolID // for quota lock check
 	Adapter  ProviderAdapter
-	ExtraEnv []string        // e.g. CLAUDE_CONFIG_DIR for work claude
+	ExtraEnv []string // e.g. CLAUDE_CONFIG_DIR for work claude
 }
 
 // isPoolLocked returns true if the quota pool is hard-locked or has zero 5-hour headroom.
@@ -240,12 +240,14 @@ func isPoolLocked(pool *router.QuotaPool) bool {
 // BuildProviderChain constructs the ordered failover chain based on repo type and starting provider.
 //
 // Work repo chains:
-//   provider=gemini: [gemini, work-claude, personal-claude]
-//   provider=claude: [work-claude, personal-claude, gemini]
+//
+//	provider=gemini: [gemini, work-claude, personal-claude]
+//	provider=claude: [work-claude, personal-claude, gemini]
 //
 // Personal repo chains:
-//   provider=gemini: [gemini, personal-claude]
-//   provider=claude: [personal-claude, gemini]
+//
+//	provider=gemini: [gemini, personal-claude]
+//	provider=claude: [personal-claude, gemini]
 func BuildProviderChain(isWork bool, provider string) []providerCandidate {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -253,22 +255,22 @@ func BuildProviderChain(isWork bool, provider string) []providerCandidate {
 	}
 
 	gemini := providerCandidate{
-		Name:      "gemini",
-		PoolID:    router.PoolGeminiNative,
-		Adapter:   AgyAdapter{},
+		Name:    "gemini",
+		PoolID:  router.PoolGeminiNative,
+		Adapter: AgyAdapter{},
 	}
 
 	workClaude := providerCandidate{
-		Name:      "work-claude",
-		PoolID:    router.PoolWorkClaude,
-		Adapter:   ClaudeAdapter{},
-		ExtraEnv:  []string{"CLAUDE_CONFIG_DIR=" + home + "/.claude-work"},
+		Name:     "work-claude",
+		PoolID:   router.PoolWorkClaude,
+		Adapter:  ClaudeAdapter{},
+		ExtraEnv: []string{"CLAUDE_CONFIG_DIR=" + home + "/.claude-work"},
 	}
 
 	personalClaude := providerCandidate{
-		Name:      "personal-claude",
-		PoolID:    router.PoolPersonalClaude,
-		Adapter:   ClaudeAdapter{},
+		Name:    "personal-claude",
+		PoolID:  router.PoolPersonalClaude,
+		Adapter: ClaudeAdapter{},
 	}
 
 	if isWork {
