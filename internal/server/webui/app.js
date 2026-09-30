@@ -413,29 +413,61 @@ function renderQuotaGauges(quotas) {
     hdr.appendChild(el('span', `pill ${sCls}`, sTxt));
     card.appendChild(hdr);
 
-    const remainingPct = Math.max(0, Math.min(100, q.five_hour_remaining_pct ?? 100));
-    const usedPct = 100 - remainingPct;
-    const barOuter = el('div', 'gauge-bar-outer');
-    const barInner = el('div', 'gauge-bar-inner');
-    barInner.style.width = `${usedPct}%`;
-    barInner.className = `gauge-bar-inner ${
-      (q.is_locked || usedPct >= 95) ? 'gauge-bar-red' :
-      usedPct >= 75 ? 'gauge-bar-amber' : 'gauge-bar-green'
+    // ── 5-Hour Rolling Window ──────────────────────────────
+    const remaining5h = Math.max(0, Math.min(100, q.five_hour_remaining_pct ?? 100));
+    const used5h = 100 - remaining5h;
+    const bar5hOuter = el('div', 'gauge-bar-outer');
+    const bar5hInner = el('div', 'gauge-bar-inner');
+    bar5hInner.style.width = `${used5h}%`;
+    bar5hInner.className = `gauge-bar-inner ${
+      (q.is_locked || used5h >= 95) ? 'gauge-bar-red' :
+      used5h >= 75 ? 'gauge-bar-amber' : 'gauge-bar-green'
     }`;
-    barOuter.appendChild(barInner);
-    card.appendChild(barOuter);
+    bar5hOuter.appendChild(bar5hInner);
+    const label5h = el('div', 'gauge-window-label', '5-Hour Rolling');
+    card.appendChild(label5h);
+    card.appendChild(bar5hOuter);
 
-    const mRow = el('div', 'gauge-metrics-row');
-    mRow.appendChild(el('span', null, `5h Used: ${usedPct.toFixed(1)}% (${remainingPct.toFixed(1)}% Left)`));
-    mRow.appendChild(el('span', 'gauge-metric-val', formatCountdown(q.five_hour_resets_at) || 'rolling window'));
-    card.appendChild(mRow);
+    const m5Row = el('div', 'gauge-metrics-row');
+    m5Row.appendChild(el('span', null, `${used5h.toFixed(1)}% used · ${remaining5h.toFixed(1)}% left`));
+    m5Row.appendChild(el('span', 'gauge-metric-val', formatCountdown(q.five_hour_resets_at) || 'rolling'));
+    card.appendChild(m5Row);
 
-    const bRow = el('div', 'gauge-metrics-row');
-    bRow.appendChild(el('span', null, `Burn Rate: ${q.burn_rate_5h ? q.burn_rate_5h.toFixed(2) + '%/turn' : '0.0%/turn'}`));
-    bRow.appendChild(el('span', null, `Lockout Limit: ${q.lockout_threshold_pct || 100}%`));
-    card.appendChild(bRow);
+    const b5Row = el('div', 'gauge-metrics-row');
+    b5Row.appendChild(el('span', null, `Burn: ${q.burn_rate_5h ? q.burn_rate_5h.toFixed(2) + '%/turn' : '—'}`));
+    b5Row.appendChild(el('span', null, q.is_locked ? '🔒 Locked Out' : `Limit: ${q.lockout_threshold_pct || 100}%`));
+    card.appendChild(b5Row);
 
-    const projBox = el('div', 'gauge-projection-box', q.projection_message || 'Sustainable pacing against weekly budget');
+    // ── Weekly Budget ──────────────────────────────────────
+    const remainingWk = Math.max(0, Math.min(100, q.weekly_remaining_pct ?? 100));
+    const usedWk = 100 - remainingWk;
+    const labelWk = el('div', 'gauge-window-label', 'Weekly Budget');
+    labelWk.style.marginTop = '10px';
+    card.appendChild(labelWk);
+
+    const barWkOuter = el('div', 'gauge-bar-outer');
+    const barWkInner = el('div', 'gauge-bar-inner');
+    barWkInner.style.width = `${usedWk}%`;
+    barWkInner.className = `gauge-bar-inner ${
+      usedWk >= 90 ? 'gauge-bar-red' :
+      usedWk >= 70 ? 'gauge-bar-amber' : 'gauge-bar-green'
+    }`;
+    barWkOuter.appendChild(barWkInner);
+    card.appendChild(barWkOuter);
+
+    const mWkRow = el('div', 'gauge-metrics-row');
+    mWkRow.appendChild(el('span', null, `${usedWk.toFixed(1)}% used · ${remainingWk.toFixed(1)}% left`));
+    if (q.weekly_resets_at) {
+      mWkRow.appendChild(el('span', 'gauge-metric-val', formatCountdown(q.weekly_resets_at)));
+    }
+    card.appendChild(mWkRow);
+
+    const bWkRow = el('div', 'gauge-metrics-row');
+    bWkRow.appendChild(el('span', null, `Weekly burn: ${q.burn_rate_weekly ? q.burn_rate_weekly.toFixed(2) + '%/turn' : '—'}`));
+    if (q.runway_turns) bWkRow.appendChild(el('span', 'gauge-metric-val', `${q.runway_turns} turns left`));
+    card.appendChild(bWkRow);
+
+    const projBox = el('div', 'gauge-projection-box', q.projection_message || 'Sustainable pacing');
     card.appendChild(projBox);
 
     grid.appendChild(card);
