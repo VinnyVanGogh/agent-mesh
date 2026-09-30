@@ -481,7 +481,11 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.SpentUSD,
 		&t.SpentTurns,
 		&org,
-		&proj, proj,
+		&proj,
+		&parentID,
+		&t.ExecutionStage,
+		&checkoutRunID,
+		&checkoutAgentID,
 		&t.IsBlocked,
 		&blockReason,
 		&t.CreatedAt,
@@ -857,3 +861,63 @@ func ListTaskDocuments(db *sql.DB, taskID string) ([]TaskDocument, error) {
 	}
 	return docs, rows.Err()
 }
+
+// SetTaskExecutionStage updates the execution stage of a task and sets status accordingly.
+func SetTaskExecutionStage(db *sql.DB, taskID, stage string) error {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return err
+	}
+	stage = strings.ToLower(strings.TrimSpace(stage))
+	status := "active"
+	if stage == "done" {
+		status = "done"
+	}
+	query := `UPDATE tasks SET execution_stage = ?, status = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
+	if _, err := db.Exec(query, stage, status, task.ID); err != nil {
+		return fmt.Errorf("failed to set task execution stage: %w", err)
+	}
+	_ = LogActivity(db, task.ID, "stage_change", fmt.Sprintf("execution stage set to %s", stage))
+	return nil
+}
+
+// GetTaskWorkProducts retrieves all work products associated with a task.
+func GetTaskWorkProducts(db *sql.DB, taskID string) ([]TaskWorkProduct, error) {
+	query := `SELECT id, task_id, product_type, reference, created_at FROM task_work_products WHERE task_id = ? ORDER BY created_at ASC`
+	rows, err := db.Query(query, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var products []TaskWorkProduct
+	for rows.Next() {
+		var p TaskWorkProduct
+		if err := rows.Scan(&p.ID, &p.TaskID, &p.ProductType, &p.Reference, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		products = append(products, p)
+	}
+	return products, rows.Err()
+}
+
+// GetTaskActivityLog retrieves all activity log entries for a task.
+func GetTaskActivityLog(db *sql.DB, taskID string) ([]ActivityLog, error) {
+	query := `SELECT id, task_id, event_type, details, created_at FROM activity_log WHERE task_id = ? ORDER BY created_at ASC`
+	rows, err := db.Query(query, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []ActivityLog
+	for rows.Next() {
+		var l ActivityLog
+		if err := rows.Scan(&l.ID, &l.TaskID, &l.EventType, &l.Details, &l.CreatedAt); err != nil {
+			return nil, err
+		}
+		logs = append(logs, l)
+	}
+	return logs, rows.Err()
+}
+
