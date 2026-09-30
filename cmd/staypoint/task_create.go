@@ -49,6 +49,7 @@ func init() {
 	taskCreateCmd.Flags().Float64("budget", 0.0, "Maximum budget limit in USD")
 	taskCreateCmd.Flags().Int("max-turns", 0, "Maximum allowed turns")
 	taskCreateCmd.Flags().Bool("ai", true, "Force dynamic AI inference")
+	taskCreateCmd.Flags().Bool("global", false, "Create identical task across all Paperclip organizations")
 }
 
 func runTaskCreate(cmd *cobra.Command, args []string) error {
@@ -59,6 +60,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	projectFlag, _ := cmd.Flags().GetString("project")
 	priorityOverride, _ := cmd.Flags().GetString("priority")
 	roleOverride, _ := cmd.Flags().GetString("role")
+	globalFlag, _ := cmd.Flags().GetBool("global")
 
 	var rawComment string
 
@@ -348,7 +350,99 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 	var issueResp *paperclip.IssueResponse
 	var issueURL string
 
-	if !dryRun && companyID != "" {
+	if globalFlag {
+		fmt.Fprintln(out, "\033[1;36m[StayPoint :: Global Dispatch]\033[0m Dispersing to all organizations...")
+		compCtx, compCancel := context.WithTimeout(ctx, 15*time.Second)
+		companies, err := paperclipClient.ListCompanies(compCtx)
+		compCancel()
+		
+		if err != nil {
+			fmt.Fprintf(out, "Failed to fetch companies for global dispatch: %v\n", err)
+			return fmt.Errorf("global dispatch failed: %w", err)
+		}
+		
+		successCount := 0
+		var errorMessages []string
+		
+		for _, comp := range companies {
+			if dryRun {
+				fmt.Fprintf(out, "  • [Dry Run] Would dispatch to org: %s (%s)\n", comp.Name, comp.IssuePrefix)
+				successCount++
+				continue
+			}
+			
+			orgProjID := ""
+			projCtx, projCancel := context.WithTimeout(ctx, 15*time.Second)
+			resolvedProjID, projErr := paperclipClient.ResolveProject(projCtx, comp.ID, genResult.Task.Project)
+			projCancel()
+			if projErr == nil && resolvedProjID != "" {
+				orgProjID = resolvedProjID
+			}
+			
+			orgAssigneeID := ""
+			listCtx, listCancel := context.WithTimeout(ctx, 15*time.Second)
+			agents, agentErr := paperclipClient.ListAgents(listCtx, comp.ID)
+			listCancel()
+			if agentErr == nil {
+				targetRole := roleOverride
+				if comp.IssuePrefix == "MAN" {
+					targetRole = "Chief of Staff"
+				}
+				
+				if targetRole != "" {
+					lowerRole := strings.ToLower(targetRole)
+					for _, agent := range agents {
+						if strings.EqualFold(agent.Role, lowerRole) || strings.Contains(strings.ToLower(agent.Name), lowerRole) {
+							orgAssigneeID = agent.ID
+							break
+						}
+					}
+				}
+				
+				if orgAssigneeID == "" {
+					for _, agent := range agents {
+						if strings.Contains(strings.ToLower(agent.Name), "chief of staff") || strings.EqualFold(agent.Role, "ceo") {
+							orgAssigneeID = agent.ID
+							break
+						}
+					}
+				}
+			}
+			
+			req := paperclip.CreateIssueRequest{
+				Title:           genResult.Task.Title,
+				Description:     genResult.Task.Description,
+				Priority:        genResult.Task.Priority,
+				ProjectId:       orgProjID,
+				AssigneeAgentId: orgAssigneeID,
+				Labels:          genResult.Task.Labels,
+				Status:          genResult.Task.Status,
+			}
+			if genResult.Task.Status == "backlog" {
+				req.AssigneeAgentId = ""
+			}
+			
+			apiCtx, apiCancel := context.WithTimeout(ctx, 15*time.Second)
+			resp, err := paperclipClient.CreateIssue(apiCtx, comp.ID, req)
+			apiCancel()
+			if err != nil {
+				errMsg := fmt.Sprintf("Failed for org %s: %v", comp.Name, err)
+				fmt.Fprintf(out, "  \033[1;31m✖ %s\033[0m\n", errMsg)
+				errorMessages = append(errorMessages, errMsg)
+			} else {
+				issueURL = paperclipClient.IssueURL(comp.IssuePrefix, resp.ID)
+				fmt.Fprintf(out, "  \033[1;32m✔ %s\033[0m -> %s (%s)\n", comp.Name, resp.Identifier, issueURL)
+				successCount++
+				if issueResp == nil {
+					issueResp = resp
+				}
+			}
+		}
+		
+		if len(errorMessages) > 0 {
+			return fmt.Errorf("global dispatch partial failure (%d/%d successful): %s", successCount, len(companies), strings.Join(errorMessages, "; "))
+		}
+	} else if !dryRun && companyID != "" {
 		req := paperclip.CreateIssueRequest{
 			Title:           genResult.Task.Title,
 			Description:     genResult.Task.Description,
