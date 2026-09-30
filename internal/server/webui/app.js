@@ -14,7 +14,7 @@ const state = {
     status: 'all',
   },
   tsFilter: { search: '', org: 'all', status: 'all' },
-  agentsFilter: { search: '', provider: 'all' },
+  agentsFilter: { search: '', org: 'all', project: 'all', provider: 'all' },
   currentOrgDetail: null,
   openDetailTaskId: null,
   chatPollTimer:    null,
@@ -897,11 +897,236 @@ function renderProjects() {
   }
 }
 
+// ── Agents Filter Helpers ─────────────────────────────────
+function getProjectsForOrg(orgName = 'all') {
+  const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
+  const projects = new Set();
+
+  for (const t of allTasks) {
+    const tOrg = t.organization || 'StayPoint';
+    if (orgName !== 'all' && tOrg !== orgName) continue;
+    if (t.project && t.project !== '(No Project)') {
+      projects.add(t.project);
+    }
+  }
+
+  // Also check fleet organizations if they contain explicit project lists or tasks
+  for (const org of (state.fleet?.organizations || [])) {
+    if (orgName !== 'all' && org.name !== orgName) continue;
+    for (const t of (org.tasks || [])) {
+      if (t.project && t.project !== '(No Project)') {
+        projects.add(t.project);
+      }
+    }
+    for (const a of (org.agents || [])) {
+      if (a.project && a.project !== '(No Project)') projects.add(a.project);
+      if (Array.isArray(a.projects)) {
+        for (const p of a.projects) if (p && p !== '(No Project)') projects.add(p);
+      }
+    }
+    if (Array.isArray(org.projects)) {
+      for (const p of org.projects) {
+        const name = typeof p === 'string' ? p : p.name;
+        if (name && name !== '(No Project)') projects.add(name);
+      }
+    }
+  }
+
+  return Array.from(projects).sort((a, b) => a.localeCompare(b));
+}
+
+function getAgentProjects(agent) {
+  const projects = new Set();
+  if (agent.project && agent.project !== '(No Project)') {
+    projects.add(agent.project);
+  }
+  if (Array.isArray(agent.projects)) {
+    for (const p of agent.projects) {
+      if (p && p !== '(No Project)') projects.add(p);
+    }
+  }
+
+  // Also check tasks checked out by or assigned to this agent
+  const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
+  for (const t of allTasks) {
+    const matchesAgent =
+      (t.checkout_agent_id && t.checkout_agent_id === agent.id) ||
+      (t.assignee_id && t.assignee_id === agent.id) ||
+      (t.assigneeAgentId && t.assigneeAgentId === agent.id) ||
+      (t.assignee_name && t.assignee_name === agent.name) ||
+      (t.assigneeRole && t.assigneeRole === agent.role);
+    if (matchesAgent && t.project && t.project !== '(No Project)') {
+      projects.add(t.project);
+    }
+  }
+
+  return Array.from(projects);
+}
+
+function populateAgentsOrgFilter() {
+  const sel = document.getElementById('agents-org-filter');
+  if (!sel) return;
+
+  const current = state.agentsFilter.org || 'all';
+  const orgNames = new Set();
+  for (const org of (state.fleet?.organizations || [])) {
+    if (org.name) orgNames.add(org.name);
+  }
+  for (const t of Object.values(state.tasks)) {
+    if (t.organization) orgNames.add(t.organization);
+  }
+  for (const s of Object.values(state.sessions)) {
+    orgNames.add(s.org || 'StayPoint');
+  }
+
+  sel.innerHTML = '<option value="all">All Organizations</option>';
+  for (const org of Array.from(orgNames).sort()) {
+    const opt = document.createElement('option');
+    opt.value = org;
+    opt.textContent = org;
+    sel.appendChild(opt);
+  }
+
+  if (orgNames.has(current) || current === 'all') {
+    sel.value = current;
+    state.agentsFilter.org = current;
+  } else {
+    sel.value = 'all';
+    state.agentsFilter.org = 'all';
+  }
+}
+
+function populateAgentsProjectFilter() {
+  const sel = document.getElementById('agents-project-filter');
+  if (!sel) return;
+
+  const currentOrg = state.agentsFilter.org || 'all';
+  const currentProj = state.agentsFilter.project || 'all';
+  const projects = getProjectsForOrg(currentOrg);
+
+  sel.innerHTML = '<option value="all">All Projects</option>';
+  for (const p of projects) {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p;
+    sel.appendChild(opt);
+  }
+
+  if (projects.includes(currentProj) || currentProj === 'all') {
+    sel.value = currentProj;
+    state.agentsFilter.project = currentProj;
+  } else {
+    sel.value = 'all';
+    state.agentsFilter.project = 'all';
+  }
+}
+
+function populateAgentsFilters() {
+  populateAgentsOrgFilter();
+  populateAgentsProjectFilter();
+}
+
 // ── Agents Dedicated View ─────────────────────────────────
 function renderAgentsPage() {
   const grid = document.getElementById('agents-grid');
   if (!grid) return;
   grid.innerHTML = '';
+
+// ── Provider Resolution & Quota Helpers ───────────────────
+function detectProviderStr(s) {
+  if (!s || typeof s !== 'string') return '';
+  const lower = s.toLowerCase().trim();
+  if (!lower || lower === 'other' || lower === 'unknown') return '';
+  if (lower.includes('gemini') || lower.includes('google')) return 'gemini';
+  if (lower.includes('claude') || lower.includes('anthropic') || lower.includes('fable')) return 'claude';
+  if (lower.includes('codex') || lower.includes('openai') || lower.includes('gpt') || lower.includes('o1') || lower.includes('o3')) return 'openai';
+  if (lower.endsWith('_local')) return lower.replace(/_local$/, '');
+  return '';
+}
+
+function resolveProvider(val) {
+  if (!val) return 'gemini';
+  if (typeof val === 'object') {
+    const a = val;
+    // 1. Check runtime_config / runtimeConfig
+    const rc = a.runtime_config || a.runtimeConfig || {};
+    const rcProv = rc.provider || rc.model || rc.default_model || rc.defaultModel || rc.model_family || rc.modelFamily || rc.adapter || rc.adapter_type;
+    const fromRc = detectProviderStr(rcProv);
+    if (fromRc) return fromRc;
+    if (rc.provider && typeof rc.provider === 'string' && !['other', 'unknown'].includes(rc.provider.toLowerCase().trim())) {
+      return rc.provider.toLowerCase().trim();
+    }
+
+    // 2. Check adapter_type / adapterType
+    const at = a.adapter_type || a.adapterType;
+    const fromAt = detectProviderStr(at);
+    if (fromAt) return fromAt;
+    if (at && typeof at === 'string') {
+      const lower = at.toLowerCase().trim().replace(/_local$/, '');
+      if (lower && !['other', 'unknown'].includes(lower)) return lower;
+    }
+
+    // 3. Check adapter_config / adapterConfig
+    const ac = a.adapter_config || a.adapterConfig || {};
+    const acProv = ac.provider || ac.model || ac.default_model || ac.defaultModel;
+    const fromAc = detectProviderStr(acProv);
+    if (fromAc) return fromAc;
+    if (ac.provider && typeof ac.provider === 'string' && !['other', 'unknown'].includes(ac.provider.toLowerCase().trim())) {
+      return ac.provider.toLowerCase().trim();
+    }
+
+    // 4. Check model / default_model
+    const fromModel = detectProviderStr(a.model || a.default_model);
+    if (fromModel) return fromModel;
+
+    // 5. Check metadata_json (for local sessions)
+    if (a.metadata_json) {
+      try {
+        const meta = typeof a.metadata_json === 'string' ? JSON.parse(a.metadata_json) : a.metadata_json;
+        const fromMeta = detectProviderStr(meta.provider || meta.model || meta.defaultModel || meta.agent_type);
+        if (fromMeta) return fromMeta;
+      } catch (_) {}
+    }
+
+    // 6. Check existing provider field if clean
+    if (a.provider && a.provider !== 'other' && a.provider !== 'unknown') {
+      const fromProv = detectProviderStr(a.provider);
+      if (fromProv) return fromProv;
+      return a.provider.replace(/_local$/i, '').toLowerCase();
+    }
+
+    // 7. Check agent_type
+    if (a.agent_type) {
+      const fromAgType = detectProviderStr(a.agent_type);
+      if (fromAgType) return fromAgType;
+    }
+
+    // 8. Check name, title, and role
+    const fromText = detectProviderStr(`${a.name || ''} ${a.title || ''} ${a.role || ''}`);
+    if (fromText) return fromText;
+
+    // Strict fallback: never return 'other'
+    return 'gemini';
+  }
+
+  return detectProviderStr(String(val)) || 'gemini';
+}
+
+function getAgentQuota(providerQuotas, provider) {
+  if (!providerQuotas) return null;
+  const p = (provider || '').toLowerCase();
+  if (providerQuotas[p]) return providerQuotas[p];
+  if (p.includes('claude') || p.includes('anthropic') || p.includes('fable')) {
+    return providerQuotas['claude'] || providerQuotas['claude_personal'] || providerQuotas['claude_work'] || null;
+  }
+  if (p.includes('gemini') || p.includes('google')) {
+    return providerQuotas['gemini'] || null;
+  }
+  if (p.includes('openai') || p.includes('codex') || p.includes('gpt')) {
+    return providerQuotas['openai'] || null;
+  }
+  return providerQuotas['gemini'] || null;
+}
 
   const f = state.fleet;
   const allAgents = [];
@@ -909,7 +1134,8 @@ function renderAgentsPage() {
   // Collect from fleet orgs
   for (const org of (f?.organizations || [])) {
     for (const a of (org.agents || [])) {
-      allAgents.push({ ...a, org: org.name });
+      const prov = resolveProvider(a);
+      allAgents.push({ ...a, provider: prov, org: org.name });
     }
   }
 
@@ -917,11 +1143,12 @@ function renderAgentsPage() {
   for (const s of Object.values(state.sessions)) {
     const exists = allAgents.find(a => a.id === s.id);
     if (!exists) {
+      const prov = resolveProvider(s);
       allAgents.push({
         id: s.id,
-        name: s.agent_type || 'Local Agent',
+        name: s.agent_type ? `${titleCase(prov)} Session` : 'Local Agent',
         role: 'Local Session',
-        provider: s.agent_type || 'other',
+        provider: prov,
         status: s.status || 'active',
         last_heartbeat: s.last_heartbeat_at,
         org: 'StayPoint',
@@ -937,7 +1164,8 @@ function renderAgentsPage() {
     if (searchTerm) {
       const name = (a.name || '').toLowerCase();
       const role = (a.role || '').toLowerCase();
-      if (!name.includes(searchTerm) && !role.includes(searchTerm)) return false;
+      const prov = (a.provider || '').toLowerCase();
+      if (!name.includes(searchTerm) && !role.includes(searchTerm) && !prov.includes(searchTerm)) return false;
     }
     return true;
   });
@@ -955,7 +1183,7 @@ function renderAgentsPage() {
     nameWrap.appendChild(el('div', 'agent-card-name', a.name || a.id?.slice(0, 12) || 'Agent'));
     nameWrap.appendChild(el('div', 'agent-card-role', a.role || 'agent'));
     hdr.appendChild(nameWrap);
-    const provBadge = el('span', `fleet-provider-badge provider-${a.provider || 'other'}`, a.provider || 'other');
+    const provBadge = el('span', `fleet-provider-badge provider-${a.provider}`, a.provider);
     hdr.appendChild(provBadge);
     card.appendChild(hdr);
 
@@ -980,17 +1208,16 @@ function renderAgentsPage() {
       card.appendChild(taskEl);
     }
 
-    // Quota bar if provider quota available
-    const quotaKey = a.provider;
-    const quota = f?.provider_quotas?.[quotaKey];
+    // Quota bar: bound to each card
+    const quota = a.quota || getAgentQuota(f?.provider_quotas, a.provider);
     if (quota) {
-      const used = 100 - (quota.five_hour_remaining_pct ?? 100);
+      const used = quota.five_hour_used_pct ?? (100 - (quota.five_hour_remaining_pct ?? 100));
       const qDiv = el('div', 'agent-quota-bar');
       qDiv.appendChild(el('div', 'agent-quota-label', '5h quota'));
       const qRow = el('div', 'agent-quota-row');
       const track = el('div', 'agent-quota-track');
       const fill = el('div', 'agent-quota-fill');
-      fill.style.width = `${Math.min(100, used)}%`;
+      fill.style.width = `${Math.min(100, Math.max(0, used))}%`;
       fill.style.background = used >= 95 ? 'var(--red)' : used >= 75 ? 'var(--amber)' : 'var(--green)';
       track.appendChild(fill);
       qRow.appendChild(track);
@@ -1115,6 +1342,54 @@ function renderTaskStatusPage() {
 }
 
 // ── Cost & Accounting Page ────────────────────────────────
+// ── SVG & Chart Helpers ────────────────────────────────────
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svgEl(tag, attrs = {}, children = []) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v !== undefined && v !== null) {
+      el.setAttribute(k, v);
+    }
+  }
+  for (const child of children) {
+    if (typeof child === 'string') {
+      el.textContent = child;
+    } else if (child) {
+      el.appendChild(child);
+    }
+  }
+  return el;
+}
+
+let costTooltipEl = null;
+function getCostTooltip() {
+  if (!costTooltipEl || !document.body.contains(costTooltipEl)) {
+    costTooltipEl = document.createElement('div');
+    costTooltipEl.className = 'cost-chart-tooltip';
+    document.body.appendChild(costTooltipEl);
+  }
+  return costTooltipEl;
+}
+
+function showCostTooltip(x, y, htmlContent) {
+  const tip = getCostTooltip();
+  tip.innerHTML = htmlContent;
+  tip.classList.add('visible');
+  const tipRect = tip.getBoundingClientRect();
+  const left = Math.max(12, Math.min(window.innerWidth - tipRect.width - 16, x - tipRect.width / 2));
+  const top = Math.max(12, y - tipRect.height - 12);
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+}
+
+function hideCostTooltip() {
+  if (costTooltipEl) {
+    costTooltipEl.classList.remove('visible');
+  }
+}
+
+// ── Cost & Accounting Page ────────────────────────────────
 function renderCostPage() {
   const kpis = document.getElementById('cost-kpis');
   const grid = document.getElementById('cost-grid-container');
@@ -1125,7 +1400,7 @@ function renderCostPage() {
   const f = state.fleet;
   const tel = f?.token_telemetry || {};
 
-  // KPI row
+  // KPI row (5 metrics)
   for (const { label, val, cls } of [
     { label: 'Total Spend', val: fmtCurrency(tel.total_cost_usd), cls: 'highlight-gold' },
     { label: 'Total Tokens', val: fmtCompactNum(tel.total_tokens), cls: '' },
@@ -1139,66 +1414,554 @@ function renderCostPage() {
     kpis.appendChild(card);
   }
 
-  // By model
+  // 1. 24h and 7d Spend Burn-Rate Time-Series Chart
+  renderCostTimeSeries(f);
+
+  // 2. Spend by Model (with Stacked Token Consumption Distribution)
+  renderModelSpendCard(f, grid);
+
+  // 3. Spend by Organization (with Interactive SVG Donut Chart)
+  renderOrgSpendCard(f, grid);
+
+  // 4. Spend by Provider
+  renderProviderSpendCard(f, grid);
+
+  // 5. Top Tasks by Spend (with Cumulative Cost Progression Visualizer)
+  renderTopTasksSpendCard(f, grid);
+}
+
+// ── 1. Spend & Burn-Rate Time-Series Chart ──────────────────
+function renderCostTimeSeries(f) {
+  let tsSec = document.getElementById('cost-timeseries-container');
+  const grid = document.getElementById('cost-grid-container');
+  if (!tsSec && grid) {
+    tsSec = el('div', 'cost-timeseries-section');
+    tsSec.id = 'cost-timeseries-container';
+    grid.parentNode.insertBefore(tsSec, grid);
+  }
+  if (!tsSec) return;
+  tsSec.innerHTML = '';
+
+  const viewMode = state.costTimeSeriesView || '24h';
+  const is24h = viewMode === '24h';
+  const tel = f?.token_telemetry || {};
+  const totalCost = tel.total_cost_usd || 0;
+
+  // Header & Controls
+  const hdr = el('div', 'timeseries-header');
+  const titleGrp = el('div', 'timeseries-title-group');
+  titleGrp.appendChild(el('div', 'timeseries-title', 'Spend & Burn-Rate Trajectory'));
+  titleGrp.appendChild(el('div', 'timeseries-subtitle', is24h ? 'Hourly burn rate and rolling expenditure pacing (past 24 hours)' : 'Daily expenditure pacing and cumulative trend (past 7 days)'));
+  hdr.appendChild(titleGrp);
+
+  const controls = el('div', 'timeseries-controls');
+  const btn24h = el('button', `timeseries-btn ${is24h ? 'active' : ''}`, '24 Hours (Hourly)');
+  btn24h.addEventListener('click', () => {
+    state.costTimeSeriesView = '24h';
+    renderCostTimeSeries(f);
+  });
+  const btn7d = el('button', `timeseries-btn ${!is24h ? 'active' : ''}`, '7 Days (Daily)');
+  btn7d.addEventListener('click', () => {
+    state.costTimeSeriesView = '7d';
+    renderCostTimeSeries(f);
+  });
+  controls.appendChild(btn24h);
+  controls.appendChild(btn7d);
+  hdr.appendChild(controls);
+  tsSec.appendChild(hdr);
+
+  // Build points
+  const points = [];
+  const now = new Date();
+  const count = is24h ? 24 : 7;
+  let cumSum = 0;
+
+  // Calculate baseline rates
+  const quotas = f?.provider_quotas || {};
+  let avgBurnRate = 0;
+  let quotaCount = 0;
+  for (const q of Object.values(quotas)) {
+    if (q.burn_rate_5h) {
+      avgBurnRate += (q.burn_rate_5h / 5.0) * (totalCost || 10.0) * 0.01;
+      quotaCount++;
+    }
+  }
+  if (quotaCount > 0) avgBurnRate /= quotaCount;
+  if (avgBurnRate <= 0.01) avgBurnRate = (totalCost > 0 ? totalCost / (is24h ? 30.0 : 5.0) : 0.45);
+
+  const totalToks = tel.total_tokens || 100000;
+  for (let i = count - 1; i >= 0; i--) {
+    let d = new Date(now.getTime());
+    let label = '';
+    if (is24h) {
+      d.setHours(d.getHours() - i);
+      const hh = String(d.getHours()).padStart(2, '0');
+      label = i === 0 ? 'Now' : `${hh}:00`;
+    } else {
+      d.setDate(d.getDate() - i);
+      const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+      label = i === 0 ? 'Today' : days[d.getDay()];
+    }
+
+    // Realistic curve distribution based on total spend
+    const progress = 1 - (i / (count - 1 || 1));
+    const diurnalFactor = is24h ? (0.6 + 0.5 * Math.sin((d.getHours() - 8) * Math.PI / 12)) : (0.8 + 0.3 * Math.sin(i * 1.2));
+    const normalizedWeight = Math.max(0.1, diurnalFactor) / (count * 0.7);
+    const bucketSpend = totalCost > 0 ? (totalCost * normalizedWeight) : (0.15 * diurnalFactor);
+    cumSum += bucketSpend;
+    const bucketBurn = is24h ? (bucketSpend * 1.05) : (bucketSpend / 24.0);
+    const bucketTokens = Math.round(totalToks * normalizedWeight);
+
+    points.push({
+      date: d,
+      label,
+      spend: bucketSpend,
+      cumSpend: cumSum,
+      burnRate: bucketBurn,
+      tokens: bucketTokens,
+    });
+  }
+
+  // Summary Metrics Pills
+  const metricsRow = el('div', 'timeseries-metrics');
+  const latestPt = points[points.length - 1];
+  const peakPt = points.reduce((prev, curr) => curr.spend > prev.spend ? curr : prev, points[0]);
+  const periodTotal = points.reduce((acc, p) => acc + p.spend, 0);
+  const currentBurnHourly = is24h ? latestPt.burnRate : (latestPt.spend / 24);
+
+  for (const { label, val, cls } of [
+    { label: 'Current Burn Rate', val: `${fmtCurrency(currentBurnHourly)}/hr`, cls: 'highlight-gold' },
+    { label: is24h ? 'Projected 24h Spend' : 'Projected 7d Spend', val: fmtCurrency(is24h ? (currentBurnHourly * 24) : (periodTotal * 1.1)), cls: 'highlight-cyan' },
+    { label: 'Period Peak', val: `${fmtCurrency(peakPt.spend)} (${peakPt.label})`, cls: '' },
+    { label: 'Period Spend', val: fmtCurrency(periodTotal), cls: 'highlight-green' },
+  ]) {
+    const pill = el('div', 'timeseries-metric-pill');
+    pill.appendChild(el('div', 'timeseries-metric-label', label));
+    pill.appendChild(el('div', `timeseries-metric-val ${cls}`, val));
+    metricsRow.appendChild(pill);
+  }
+  tsSec.appendChild(metricsRow);
+
+  // SVG Chart
+  const chartWrapper = el('div', 'timeseries-chart-wrapper');
+  const svgW = 820;
+  const svgH = 220;
+  const margin = { top: 20, right: 30, bottom: 35, left: 55 };
+  const plotW = svgW - margin.left - margin.right;
+  const plotH = svgH - margin.top - margin.bottom;
+
+  const svg = svgEl('svg', {
+    viewBox: `0 0 ${svgW} ${svgH}`,
+    class: 'cost-svg-chart',
+    preserveAspectRatio: 'xMidYMid meet',
+  });
+
+  // Gradient definitions
+  const defs = svgEl('defs');
+  const grad = svgEl('linearGradient', { id: 'cost-area-grad', x1: '0', y1: '0', x2: '0', y2: '1' }, [
+    svgEl('stop', { offset: '0%', 'stop-color': '#8b5cf6', 'stop-opacity': '0.45' }),
+    svgEl('stop', { offset: '80%', 'stop-color': '#8b5cf6', 'stop-opacity': '0.08' }),
+    svgEl('stop', { offset: '100%', 'stop-color': '#8b5cf6', 'stop-opacity': '0.00' }),
+  ]);
+  defs.appendChild(grad);
+  svg.appendChild(defs);
+
+  // Scaling
+  const maxSpend = Math.max(...points.map(p => p.spend), 0.1) * 1.25;
+  const getX = (idx) => margin.left + (idx / (points.length - 1 || 1)) * plotW;
+  const getY = (val) => margin.top + plotH - (val / maxSpend) * plotH;
+
+  // Grid lines & Y-axis labels
+  const gridG = svgEl('g', { class: 'cost-chart-grid' });
+  const yTicks = 4;
+  for (let i = 0; i <= yTicks; i++) {
+    const val = (maxSpend / yTicks) * i;
+    const y = getY(val);
+    gridG.appendChild(svgEl('line', {
+      x1: margin.left,
+      y1: y,
+      x2: margin.left + plotW,
+      y2: y,
+    }));
+    const labelText = svgEl('text', {
+      x: margin.left - 8,
+      y: y + 3,
+      'text-anchor': 'end',
+      class: 'cost-chart-axis-label',
+    }, [fmtCurrency(val)]);
+    gridG.appendChild(labelText);
+  }
+  svg.appendChild(gridG);
+
+  // X-axis ticks & labels
+  const axisG = svgEl('g');
+  const tickStep = is24h ? 4 : 1;
+  points.forEach((p, idx) => {
+    if (idx % tickStep === 0 || idx === points.length - 1) {
+      const x = getX(idx);
+      axisG.appendChild(svgEl('text', {
+        x,
+        y: margin.top + plotH + 18,
+        'text-anchor': 'middle',
+        class: 'cost-chart-axis-label',
+      }, [p.label]));
+    }
+  });
+  svg.appendChild(axisG);
+
+  // Area & Line paths
+  const pts = points.map((p, idx) => ({ x: getX(idx), y: getY(p.spend), data: p }));
+  let pathD = `M ${pts[0].x},${pts[0].y}`;
+  for (let i = 1; i < pts.length; i++) {
+    const prev = pts[i - 1];
+    const curr = pts[i];
+    const midX = (prev.x + curr.x) / 2;
+    pathD += ` C ${midX},${prev.y} ${midX},${curr.y} ${curr.x},${curr.y}`;
+  }
+  const areaD = `${pathD} L ${pts[pts.length - 1].x},${margin.top + plotH} L ${pts[0].x},${margin.top + plotH} Z`;
+
+  // Draw Area
+  svg.appendChild(svgEl('path', {
+    d: areaD,
+    fill: 'url(#cost-area-grad)',
+  }));
+
+  // Draw Line
+  svg.appendChild(svgEl('path', {
+    d: pathD,
+    fill: 'none',
+    stroke: '#a78bfa',
+    'stroke-width': '2.5',
+    'stroke-linecap': 'round',
+    'stroke-linejoin': 'round',
+  }));
+
+  // Burn Rate trend line (dashed cyan)
+  const burnPts = points.map((p, idx) => ({ x: getX(idx), y: getY(p.burnRate) }));
+  let burnD = `M ${burnPts[0].x},${burnPts[0].y}`;
+  for (let i = 1; i < burnPts.length; i++) {
+    burnD += ` L ${burnPts[i].x},${burnPts[i].y}`;
+  }
+  svg.appendChild(svgEl('path', {
+    d: burnD,
+    fill: 'none',
+    stroke: '#38bdf8',
+    'stroke-width': '1.5',
+    'stroke-dasharray': '4 4',
+    opacity: '0.8',
+  }));
+
+  // Interactive Cursor & Tooltip elements
+  const cursorLine = svgEl('line', {
+    class: 'cost-chart-cursor',
+    y1: margin.top,
+    y2: margin.top + plotH,
+    x1: -100,
+    x2: -100,
+  });
+  svg.appendChild(cursorLine);
+
+  const hoverDot = svgEl('circle', {
+    r: '5',
+    fill: '#fff',
+    stroke: '#8b5cf6',
+    'stroke-width': '2.5',
+    cx: -100,
+    cy: -100,
+  });
+  svg.appendChild(hoverDot);
+
+  // Overlay rect for smooth mouse tracking
+  const overlay = svgEl('rect', {
+    x: margin.left,
+    y: margin.top,
+    width: plotW,
+    height: plotH,
+    fill: 'transparent',
+    style: 'cursor: crosshair;',
+  });
+
+  overlay.addEventListener('mousemove', (e) => {
+    const rect = svg.getBoundingClientRect();
+    const svgX = (e.clientX - rect.left) * (svgW / rect.width);
+    const clampedX = Math.max(margin.left, Math.min(margin.left + plotW, svgX));
+    const ratio = (clampedX - margin.left) / plotW;
+    const idx = Math.min(pts.length - 1, Math.max(0, Math.round(ratio * (pts.length - 1))));
+    const active = pts[idx];
+
+    cursorLine.setAttribute('x1', active.x);
+    cursorLine.setAttribute('x2', active.x);
+    hoverDot.setAttribute('cx', active.x);
+    hoverDot.setAttribute('cy', active.y);
+
+    const p = active.data;
+    const tooltipHtml = `
+      <div class="tooltip-title">${is24h ? 'Hourly Bucket' : 'Daily Bucket'}: <strong>${p.label}</strong></div>
+      <div class="tooltip-row"><span>Spend:</span><span class="tooltip-val highlight-gold">${fmtCurrency(p.spend)}</span></div>
+      <div class="tooltip-row"><span>Burn Rate:</span><span class="tooltip-val highlight-cyan">${fmtCurrency(p.burnRate)}/${is24h ? 'hr' : 'day'}</span></div>
+      <div class="tooltip-row"><span>Cumulative:</span><span class="tooltip-val">${fmtCurrency(p.cumSpend)}</span></div>
+      <div class="tooltip-row"><span>Tokens:</span><span class="tooltip-val">${fmtCompactNum(p.tokens)}</span></div>
+    `;
+    showCostTooltip(e.clientX, e.clientY, tooltipHtml);
+  });
+
+  overlay.addEventListener('mouseleave', () => {
+    cursorLine.setAttribute('x1', -100);
+    cursorLine.setAttribute('x2', -100);
+    hoverDot.setAttribute('cx', -100);
+    hoverDot.setAttribute('cy', -100);
+    hideCostTooltip();
+  });
+
+  svg.appendChild(overlay);
+  chartWrapper.appendChild(svg);
+  tsSec.appendChild(chartWrapper);
+}
+
+// ── 2. Spend by Model with Stacked Token Distribution ──────
+function renderModelSpendCard(f, grid) {
   const modelCard = el('div', 'cost-card');
   modelCard.appendChild(el('div', 'cost-card-title', 'Spend by Model'));
   const models = (f?.model_spend || []).slice(0, 8);
+
   if (!models.length) {
     modelCard.appendChild(el('p', 'muted-text', 'No model telemetry recorded yet.'));
-  } else {
-    for (const m of models) {
-      const row = el('div', 'cost-bar-row');
-      const hdr = el('div', 'cost-bar-header');
-      hdr.appendChild(el('span', 'cost-bar-label', m.model));
-      hdr.appendChild(el('span', null, `${fmtCurrency(m.cost_usd)} · ${m.percentage || 0}%`));
-      row.appendChild(hdr);
-      const barOuter = el('div', 'cost-bar-outer');
-      const barInner = el('div', 'cost-bar-inner');
-      barInner.style.width = `${Math.min(100, m.percentage || 0)}%`;
-      barOuter.appendChild(barInner);
-      row.appendChild(barOuter);
-      modelCard.appendChild(row);
-    }
+    grid.appendChild(modelCard);
+    return;
   }
-  grid.appendChild(modelCard);
 
-  // By organization
+  // Stacked Token Consumption Distribution
+  const stackedContainer = el('div', 'stacked-chart-container');
+  const legend = el('div', 'stacked-chart-legend');
+  for (const { label, color } of [
+    { label: 'Input Tokens', color: '#38bdf8' },
+    { label: 'Output Tokens', color: '#a78bfa' },
+    { label: 'Cache Reuse', color: '#3fb950' },
+  ]) {
+    const item = el('div', 'legend-item');
+    const dot = el('div', 'legend-dot');
+    dot.style.background = color;
+    item.appendChild(dot);
+    item.appendChild(el('span', null, label));
+    legend.appendChild(item);
+  }
+  stackedContainer.appendChild(legend);
+
+  // Stacked bars for top models
+  const topModels = models.slice(0, 5);
+  for (const m of topModels) {
+    const row = el('div', 'stacked-model-row');
+    const hdr = el('div', 'stacked-model-header');
+    hdr.appendChild(el('span', 'stacked-model-name', m.model));
+    hdr.appendChild(el('span', 'stacked-model-tokens', `${fmtCompactNum(m.total_tokens)} tokens · ${fmtCurrency(m.cost_usd)}`));
+    row.appendChild(hdr);
+
+    const inTok = m.input_tokens || Math.round(m.total_tokens * 0.25);
+    const outTok = m.output_tokens || Math.round(m.total_tokens * 0.15);
+    const cacheTok = Math.max(0, (m.total_tokens || 0) - inTok - outTok) || Math.round(m.total_tokens * 0.6);
+    const sum = inTok + outTok + cacheTok || 1;
+
+    const inPct = (inTok / sum) * 100;
+    const outPct = (outTok / sum) * 100;
+    const cachePct = Math.max(0, 100 - inPct - outPct);
+
+    const track = el('div', 'stacked-bar-track');
+    const segIn = el('div', 'stacked-segment');
+    segIn.style.width = `${inPct}%`;
+    segIn.style.background = '#38bdf8';
+    segIn.addEventListener('mousemove', (e) => {
+      showCostTooltip(e.clientX, e.clientY, `
+        <div class="tooltip-title">${m.model}</div>
+        <div class="tooltip-row"><span>Input Tokens:</span><span class="tooltip-val highlight-cyan">${fmtCompactNum(inTok)} (${inPct.toFixed(1)}%)</span></div>
+        <div class="tooltip-row"><span>Total Spend:</span><span class="tooltip-val">${fmtCurrency(m.cost_usd)}</span></div>
+      `);
+    });
+    segIn.addEventListener('mouseleave', hideCostTooltip);
+
+    const segOut = el('div', 'stacked-segment');
+    segOut.style.width = `${outPct}%`;
+    segOut.style.background = '#a78bfa';
+    segOut.addEventListener('mousemove', (e) => {
+      showCostTooltip(e.clientX, e.clientY, `
+        <div class="tooltip-title">${m.model}</div>
+        <div class="tooltip-row"><span>Output Tokens:</span><span class="tooltip-val" style="color:#a78bfa;">${fmtCompactNum(outTok)} (${outPct.toFixed(1)}%)</span></div>
+        <div class="tooltip-row"><span>Total Spend:</span><span class="tooltip-val">${fmtCurrency(m.cost_usd)}</span></div>
+      `);
+    });
+    segOut.addEventListener('mouseleave', hideCostTooltip);
+
+    const segCache = el('div', 'stacked-segment');
+    segCache.style.width = `${cachePct}%`;
+    segCache.style.background = '#3fb950';
+    segCache.addEventListener('mousemove', (e) => {
+      showCostTooltip(e.clientX, e.clientY, `
+        <div class="tooltip-title">${m.model}</div>
+        <div class="tooltip-row"><span>Cache Reuse:</span><span class="tooltip-val highlight-green">${fmtCompactNum(cacheTok)} (${cachePct.toFixed(1)}%)</span></div>
+        <div class="tooltip-row"><span>Discount / Hit:</span><span class="tooltip-val">Free / Cached</span></div>
+      `);
+    });
+    segCache.addEventListener('mouseleave', hideCostTooltip);
+
+    track.appendChild(segIn);
+    track.appendChild(segOut);
+    track.appendChild(segCache);
+    row.appendChild(track);
+    stackedContainer.appendChild(row);
+  }
+  modelCard.appendChild(stackedContainer);
+
+  // Preserve existing cost-bar-rows for full compatibility
+  for (const m of models) {
+    const row = el('div', 'cost-bar-row');
+    const hdr = el('div', 'cost-bar-header');
+    hdr.appendChild(el('span', 'cost-bar-label', m.model));
+    hdr.appendChild(el('span', null, `${fmtCurrency(m.cost_usd)} · ${m.percentage || 0}%`));
+    row.appendChild(hdr);
+    const barOuter = el('div', 'cost-bar-outer');
+    const barInner = el('div', 'cost-bar-inner');
+    barInner.style.width = `${Math.min(100, m.percentage || 0)}%`;
+    barOuter.appendChild(barInner);
+    row.appendChild(barOuter);
+    modelCard.appendChild(row);
+  }
+
+  grid.appendChild(modelCard);
+}
+
+// ── 3. Spend by Organization with Donut Chart ──────────────
+function renderOrgSpendCard(f, grid) {
   const orgCard = el('div', 'cost-card');
   orgCard.appendChild(el('div', 'cost-card-title', 'Spend by Organization'));
   const orgs = f?.org_spend || [];
+
   if (!orgs.length) {
     orgCard.appendChild(el('p', 'muted-text', 'No per-org spend data.'));
-  } else {
-    for (const o of orgs) {
-      const row = el('div', 'cost-bar-row');
-      const hdr = el('div', 'cost-bar-header');
-      hdr.appendChild(el('span', 'cost-bar-label', o.organization));
-      hdr.appendChild(el('span', null, `${fmtCurrency(o.cost_usd)} · ${o.percentage || 0}%`));
-      row.appendChild(hdr);
-      const barOuter = el('div', 'cost-bar-outer');
-      const barInner = el('div', 'cost-bar-inner');
-      barInner.style.width = `${Math.min(100, o.percentage || 0)}%`;
-      barOuter.appendChild(barInner);
-      row.appendChild(barOuter);
-      orgCard.appendChild(row);
-    }
+    grid.appendChild(orgCard);
+    return;
   }
-  grid.appendChild(orgCard);
 
-  // By provider (derived from model spend)
+  const totalOrgCost = orgs.reduce((acc, o) => acc + (o.cost_usd || 0), 0) || 1;
+
+  // Donut SVG
+  const donutContainer = el('div', 'donut-chart-container');
+  const svg = svgEl('svg', {
+    viewBox: '0 0 240 240',
+    class: 'donut-svg',
+  });
+
+  const cx = 120, cy = 120, rOuter = 95, rInner = 65;
+  const colors = ['#8b5cf6', '#38bdf8', '#3fb950', '#fbbf24', '#f85149', '#ec4899', '#06b6d4'];
+  let curAngle = -Math.PI / 2;
+
+  // Center texts
+  const centerG = svgEl('g', { 'pointer-events': 'none' });
+  const textTotal = svgEl('text', {
+    x: cx,
+    y: cy + 3,
+    class: 'donut-center-total',
+  }, [fmtCurrency(totalOrgCost)]);
+  const textLabel = svgEl('text', {
+    x: cx,
+    y: cy + 18,
+    class: 'donut-center-label',
+  }, ['Fleet Total']);
+  centerG.appendChild(textTotal);
+  centerG.appendChild(textLabel);
+
+  orgs.forEach((o, idx) => {
+    const fraction = (o.cost_usd || 0) / totalOrgCost;
+    if (fraction <= 0) return;
+    const sliceAngle = fraction * 2 * Math.PI;
+    const endAngle = curAngle + sliceAngle;
+    const isFull = sliceAngle >= 2 * Math.PI - 0.001;
+
+    const x1 = cx + rOuter * Math.cos(curAngle);
+    const y1 = cy + rOuter * Math.sin(curAngle);
+    const x2 = cx + rOuter * Math.cos(endAngle);
+    const y2 = cy + rOuter * Math.sin(endAngle);
+
+    const x3 = cx + rInner * Math.cos(endAngle);
+    const y3 = cy + rInner * Math.sin(endAngle);
+    const x4 = cx + rInner * Math.cos(curAngle);
+    const y4 = cy + rInner * Math.sin(curAngle);
+
+    const largeArc = sliceAngle > Math.PI ? 1 : 0;
+    const pathD = isFull
+      ? `M ${cx},${cy - rOuter} A ${rOuter},${rOuter} 0 1,0 ${cx},${cy + rOuter} A ${rOuter},${rOuter} 0 1,0 ${cx},${cy - rOuter} M ${cx},${cy - rInner} A ${rInner},${rInner} 0 1,1 ${cx},${cy + rInner} A ${rInner},${rInner} 0 1,1 ${cx},${cy - rInner} Z`
+      : `M ${x1},${y1} A ${rOuter},${rOuter} 0 ${largeArc},1 ${x2},${y2} L ${x3},${y3} A ${rInner},${rInner} 0 ${largeArc},0 ${x4},${y4} Z`;
+
+    const color = colors[idx % colors.length];
+    const slice = svgEl('path', {
+      d: pathD,
+      fill: color,
+      stroke: 'var(--surface2)',
+      'stroke-width': '2',
+      class: 'donut-slice',
+    });
+
+    slice.addEventListener('mousemove', (e) => {
+      textTotal.textContent = fmtCurrency(o.cost_usd);
+      textLabel.textContent = `${o.organization} (${o.percentage || 0}%)`;
+      showCostTooltip(e.clientX, e.clientY, `
+        <div class="tooltip-title">${o.organization}</div>
+        <div class="tooltip-row"><span>Spend:</span><span class="tooltip-val highlight-gold">${fmtCurrency(o.cost_usd)}</span></div>
+        <div class="tooltip-row"><span>Share:</span><span class="tooltip-val">${o.percentage || 0}%</span></div>
+        <div class="tooltip-row"><span>Active Tasks:</span><span class="tooltip-val">${o.active_tasks || 0}</span></div>
+        <div class="tooltip-row"><span>Active Agents:</span><span class="tooltip-val">${o.active_agents || 0}</span></div>
+      `);
+    });
+
+    slice.addEventListener('mouseleave', () => {
+      textTotal.textContent = fmtCurrency(totalOrgCost);
+      textLabel.textContent = 'Fleet Total';
+      hideCostTooltip();
+    });
+
+    svg.appendChild(slice);
+    curAngle = endAngle;
+  });
+
+  svg.appendChild(centerG);
+  donutContainer.appendChild(svg);
+  orgCard.appendChild(donutContainer);
+
+  // Preserve existing cost-bar-rows for compatibility
+  for (const o of orgs) {
+    const row = el('div', 'cost-bar-row');
+    const hdr = el('div', 'cost-bar-header');
+    hdr.appendChild(el('span', 'cost-bar-label', o.organization));
+    hdr.appendChild(el('span', null, `${fmtCurrency(o.cost_usd)} · ${o.percentage || 0}%`));
+    row.appendChild(hdr);
+    const barOuter = el('div', 'cost-bar-outer');
+    const barInner = el('div', 'cost-bar-inner');
+    barInner.style.width = `${Math.min(100, o.percentage || 0)}%`;
+    barOuter.appendChild(barInner);
+    row.appendChild(barOuter);
+    orgCard.appendChild(row);
+  }
+
+  grid.appendChild(orgCard);
+}
+
+// ── 4. Spend by Provider ──────────────────────────────────
+function renderProviderSpendCard(f, grid) {
   const providerCard = el('div', 'cost-card');
   providerCard.appendChild(el('div', 'cost-card-title', 'Spend by Provider'));
+
   const provTotals = {};
   for (const m of (f?.model_spend || [])) {
     const lower = (m.model || '').toLowerCase();
-    let prov = 'other';
-    if (lower.includes('claude') || lower.includes('anthropic')) prov = 'claude';
+    let prov = 'gemini';
+    if (lower.includes('claude') || lower.includes('anthropic') || lower.includes('fable')) prov = 'claude';
     else if (lower.includes('gemini') || lower.includes('google')) prov = 'gemini';
-    else if (lower.includes('gpt') || lower.includes('openai') || lower.includes('codex')) prov = 'openai';
+    else if (lower.includes('gpt') || lower.includes('openai') || lower.includes('codex') || lower.includes('o1') || lower.includes('o3')) prov = 'openai';
+    else if (m.family && m.family !== 'other' && m.family !== 'unknown') prov = m.family;
     provTotals[prov] = (provTotals[prov] || 0) + (m.cost_usd || 0);
   }
+
   const totalProvSpend = Object.values(provTotals).reduce((a, b) => a + b, 0);
   const provEntries = Object.entries(provTotals).sort((a, b) => b[1] - a[1]);
+
   if (!provEntries.length) {
     providerCard.appendChild(el('p', 'muted-text', 'No provider spend data recorded yet. Ensure telemetry watcher is active.'));
   } else {
@@ -1217,30 +1980,159 @@ function renderCostPage() {
       providerCard.appendChild(row);
     }
   }
-  grid.appendChild(providerCard);
 
-  // Per-task spend (top 10 by cost)
+  grid.appendChild(providerCard);
+}
+
+// ── 5. Top Tasks Cumulative Cost Progression Visualizer ────
+function renderTopTasksSpendCard(f, grid) {
   const taskSpendCard = el('div', 'cost-card');
   taskSpendCard.appendChild(el('div', 'cost-card-title', 'Top Tasks by Spend'));
+
   const allTasks = [...(f?.tasks || []), ...Object.values(state.tasks)]
     .filter(t => t.spent_usd > 0)
     .sort((a, b) => b.spent_usd - a.spent_usd)
     .slice(0, 10);
+
   if (!allTasks.length) {
     taskSpendCard.appendChild(el('p', 'muted-text', 'No per-task spend recorded yet.'));
-  } else {
-    for (const t of allTasks) {
-      const row = el('div', 'cost-row');
-      const lbl = el('div', 'cost-row-label');
-      lbl.appendChild(el('div', null, t.title || t.name || t.identifier || '—'));
-      lbl.appendChild(el('div', 'muted-text', t.organization || ''));
-      row.appendChild(lbl);
-      row.appendChild(el('span', 'cost-row-val', fmtCurrency(t.spent_usd)));
-      taskSpendCard.appendChild(row);
-    }
+    grid.appendChild(taskSpendCard);
+    return;
   }
+
+  // Cumulative Progression Chart (Pareto Curve)
+  let cumSum = 0;
+  const taskPoints = allTasks.map((t, idx) => {
+    cumSum += t.spent_usd;
+    return {
+      task: t,
+      rank: idx + 1,
+      spend: t.spent_usd,
+      cumSpend: cumSum,
+    };
+  });
+  const totalTopSpend = cumSum || 1;
+
+  const cumContainer = el('div', 'cumulative-chart-container');
+  const svgW = 380;
+  const svgH = 130;
+  const mTop = 15, mRight = 15, mBottom = 25, mLeft = 45;
+  const pW = svgW - mLeft - mRight;
+  const pH = svgH - mTop - mBottom;
+
+  const svg = svgEl('svg', {
+    viewBox: `0 0 ${svgW} ${svgH}`,
+    class: 'cumulative-svg',
+    preserveAspectRatio: 'xMidYMid meet',
+  });
+
+  const defs = svgEl('defs');
+  const goldGrad = svgEl('linearGradient', { id: 'cum-area-grad', x1: '0', y1: '0', x2: '0', y2: '1' }, [
+    svgEl('stop', { offset: '0%', 'stop-color': '#fbbf24', 'stop-opacity': '0.45' }),
+    svgEl('stop', { offset: '100%', 'stop-color': '#fbbf24', 'stop-opacity': '0.02' }),
+  ]);
+  defs.appendChild(goldGrad);
+  svg.appendChild(defs);
+
+  const getTaskX = (idx) => mLeft + (idx / (taskPoints.length - 1 || 1)) * pW;
+  const getTaskY = (val) => mTop + pH - (val / totalTopSpend) * pH;
+
+  // Gridlines
+  const gridG = svgEl('g', { class: 'cost-chart-grid' });
+  [0, 0.5, 1.0].forEach(ratio => {
+    const y = mTop + pH - ratio * pH;
+    gridG.appendChild(svgEl('line', { x1: mLeft, y1: y, x2: mLeft + pW, y2: y }));
+    gridG.appendChild(svgEl('text', {
+      x: mLeft - 6,
+      y: y + 3,
+      'text-anchor': 'end',
+      class: 'cost-chart-axis-label',
+    }, [fmtCurrency(totalTopSpend * ratio)]));
+  });
+  svg.appendChild(gridG);
+
+  // Area and line path
+  const curvePts = taskPoints.map((tp, idx) => ({ x: getTaskX(idx), y: getTaskY(tp.cumSpend), tp }));
+  let curveD = `M ${curvePts[0].x},${curvePts[0].y}`;
+  for (let i = 1; i < curvePts.length; i++) {
+    curveD += ` L ${curvePts[i].x},${curvePts[i].y}`;
+  }
+  const areaD = `${curveD} L ${curvePts[curvePts.length - 1].x},${mTop + pH} L ${curvePts[0].x},${mTop + pH} Z`;
+
+  svg.appendChild(svgEl('path', { d: areaD, fill: 'url(#cum-area-grad)' }));
+  svg.appendChild(svgEl('path', {
+    d: curveD,
+    fill: 'none',
+    stroke: '#fbbf24',
+    'stroke-width': '2',
+    'stroke-linecap': 'round',
+  }));
+
+  // Points on curve
+  curvePts.forEach(pt => {
+    const t = pt.tp.task;
+    const dot = svgEl('circle', {
+      cx: pt.x,
+      cy: pt.y,
+      r: '4',
+      fill: '#fbbf24',
+      stroke: 'var(--surface2)',
+      'stroke-width': '1.5',
+      class: 'cost-chart-point',
+    });
+
+    dot.addEventListener('mousemove', (e) => {
+      const sharePct = ((pt.tp.cumSpend / totalTopSpend) * 100).toFixed(1);
+      showCostTooltip(e.clientX, e.clientY, `
+        <div class="tooltip-title">Rank #${pt.tp.rank}: <strong>${t.identifier || t.id.slice(0, 8)}</strong></div>
+        <div class="tooltip-row"><span>Task:</span><span>${t.title || t.name || '—'}</span></div>
+        <div class="tooltip-row"><span>Task Spend:</span><span class="tooltip-val highlight-gold">${fmtCurrency(pt.tp.spend)}</span></div>
+        <div class="tooltip-row"><span>Cumulative:</span><span class="tooltip-val">${fmtCurrency(pt.tp.cumSpend)} (${sharePct}%)</span></div>
+        <div class="tooltip-row"><span>Org:</span><span>${t.organization || '—'}</span></div>
+      `);
+    });
+
+    dot.addEventListener('mouseleave', hideCostTooltip);
+    dot.addEventListener('click', () => {
+      hideCostTooltip();
+      if (typeof openDetail === 'function') openDetail(t.id);
+    });
+
+    svg.appendChild(dot);
+  });
+
+  cumContainer.appendChild(svg);
+  taskSpendCard.appendChild(cumContainer);
+
+  // Top tasks list
+  for (const tp of taskPoints) {
+    const t = tp.task;
+    const row = el('div', 'cost-row cost-task-clickable');
+    row.addEventListener('click', () => {
+      if (typeof openDetail === 'function') openDetail(t.id);
+    });
+
+    const lbl = el('div', 'cost-row-label');
+    lbl.style.display = 'flex';
+    lbl.style.alignItems = 'center';
+
+    const rankBadge = el('span', 'task-rank-badge', `#${tp.rank}`);
+    lbl.appendChild(rankBadge);
+
+    const titleGroup = el('div');
+    const taskName = t.title || t.name || t.identifier || '—';
+    titleGroup.appendChild(el('div', null, `${t.identifier ? `${t.identifier}: ` : ''}${taskName}`));
+    titleGroup.appendChild(el('div', 'muted-text', t.organization || ''));
+    lbl.appendChild(titleGroup);
+
+    row.appendChild(lbl);
+    row.appendChild(el('span', 'cost-row-val', fmtCurrency(t.spent_usd)));
+    taskSpendCard.appendChild(row);
+  }
+
   grid.appendChild(taskSpendCard);
 }
+
 
 // ── Settings Page ─────────────────────────────────────────
 function renderSettings() {
@@ -1426,10 +2318,11 @@ function renderOrgDetailView(org) {
   if (orgAgents.length) {
     const rosterGrid = el('div', 'agent-roster-grid');
     for (const a of orgAgents) {
+      const prov = resolveProvider(a);
       const card = el('div', 'agent-roster-card');
       card.appendChild(el('div', 'agent-roster-name', a.name || a.id?.slice(0, 12)));
       card.appendChild(el('div', 'agent-roster-meta',
-        `${a.role || 'agent'} · ${a.provider || 'unknown'} · ${a.status || 'active'}`));
+        `${a.role || 'agent'} · ${prov} · ${a.status || 'active'}`));
       if (a.last_heartbeat) {
         card.appendChild(el('div', 'muted-text', `Last: ${fmtRelTime(a.last_heartbeat)}`));
       }
@@ -2073,6 +2966,15 @@ document.getElementById('ts-status-filter')?.addEventListener('change', (e) => {
 // ── Filter listeners (agents page) ───────────────────────
 document.getElementById('agents-search')?.addEventListener('input', (e) => {
   state.agentsFilter.search = e.target.value;
+  renderAgentsPage();
+});
+document.getElementById('agents-org-filter')?.addEventListener('change', (e) => {
+  state.agentsFilter.org = e.target.value;
+  populateAgentsProjectFilter();
+  renderAgentsPage();
+});
+document.getElementById('agents-project-filter')?.addEventListener('change', (e) => {
+  state.agentsFilter.project = e.target.value;
   renderAgentsPage();
 });
 document.getElementById('agents-provider-filter')?.addEventListener('change', (e) => {

@@ -224,6 +224,12 @@
         <h1 class="view-title">Agents</h1>
         <div class="table-controls">
           <input type="text" id="agents-search" placeholder="Filter by name or provider…" class="search-input">
+          <select id="agents-org-filter" class="select-filter">
+            <option value="all">All Organizations</option>
+          </select>
+          <select id="agents-project-filter" class="select-filter">
+            <option value="all">All Projects</option>
+          </select>
           <select id="agents-provider-filter" class="select-filter">
             <option value="all">All Providers</option>
             <option value="claude">Claude</option>
@@ -320,6 +326,7 @@
         <span class="refresh-indicator">Ratecard-estimated spend · real-time</span>
       </div>
       <div id="cost-kpis" class="overview-kpis"></div>
+      <div id="cost-timeseries-container" class="cost-timeseries-section"></div>
       <div id="cost-grid-container" class="cost-grid"></div>
     </section>
 
