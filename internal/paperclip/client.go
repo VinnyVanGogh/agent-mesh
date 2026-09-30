@@ -461,9 +461,17 @@ func (c *Client) ListActiveIssues(ctx context.Context, companyID string) ([]Issu
 
 // AgentResponse represents an agent returned by the Paperclip API.
 type AgentResponse struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Role string `json:"role"`
+	ID              string                 `json:"id"`
+	CompanyID       string                 `json:"companyId,omitempty"`
+	Name            string                 `json:"name"`
+	Role            string                 `json:"role"`
+	Title           string                 `json:"title,omitempty"`
+	Status          string                 `json:"status,omitempty"`
+	AdapterType     string                 `json:"adapterType,omitempty"`
+	AdapterConfig   map[string]interface{} `json:"adapterConfig,omitempty"`
+	RuntimeConfig   map[string]interface{} `json:"runtimeConfig,omitempty"`
+	Model           string                 `json:"model,omitempty"`
+	LastHeartbeatAt string                 `json:"lastHeartbeatAt,omitempty"`
 }
 
 // ListAgents fetches all agents for a company.

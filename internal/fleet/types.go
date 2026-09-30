@@ -34,14 +34,15 @@ type TaskItem struct {
 
 // AgentItem represents an active or registered agent in an organization.
 type AgentItem struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	Role          string    `json:"role"`
-	Organization  string    `json:"organization"`
-	Provider      string    `json:"provider"` // gemini, claude, openai, other
-	Model         string    `json:"model,omitempty"`
-	Status        string    `json:"status"` // running, active, idle, closed
-	LastHeartbeat time.Time `json:"last_heartbeat"`
+	ID            string              `json:"id"`
+	Name          string              `json:"name"`
+	Role          string              `json:"role"`
+	Organization  string              `json:"organization"`
+	Provider      string              `json:"provider"` // gemini, claude, openai (never other)
+	Model         string              `json:"model,omitempty"`
+	Status        string              `json:"status"` // running, active, idle, closed
+	LastHeartbeat time.Time           `json:"last_heartbeat"`
+	Quota         *ProviderQuotaGauge `json:"quota,omitempty"`
 }
 
 // GlobalAgentMetrics aggregates agent statistics fleet-wide.
