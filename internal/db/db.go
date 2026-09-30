@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     project        TEXT,
     is_blocked     INTEGER NOT NULL DEFAULT 0,
     block_reason   TEXT,
+    parent_id      TEXT REFERENCES tasks(id),
+    execution_stage TEXT NOT NULL DEFAULT 'todo',
+    checkout_run_id TEXT,
+    checkout_agent_id TEXT,
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     deleted_at     TEXT
@@ -75,6 +79,55 @@ CREATE TABLE IF NOT EXISTS task_comments (
     author      TEXT NOT NULL DEFAULT 'system',
     message     TEXT NOT NULL,
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS task_relations (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    blocks_id     TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE(task_id, blocks_id)
+);
+
+CREATE TABLE IF NOT EXISTS task_documents (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    doc_key       TEXT NOT NULL,
+    version       INTEGER NOT NULL DEFAULT 1,
+    content       TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE(task_id, doc_key, version)
+);
+
+CREATE TABLE IF NOT EXISTS task_interactions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    interaction_kind TEXT NOT NULL,
+    payload       TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    idempotency_key TEXT,
+    supersede_on_comment INTEGER NOT NULL DEFAULT 1,
+    response      TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    resolved_at   TEXT
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_interactions_idempotency ON task_interactions(task_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';
+
+CREATE TABLE IF NOT EXISTS task_work_products (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    product_type  TEXT NOT NULL CHECK (product_type IN ('pull_request', 'commit', 'branch', 'workspace_file')),
+    reference     TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS activity_log (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    event_type    TEXT NOT NULL,
+    details       TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE TABLE IF NOT EXISTS wire_messages (
@@ -259,12 +312,13 @@ func migrateSchemaTasksCols(conn *sql.DB) error {
 
 	for _, c := range cols {
 		if !existingCols[c.name] {
-			if _, err := conn.Exec(fmt.Sprintf("ALTER TABLE tasks ADD COLUMN %s %s;", c.name, c.def)); err != nil { return err }
+			if _, err := conn.Exec(fmt.Sprintf("ALTER TABLE tasks ADD COLUMN %s %s;", c.name, c.def)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
-
 
 type Migration struct {
 	Version int
@@ -291,6 +345,60 @@ var Migrations = []Migration{
 		Name:    "unified_conversation_store",
 		Up: func(conn *sql.DB) error {
 			_, err := conn.Exec(ChatSchema)
+			return err
+		},
+	},
+	{
+		Version: 3,
+		Name:    "task_graph_and_activity",
+		Up: func(conn *sql.DB) error {
+			cols := []struct {
+				name string
+				def  string
+			}{
+				{"parent_id", "TEXT REFERENCES tasks(id)"},
+				{"execution_stage", "TEXT NOT NULL DEFAULT 'todo'"},
+				{"checkout_run_id", "TEXT"},
+				{"checkout_agent_id", "TEXT"},
+			}
+			for _, c := range cols {
+				if _, err := conn.Exec(fmt.Sprintf("ALTER TABLE tasks ADD COLUMN %s %s;", c.name, c.def)); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+					return err
+				}
+			}
+			queries := []string{
+				"CREATE TABLE IF NOT EXISTS task_relations (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, blocks_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), UNIQUE(task_id, blocks_id));",
+				"CREATE TABLE IF NOT EXISTS task_documents (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, doc_key TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, content TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), UNIQUE(task_id, doc_key, version));",
+				"CREATE TABLE IF NOT EXISTS task_interactions (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, interaction_kind TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), resolved_at TEXT);",
+				"CREATE TABLE IF NOT EXISTS task_work_products (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, product_type TEXT NOT NULL CHECK (product_type IN ('pull_request', 'commit', 'branch', 'workspace_file')), reference TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));",
+				"CREATE TABLE IF NOT EXISTS activity_log (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, event_type TEXT NOT NULL, details TEXT, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));",
+			}
+			for _, q := range queries {
+				if _, err := conn.Exec(q); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
+	{
+		Version: 4,
+		Name:    "interaction_cards_and_locking",
+		Up: func(conn *sql.DB) error {
+			cols := []struct {
+				name string
+				def  string
+			}{
+				{"idempotency_key", "TEXT"},
+				{"supersede_on_comment", "INTEGER NOT NULL DEFAULT 1"},
+				{"response", "TEXT"},
+			}
+			for _, c := range cols {
+				if _, err := conn.Exec(fmt.Sprintf("ALTER TABLE task_interactions ADD COLUMN %s %s;", c.name, c.def)); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+					return err
+				}
+			}
+			_, err := conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_interactions_idempotency ON task_interactions(task_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';`)
 			return err
 		},
 	},

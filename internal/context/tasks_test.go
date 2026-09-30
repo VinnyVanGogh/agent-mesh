@@ -64,6 +64,14 @@ func TestTaskCRUD(t *testing.T) {
 	}
 
 	// 4. Mark Task Done
+	if err := MarkTaskDone(database, task1.ID); err == nil {
+		t.Fatalf("expected MarkTaskDone to fail without work product")
+	}
+
+	if err := AddWorkProduct(database, task1.ID, "pull_request", "https://github.com/org/repo/pull/1"); err != nil {
+		t.Fatalf("failed to add work product: %v", err)
+	}
+
 	if err := MarkTaskDone(database, task1.ID); err != nil {
 		t.Fatalf("MarkTaskDone failed: %v", err)
 	}

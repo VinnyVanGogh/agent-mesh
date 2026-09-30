@@ -491,8 +491,8 @@ func TestTaskCreate_ExplicitBacklogFlag(t *testing.T) {
 		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == "POST" {
 			_ = json.NewDecoder(r.Body).Decode(&receivedReq)
 			_ = json.NewEncoder(w).Encode(paperclip.IssueResponse{
-				ID:       "mock-backlog-flag-issue",
-				Status:   "backlog",
+				ID:        "mock-backlog-flag-issue",
+				Status:    "backlog",
 				CompanyID: "sta-comp-id",
 			})
 			return
@@ -552,8 +552,8 @@ func TestTaskCreate_ExplicitStartFlag(t *testing.T) {
 		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == "POST" {
 			_ = json.NewDecoder(r.Body).Decode(&receivedReq)
 			_ = json.NewEncoder(w).Encode(paperclip.IssueResponse{
-				ID:       "mock-start-flag-issue",
-				Status:   "todo",
+				ID:        "mock-start-flag-issue",
+				Status:    "todo",
 				CompanyID: "sta-comp-id",
 			})
 			return
@@ -746,4 +746,3 @@ func TestTaskCreate_LeadingFilePathStripping_BoardPrompt(t *testing.T) {
 		t.Errorf("expected assignee not to be Senior PR Reviewer, got %s", receivedReq.AssigneeAgentId)
 	}
 }
-

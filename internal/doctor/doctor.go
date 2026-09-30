@@ -143,10 +143,10 @@ func NewFleetDoctor(opts DoctorOptions) *FleetDoctor {
 	}
 
 	d := &FleetDoctor{
-		opts:         opts,
-		localVersion: CurrentVersion,
-		remoteHost:   remoteHost,
-		cfg:          cfg,
+		opts:              opts,
+		localVersion:      CurrentVersion,
+		remoteHost:        remoteHost,
+		cfg:               cfg,
 		LookPathFunc:      exec.LookPath,
 		ReadFileFunc:      os.ReadFile,
 		StatFileFunc:      os.Stat,
