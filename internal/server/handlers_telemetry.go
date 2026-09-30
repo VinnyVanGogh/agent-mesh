@@ -1,15 +1,19 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/VinnyVanGogh/staypoint/internal/config"
 	"github.com/VinnyVanGogh/staypoint/internal/fleet"
+	"github.com/VinnyVanGogh/staypoint/internal/reporting"
 )
 
 type TelemetryHandler struct {
@@ -187,6 +191,89 @@ func (h *TelemetryHandler) GetFleetTask(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	proxyPaperclip(w, r, "/api/issues/"+id)
+}
+
+// GetReport handles GET /api/report?type={work|personal|gemini|combined}
+// It renders the requested PDF report via chromedp and streams it as application/pdf.
+func (h *TelemetryHandler) GetReport(w http.ResponseWriter, r *http.Request) {
+	reportType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
+	if reportType == "" {
+		reportType = "work"
+	}
+
+	allowed := map[string]bool{"work": true, "personal": true, "gemini": true, "combined": true}
+	if !allowed[reportType] {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("unknown report type %q; supported: work, personal, gemini, combined", reportType),
+		})
+		return
+	}
+
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		cfg = config.DefaultConfig()
+	}
+
+	tmpFile, err := os.CreateTemp("", "staypoint-report-*.pdf")
+	if err != nil {
+		http.Error(w, `{"error":"failed to create temp file"}`, http.StatusInternalServerError)
+		return
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	if err := reporting.RenderReport(ctx, reportType, cfg, tmpPath); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	pdfData, err := os.ReadFile(tmpPath)
+	if err != nil {
+		http.Error(w, `{"error":"failed to read generated PDF"}`, http.StatusInternalServerError)
+		return
+	}
+
+	filename := reporting.DefaultReportFilename(reportType, cfg)
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(pdfData)))
+	_, _ = w.Write(pdfData)
+}
+
+// PostFleetTaskComment proxies POST /api/fleet/tasks/{id}/comments to Paperclip.
+func (h *TelemetryHandler) PostFleetTaskComment(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"missing task id"}`, http.StatusBadRequest)
+		return
+	}
+	target := paperclipAPIBase() + "/api/issues/" + id + "/comments"
+	req, err := http.NewRequestWithContext(r.Context(), "POST", target, r.Body)
+	if err != nil {
+		http.Error(w, `{"error":"proxy request build failed"}`, http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if key := os.Getenv("PAPERCLIP_API_KEY"); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, `{"error":"paperclip unreachable"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 // GetFleetTaskComments proxies GET /api/fleet/tasks/{id}/comments to Paperclip.

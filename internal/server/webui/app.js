@@ -13,7 +13,9 @@ const state = {
     org: 'all',
     status: 'all',
   },
-  currentOrgDetail: null, // currently open org name in org-detail view
+  currentOrgDetail: null,    // currently open org name in org-detail view
+  openDetailTaskId: null,    // task id currently shown in detail panel
+  chatPollTimer:    null,    // setInterval handle for chat refresh
 };
 
 // ── Token (injected by Go template) ─────────────────────
@@ -76,13 +78,33 @@ function formatCountdown(targetTs) {
   const mins = Math.floor(diffMs / 60000);
   const hrs = Math.floor(mins / 60);
   const remMins = mins % 60;
-  if (hrs > 0) return `resets in ${hrs}h ${remMins}m`;
-  return `resets in ${remMins}m`;
+  if (hrs >= 24) {
+    const days = Math.floor(hrs / 24);
+    const remHrs = hrs % 24;
+    return `in ${days}d ${remHrs}h`;
+  }
+  if (hrs > 0) return `in ${hrs}h ${remMins}m`;
+  return `in ${remMins}m`;
+}
+
+// Returns exact reset clock time: "3:45 PM" for 5h, "Mon at 3:45 PM" for weekly.
+function formatResetTime(targetTs, isWeekly) {
+  if (!targetTs) return '';
+  const d = new Date(targetTs);
+  const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (!isWeekly) return `at ${timeStr}`;
+  const dayStr = d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  return `${dayStr} at ${timeStr}`;
 }
 
 function authHeader() {
   return TOKEN ? { 'Authorization': `Bearer ${TOKEN}` } : {};
 }
+
+// Close any open .report-dl-menu when clicking outside its wrapper.
+document.addEventListener('click', () => {
+  document.querySelectorAll('.report-dl-menu').forEach(m => { m.hidden = true; });
+});
 
 // ── Simple markdown renderer ──────────────────────────────
 function escapeHtml(s) {
@@ -430,8 +452,16 @@ function renderQuotaGauges(quotas) {
 
     const m5Row = el('div', 'gauge-metrics-row');
     m5Row.appendChild(el('span', null, `${used5h.toFixed(1)}% used · ${remaining5h.toFixed(1)}% left`));
-    m5Row.appendChild(el('span', 'gauge-metric-val', formatCountdown(q.five_hour_resets_at) || 'rolling'));
+    const count5h = formatCountdown(q.five_hour_resets_at);
+    const time5h = formatResetTime(q.five_hour_resets_at, false);
+    m5Row.appendChild(el('span', 'gauge-metric-val', count5h ? `resets ${count5h}` : 'rolling'));
     card.appendChild(m5Row);
+    if (time5h) {
+      const t5Row = el('div', 'gauge-metrics-row');
+      t5Row.appendChild(el('span', null, ''));
+      t5Row.appendChild(el('span', 'gauge-reset-time', time5h));
+      card.appendChild(t5Row);
+    }
 
     const b5Row = el('div', 'gauge-metrics-row');
     b5Row.appendChild(el('span', null, `Burn: ${q.burn_rate_5h ? q.burn_rate_5h.toFixed(2) + '%/turn' : '—'}`));
@@ -457,10 +487,18 @@ function renderQuotaGauges(quotas) {
 
     const mWkRow = el('div', 'gauge-metrics-row');
     mWkRow.appendChild(el('span', null, `${usedWk.toFixed(1)}% used · ${remainingWk.toFixed(1)}% left`));
-    if (q.weekly_resets_at) {
-      mWkRow.appendChild(el('span', 'gauge-metric-val', formatCountdown(q.weekly_resets_at)));
+    const countWk = formatCountdown(q.weekly_resets_at);
+    if (countWk) {
+      mWkRow.appendChild(el('span', 'gauge-metric-val', `resets ${countWk}`));
     }
     card.appendChild(mWkRow);
+    const timeWk = formatResetTime(q.weekly_resets_at, true);
+    if (timeWk) {
+      const tWkRow = el('div', 'gauge-metrics-row');
+      tWkRow.appendChild(el('span', null, ''));
+      tWkRow.appendChild(el('span', 'gauge-reset-time', timeWk));
+      card.appendChild(tWkRow);
+    }
 
     const bWkRow = el('div', 'gauge-metrics-row');
     bWkRow.appendChild(el('span', null, `Weekly burn: ${q.burn_rate_weekly ? q.burn_rate_weekly.toFixed(2) + '%/turn' : '—'}`));
@@ -925,6 +963,44 @@ function renderBoss() {
   titleWrap.appendChild(el('div', 'boss-subtitle',
     `${total} task${total !== 1 ? 's' : ''} · ${active} agent${active !== 1 ? 's' : ''} active`));
   header.appendChild(titleWrap);
+
+  // Download Report dropdown
+  const dlWrap = el('div', 'report-dl-wrap');
+  const dlBtn = el('button', 'report-dl-btn', 'Download Report');
+  dlBtn.type = 'button';
+  const dlMenu = el('div', 'report-dl-menu');
+  dlMenu.hidden = true;
+  for (const { type, label } of [
+    { type: 'work',     label: 'Work / Boss Card' },
+    { type: 'personal', label: 'Personal' },
+    { type: 'gemini',   label: 'Gemini / Antigravity' },
+    { type: 'combined', label: 'Combined Fleet' },
+  ]) {
+    const item = el('button', 'report-dl-item', label);
+    item.type = 'button';
+    item.dataset.reportType = type;
+    item.addEventListener('click', () => {
+      dlMenu.hidden = true;
+      const url = `/api/report?type=${type}`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = '';
+      // Auth header can't be set on anchor; the auth cookie / token middleware handles it
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+    dlMenu.appendChild(item);
+  }
+  dlBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dlMenu.hidden = !dlMenu.hidden;
+  });
+  dlWrap.addEventListener('click', (e) => e.stopPropagation());
+  dlWrap.appendChild(dlBtn);
+  dlWrap.appendChild(dlMenu);
+  header.appendChild(dlWrap);
+
   card.appendChild(header);
 
   const grid = el('div', 'boss-stat-grid');
@@ -964,6 +1040,111 @@ function renderEventStream() {
     row.appendChild(el('span', 'event-data', data));
     streamEl.appendChild(row);
   }
+}
+
+// ── Chat helpers ──────────────────────────────────────────
+
+function startChatPoll(taskId) {
+  stopChatPoll();
+  state.chatPollTimer = setInterval(() => refreshChatMessages(taskId), 8000);
+}
+
+function stopChatPoll() {
+  if (state.chatPollTimer) { clearInterval(state.chatPollTimer); state.chatPollTimer = null; }
+}
+
+async function refreshChatMessages(taskId) {
+  if (state.openDetailTaskId !== taskId) { stopChatPoll(); return; }
+  try {
+    const cr = await apiFetch(`/api/fleet/tasks/${taskId}/comments`);
+    const comments = cr.comments || (Array.isArray(cr) ? cr : []);
+    const messagesDiv = document.getElementById('panel-chat-messages');
+    const titleEl = document.querySelector('#panel-chat-section .panel-section-title');
+    if (!messagesDiv) return;
+    const atBottom = messagesDiv.scrollHeight - messagesDiv.scrollTop <= messagesDiv.clientHeight + 30;
+    renderChatMessages(messagesDiv, comments);
+    if (atBottom) messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    if (titleEl) titleEl.textContent = `Chat (${comments.length})`;
+  } catch { /* silent */ }
+}
+
+function renderChatMessages(container, comments) {
+  container.innerHTML = '';
+  if (!comments.length) {
+    container.appendChild(el('p', 'panel-field-muted', 'No messages yet.'));
+    return;
+  }
+  for (const c of comments) {
+    const authorType = (c.authorType || c.author_type || '').toLowerCase();
+    const isAgent = authorType === 'agent' || authorType === 'system';
+    const authorLabel = isAgent
+      ? (c.authorName || c.author_name || 'Agent')
+      : (c.author || 'You');
+    const ts = c.createdAt || c.created_at || c.timestamp || '';
+
+    const msg = el('div', `chat-msg ${isAgent ? 'chat-msg-agent' : 'chat-msg-user'}`);
+    msg.appendChild(el('div', 'chat-msg-meta', `${authorLabel}${ts ? ' · ' + fmtDateTime(ts) : ''}`));
+    const bubble = el('div', 'chat-msg-bubble');
+    bubble.appendChild(mdEl(c.body || c.message || ''));
+    msg.appendChild(bubble);
+    container.appendChild(msg);
+  }
+}
+
+function buildChatSection(container, taskId, comments) {
+  const section = el('div', 'chat-section');
+  section.id = 'panel-chat-section';
+  section.appendChild(el('div', 'panel-section-title', `Chat (${comments.length})`));
+
+  const messagesDiv = el('div', 'chat-messages');
+  messagesDiv.id = 'panel-chat-messages';
+  renderChatMessages(messagesDiv, comments);
+  section.appendChild(messagesDiv);
+
+  const compose = el('div', 'chat-compose');
+  const textarea = document.createElement('textarea');
+  textarea.className = 'chat-textarea';
+  textarea.placeholder = 'Message the agent… (⌘↵ to send)';
+  textarea.rows = 2;
+  const sendBtn = el('button', 'chat-send-btn', 'Send');
+  sendBtn.type = 'button';
+
+  const doSend = async () => {
+    const body = textarea.value.trim();
+    if (!body) return;
+    textarea.value = '';
+    sendBtn.disabled = true;
+    try {
+      await sendComment(taskId, body);
+      await refreshChatMessages(taskId);
+    } catch { /* ignore send error visually */ } finally {
+      sendBtn.disabled = false;
+      textarea.focus();
+    }
+  };
+
+  sendBtn.addEventListener('click', doSend);
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); doSend(); }
+  });
+
+  compose.appendChild(textarea);
+  compose.appendChild(sendBtn);
+  section.appendChild(compose);
+  container.appendChild(section);
+
+  // Scroll to bottom
+  messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+async function sendComment(taskId, body) {
+  const resp = await fetch(`/api/fleet/tasks/${taskId}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify({ body }),
+  });
+  if (!resp.ok) throw new Error(`Send failed: ${resp.status}`);
+  return resp.json().catch(() => null);
 }
 
 // ── Detail panel ──────────────────────────────────────────
@@ -1062,10 +1243,13 @@ async function openDetail(taskId) {
   const panel   = document.getElementById('detail-panel');
   const content = document.getElementById('panel-content');
 
+  stopChatPoll();
+  state.openDetailTaskId = taskId;
   panel.classList.remove('hidden');
   content.innerHTML = '<p style="color:var(--muted)">Loading…</p>';
 
-  const apiBase = isFleetTaskId(taskId) ? '/api/fleet/tasks' : '/api/tasks';
+  const isFleet = isFleetTaskId(taskId);
+  const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
 
   try {
     const resp = await apiFetch(`${apiBase}/${taskId}`);
@@ -1076,15 +1260,26 @@ async function openDetail(taskId) {
 
     renderDetailContent(content, task);
 
-    if (inlineComments.length) {
-      appendComments(content, inlineComments);
+    if (isFleet) {
+      let comments = inlineComments;
+      if (!comments.length) {
+        try {
+          const cr = await apiFetch(`${apiBase}/${taskId}/comments`);
+          comments = cr.comments || (Array.isArray(cr) ? cr : []);
+        } catch { /* comments optional */ }
+      }
+      buildChatSection(content, taskId, comments);
+      startChatPoll(taskId);
     } else {
-      // Try loading comments separately (fleet tasks)
-      try {
-        const commResp = await apiFetch(`${apiBase}/${taskId}/comments`);
-        const comments = commResp.comments || (Array.isArray(commResp) ? commResp : []);
-        if (comments.length) appendComments(content, comments);
-      } catch { /* comments optional */ }
+      if (inlineComments.length) {
+        appendComments(content, inlineComments);
+      } else {
+        try {
+          const cr = await apiFetch(`${apiBase}/${taskId}/comments`);
+          const comments = cr.comments || (Array.isArray(cr) ? cr : []);
+          if (comments.length) appendComments(content, comments);
+        } catch { /* comments optional */ }
+      }
     }
 
   } catch {
@@ -1118,6 +1313,8 @@ function appendComments(container, comments) {
 
 document.getElementById('panel-close').addEventListener('click', () => {
   document.getElementById('detail-panel').classList.add('hidden');
+  stopChatPoll();
+  state.openDetailTaskId = null;
 });
 
 // ── Render All ────────────────────────────────────────────

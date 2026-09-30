@@ -218,6 +218,7 @@ html, body {
 
 .gauge-metrics-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
 .gauge-metric-val { font-weight: 600; color: var(--text); }
+.gauge-reset-time { font-size: 11px; color: var(--muted); font-style: italic; }
 .gauge-projection-box {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 6px; padding: 7px 11px; font-size: 12px; line-height: 1.4;
@@ -362,6 +363,27 @@ html, body {
 .boss-stat-val  { font-size: 26px; font-weight: 700; color: var(--accent); }
 .boss-stat-label { font-size: 10px; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: .5px; }
 
+/* ── Report download dropdown ───────────────────────────────── */
+.report-dl-wrap { position: relative; flex-shrink: 0; }
+.report-dl-btn {
+  font-size: 12px; font-weight: 600; padding: 5px 12px;
+  background: var(--accent); color: #fff; border: none;
+  border-radius: var(--radius); cursor: pointer; white-space: nowrap;
+}
+.report-dl-btn:hover { opacity: .88; }
+.report-dl-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 50;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: 0 4px 12px rgba(0,0,0,.15);
+  min-width: 180px; overflow: hidden;
+}
+.report-dl-item {
+  display: block; width: 100%; text-align: left;
+  font-size: 12px; padding: 8px 14px;
+  background: none; border: none; cursor: pointer; color: var(--text);
+}
+.report-dl-item:hover { background: var(--surface2); }
+
 /* ── Thread stream in boss card ────────────────────────────── */
 .event-stream { margin-top: 18px; max-height: 380px; overflow: auto; }
 .event-row {
@@ -490,6 +512,55 @@ html, body {
   border-left: 3px solid var(--accent); padding-left: 12px; color: var(--muted);
   margin-bottom: 10px;
 }
+
+/* ── Chat section in detail panel ───────────────────────── */
+.chat-section { margin-top: 20px; display: flex; flex-direction: column; }
+
+.chat-messages {
+  max-height: 340px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 6px 0 8px;
+}
+
+.chat-msg { display: flex; flex-direction: column; max-width: 90%; }
+.chat-msg-agent { align-self: flex-start; }
+.chat-msg-user  { align-self: flex-end; }
+
+.chat-msg-meta {
+  font-size: 10px; color: var(--muted); margin-bottom: 3px; padding: 0 4px;
+}
+.chat-msg-agent .chat-msg-meta { text-align: left; }
+.chat-msg-user  .chat-msg-meta { text-align: right; }
+
+.chat-msg-bubble {
+  padding: 8px 12px; font-size: 12px; line-height: 1.5;
+}
+.chat-msg-agent .chat-msg-bubble {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 12px 12px 12px 3px;
+}
+.chat-msg-user .chat-msg-bubble {
+  background: rgba(139,92,246,.18); border: 1px solid rgba(139,92,246,.3);
+  border-radius: 12px 12px 3px 12px;
+}
+
+.chat-compose {
+  display: flex; gap: 8px; align-items: flex-end;
+  padding-top: 10px; border-top: 1px solid var(--border); margin-top: 4px;
+}
+.chat-textarea {
+  flex: 1; background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 7px 10px; color: var(--text);
+  font-size: 12px; font-family: inherit; resize: none; outline: none; line-height: 1.4;
+}
+.chat-textarea:focus { border-color: var(--accent); }
+.chat-send-btn {
+  background: var(--accent); color: #fff; border: none;
+  border-radius: 6px; padding: 7px 14px; cursor: pointer;
+  font-size: 12px; font-weight: 600; white-space: nowrap; flex-shrink: 0;
+}
+.chat-send-btn:hover { opacity: .88; }
+.chat-send-btn:disabled { opacity: .45; cursor: not-allowed; }
 
 /* ── Scrollbar ───────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
