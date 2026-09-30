@@ -160,13 +160,14 @@ func (ic *Interceptor) checkMutexLease(_ context.Context, taskID, _, repoRoot st
 		return "", nil
 	}
 	repoDir := filepath.Base(repoRoot)
+	// Use GLOB instead of LIKE to avoid treating % and _ in repoDir as wildcards.
 	var n int
 	err := ic.DB.QueryRow(
 		`SELECT COUNT(1) FROM tasks
 		  WHERE execution_stage = 'in_progress'
 		    AND id != ?
-		    AND (repo_path = ? OR repo_path LIKE ?)`,
-		taskID, repoRoot, "%"+repoDir+"%",
+		    AND (repo_path = ? OR repo_path GLOB ?)`,
+		taskID, repoRoot, "*"+repoDir+"*",
 	).Scan(&n)
 	if err != nil {
 		return "", err

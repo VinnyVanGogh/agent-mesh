@@ -79,5 +79,16 @@ func RecoveryScan(ctx context.Context, dbConn *sql.DB) error {
 	if affected > 0 {
 		slog.Info("recovered stale claims", slog.Int64("count", affected))
 	}
+
+	// 3. Reset capped tasks to todo so they can be retried.
+	resCapped, err := dbConn.ExecContext(ctx,
+		"UPDATE tasks SET execution_stage='todo', checkout_run_id=NULL, checkout_agent_id=NULL, updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE execution_stage='capped'")
+	if err != nil {
+		return err
+	}
+	affectedCapped, _ := resCapped.RowsAffected()
+	if affectedCapped > 0 {
+		slog.Info("recovered capped tasks", slog.Int64("count", affectedCapped))
+	}
 	return nil
 }

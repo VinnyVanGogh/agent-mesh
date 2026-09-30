@@ -71,9 +71,8 @@ The harness:
 			// via ctx so it takes precedence. A thin override context key is cleaner than
 			// patching os.Environ which is process-global.
 			//
-			// For now, export via process env subset (provider credential keys only);
-			// the security package already sanitizes what gets to the child process.
-			return adapter.RunAdapter(ctx, cwd, nil, prov, rawArgs, nil, stdout, stderr)
+			// Pass extraEnv (already sanitized by security.ChildEnv) through to the adapter.
+			return adapter.RunAdapter(ctx, cwd, extraEnv, prov, rawArgs, nil, stdout, stderr)
 		}
 
 		runCfg := orchestrator.RunConfig{
