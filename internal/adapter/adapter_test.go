@@ -292,7 +292,6 @@ echo "ran gemini"
 	}
 }
 
-
 // =============================================================================
 // REGRESSION TEST SUITE: Provider Chain Failover
 // These tests prevent the adapter from ever regressing on work-repo awareness,
@@ -664,17 +663,16 @@ func TestPoolIDAssignment(t *testing.T) {
 	}
 }
 
-
 // TestBuildAgyArgs_ClaudeModelTranslation verifies that Claude models are translated
 // to Gemini equivalents via FallbackPairingMatrix, not stripped to empty string.
 // Regression test: prevents "--model "" --effort "high"" error on agy.
 func TestBuildAgyArgs_ClaudeModelTranslation(t *testing.T) {
 	tests := []struct {
-		name          string
-		model         string
-		effort        string
-		expectModel   string
-		expectEffort  string
+		name         string
+		model        string
+		effort       string
+		expectModel  string
+		expectEffort string
 	}{
 		{"opus to pro", "claude-opus-5", "high", "gemini-3.1-pro", "high"},
 		{"sonnet to flash", "claude-sonnet-4-6", "", "gemini-3.8-flash", "medium"},
@@ -833,4 +831,3 @@ wait
 		t.Errorf("child process %d is still alive! orphan process was not killed", childPID)
 	}
 }
-

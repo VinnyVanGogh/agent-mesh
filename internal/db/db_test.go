@@ -108,7 +108,6 @@ func TestDB_SchemaMigration(t *testing.T) {
 	store.Close()
 }
 
-
 func TestDB_SchemaMigration_FailureRestore(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "migrate_fail.db")
