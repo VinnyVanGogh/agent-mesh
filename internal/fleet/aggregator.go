@@ -768,9 +768,19 @@ func (a *Aggregator) gatherTokenTelemetry(overview *FleetOverview) {
 						var mIn, mOut, mCR, mCC, mTot int64
 						var mCost float64
 						if err := mRows.Scan(&mName, &mFam, &mIn, &mOut, &mCR, &mCC, &mTot, &mCost); err == nil {
-							// If stored cost_usd is 0, compute on the fly using ratecard pricing
+							// If stored cost_usd is 0/null, compute on the fly using the ratecard
+							// (preferred) then fall back to the legacy family estimate.
 							if mCost <= 0.0001 {
-								mCost = telemetry.EstimateModelCost(mName, mIn, mOut, mCR, mCC)
+								if micros, ok := telemetry.ComputeCostMicros(mName, telemetry.Usage{
+									Input:           mIn,
+									Output:          mOut,
+									CacheRead:       mCR,
+									CacheCreation5m: mCC,
+								}); ok {
+									mCost = float64(micros) / 1_000_000.0
+								} else {
+									mCost = telemetry.EstimateModelCost(mName, mIn, mOut, mCR, mCC)
+								}
 							}
 							totalCalculatedCost += mCost
 							breakdowns = append(breakdowns, ModelSpendBreakdown{

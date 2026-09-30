@@ -162,6 +162,14 @@ func (w *Watcher) Start(ctx context.Context) error {
 	pruneTicker := time.NewTicker(5 * time.Minute)
 	defer pruneTicker.Stop()
 
+	backfillTicker := time.NewTicker(10 * time.Minute)
+	defer backfillTicker.Stop()
+
+	// Run one backfill pass on startup to price any records inserted without cost.
+	if n, err := BackfillCosts(w.db); err == nil && n > 0 {
+		slog.Info("Backfilled costs on startup", slog.Int64("rows_updated", n))
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -179,6 +187,11 @@ func (w *Watcher) Start(ctx context.Context) error {
 			if w.meshDB != nil {
 				_ = PruneWorkingFiles(w.meshDB)
 				_, _ = wire.Prune(w.meshDB)
+			}
+
+		case <-backfillTicker.C:
+			if n, err := BackfillCosts(w.db); err == nil && n > 0 {
+				slog.Info("Backfilled costs", slog.Int64("rows_updated", n))
 			}
 
 		case event, ok := <-w.watcher.Events:
