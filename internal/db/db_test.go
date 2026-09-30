@@ -31,8 +31,11 @@ func TestDB_OpenAndSchema(t *testing.T) {
 		t.Errorf("expected journal_mode = wal, got %s", journalMode)
 	}
 
-	// Verify tables exist
-	tables := []string{"schema_versions", "accounts", "quota_windows", "tasks", "wire_messages", "wire_cursors", "agent_sessions", "agent_working_files", "agent_circuit_breakers"}
+	tables := []string{
+		"schema_versions", "accounts", "quota_windows", "tasks", "wire_messages",
+		"wire_cursors", "agent_sessions", "agent_working_files", "agent_circuit_breakers",
+		"chat_sessions", "chat_messages", "chat_tool_calls", "session_provider_handles",
+	}
 	for _, tbl := range tables {
 		var count int
 		err := store.DB().QueryRow(fmt.Sprintf("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='%s';", tbl)).Scan(&count)

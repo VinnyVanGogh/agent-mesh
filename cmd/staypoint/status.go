@@ -70,12 +70,7 @@ var statusCmd = &cobra.Command{
 					gemColor, geminiPool.Weekly.RemainingPct, geminiPool.FiveHour.RemainingPct)
 			}
 			if pool3p != nil {
-				p3pColor := "\033[1;32m✔ Available\033[0m"
-				if pool3p.IsLocked || pool3p.Weekly.RemainingPct <= 0 {
-					p3pColor = "\033[1;31m✖ Locked (0%)\033[0m"
-				}
-				fmt.Printf("  • Claude / 3P Quota:       %s | Week Left: %.1f%%\n",
-					p3pColor, pool3p.Weekly.RemainingPct)
+				fmt.Println(format3PLine(pool3p, time.Now()))
 			}
 		}
 
@@ -87,6 +82,32 @@ var statusCmd = &cobra.Command{
 			fmt.Printf("  • Database:                %s (WAL Active)\n", cfg.DBPath)
 		}
 	},
+}
+
+// format3PLine renders the Claude / 3P pool. A lock is per window, so it names
+// the exhausted window and its reset rather than a bare "0%" beside Week Left.
+func format3PLine(p *router.QuotaPool, now time.Time) string {
+	const label = "  • Claude / 3P Quota:       "
+	weekLeft := fmt.Sprintf("Week Left: %.1f%%", p.Weekly.RemainingPct)
+	fiveLeft := fmt.Sprintf("5h Left: %.1f%%", p.FiveHour.RemainingPct)
+
+	window, w := "5h", p.FiveHour
+	if p.Weekly.IsLocked || (!p.FiveHour.IsLocked && p.Weekly.RemainingPct <= 0) {
+		window, w = "week", p.Weekly
+	}
+	if !p.IsLocked && w.RemainingPct > 0 {
+		return fmt.Sprintf("%s\033[1;32m✔ Available\033[0m | %s | %s", label, weekLeft, fiveLeft)
+	}
+	until := w.ResetsAt
+	if until.IsZero() {
+		until = p.LockoutUntil
+	}
+	note := ""
+	if r := router.FormatReset(until, now); r != "" {
+		note = ", resets " + r
+	}
+	return fmt.Sprintf("%s\033[1;31m✖ Locked (%s window exhausted%s)\033[0m | %s | %s",
+		label, window, note, weekLeft, fiveLeft)
 }
 
 var statuslineCmd = &cobra.Command{

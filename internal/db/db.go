@@ -190,6 +190,59 @@ CREATE TABLE IF NOT EXISTS agent_circuit_breakers (
 );
 
 CREATE INDEX IF NOT EXISTS idx_circuit_breakers_active ON agent_circuit_breakers (repo_path, is_tripped);
+` + ChatSchema
+
+const ChatSchema = `
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id            TEXT PRIMARY KEY,
+    title         TEXT NOT NULL DEFAULT '',
+    repo_path     TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    metadata_json TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_updated ON chat_sessions (updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id            TEXT PRIMARY KEY,
+    session_id    TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    sequence_num  INTEGER NOT NULL,
+    role          TEXT NOT NULL CHECK (role IN ('system', 'user', 'assistant', 'tool')),
+    content       TEXT NOT NULL DEFAULT '',
+    token_count   INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    metadata_json TEXT,
+    UNIQUE (session_id, sequence_num)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages (session_id, sequence_num);
+
+CREATE TABLE IF NOT EXISTS chat_tool_calls (
+    id            TEXT PRIMARY KEY,
+    message_id    TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,
+    sequence_num  INTEGER NOT NULL DEFAULT 0,
+    name          TEXT NOT NULL,
+    arguments     TEXT NOT NULL DEFAULT '{}',
+    result        TEXT,
+    is_error      INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_tool_calls_message ON chat_tool_calls (message_id, sequence_num);
+
+CREATE TABLE IF NOT EXISTS session_provider_handles (
+    session_id    TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    provider      TEXT NOT NULL,
+    handle        TEXT NOT NULL,
+    model         TEXT,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    metadata_json TEXT,
+    PRIMARY KEY (session_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_provider_handles_lookup ON session_provider_handles (provider, handle);
 `
 
 type Store struct {
@@ -284,6 +337,14 @@ var Migrations = []Migration{
 	},
 	{
 		Version: 2,
+		Name:    "unified_conversation_store",
+		Up: func(conn *sql.DB) error {
+			_, err := conn.Exec(ChatSchema)
+			return err
+		},
+	},
+	{
+		Version: 3,
 		Name:    "task_graph_and_activity",
 		Up: func(conn *sql.DB) error {
 			cols := []struct {
