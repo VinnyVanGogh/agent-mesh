@@ -3659,6 +3659,12 @@ function renderChecklist() {
         secBody.style.display = 'block';
         chevron.textContent = '▼';
         setSectionCollapsed(sectionName, false);
+        requestAnimationFrame(() => {
+          secBody.querySelectorAll('.checklist-notes-input').forEach(ta => {
+            ta.style.height = 'auto';
+            ta.style.height = Math.max(36, ta.scrollHeight) + 'px';
+          });
+        });
       } else {
         secBody.style.display = 'none';
         chevron.textContent = '▶';
@@ -3668,6 +3674,15 @@ function renderChecklist() {
 
     container.appendChild(sec);
   }
+
+  requestAnimationFrame(() => {
+    container.querySelectorAll('.checklist-notes-input').forEach(ta => {
+      if (ta.offsetParent !== null) {
+        ta.style.height = 'auto';
+        ta.style.height = Math.max(36, ta.scrollHeight) + 'px';
+      }
+    });
+  });
 }
 
 function buildChecklistItem(item) {
@@ -3707,10 +3722,13 @@ function buildChecklistItem(item) {
   const notesInput = el('textarea', 'checklist-notes-input');
   notesInput.value = item.notes || '';
   notesInput.placeholder = 'Add a note…';
-  notesInput.rows = 1;
+  const lineCount = (item.notes || '').split('\n').length;
+  notesInput.rows = Math.max(2, Math.min(12, lineCount));
   const autoResize = () => {
-    notesInput.style.height = 'auto';
-    notesInput.style.height = Math.max(28, notesInput.scrollHeight) + 'px';
+    if (notesInput.offsetParent !== null || notesInput.scrollHeight > 36) {
+      notesInput.style.height = 'auto';
+      notesInput.style.height = Math.max(36, notesInput.scrollHeight) + 'px';
+    }
   };
   notesInput.addEventListener('input', autoResize);
   notesInput.addEventListener('focus', autoResize);
