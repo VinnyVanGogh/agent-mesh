@@ -551,7 +551,8 @@ html, body {
 .chat-textarea {
   flex: 1; background: var(--surface2); border: 1px solid var(--border);
   border-radius: 6px; padding: 7px 10px; color: var(--text);
-  font-size: 12px; font-family: inherit; resize: none; outline: none; line-height: 1.4;
+  font-size: 12px; font-family: inherit; resize: vertical; outline: none; line-height: 1.4;
+  min-height: 38px; max-height: 220px; box-sizing: border-box;
 }
 .chat-textarea:focus { border-color: var(--accent); }
 .chat-send-btn {
@@ -1460,11 +1461,12 @@ html, body {
 }
 .checklist-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .checklist-howto { font-size: 11px; color: var(--cyan); font-family: monospace; margin-top: 3px; }
-.checklist-notes-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.checklist-notes-row { display: flex; align-items: flex-start; gap: 6px; margin-top: 6px; }
 .checklist-notes-input {
   flex: 1; background: var(--bg-input, var(--bg-card)); border: 1px solid var(--border);
-  border-radius: 4px; color: var(--fg); font-size: 12px; padding: 4px 8px;
-  resize: none; height: 28px; line-height: 1.4; overflow: hidden;
+  border-radius: 4px; color: var(--fg); font-size: 12px; padding: 6px 8px;
+  resize: vertical; min-height: 28px; max-height: 320px; line-height: 1.4; overflow-y: auto;
+  box-sizing: border-box; font-family: inherit; transition: border-color 0.15s ease;
 }
 .checklist-notes-input:focus { outline: none; border-color: var(--border-light); }
 .checklist-save-btn {

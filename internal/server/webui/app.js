@@ -2833,6 +2833,11 @@ function buildChatSection(container, taskId, comments) {
   textarea.className = 'chat-textarea';
   textarea.placeholder = 'Message the agent… (⌘↵ to send)';
   textarea.rows = 2;
+  const autoResizeChat = () => {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.max(38, Math.min(220, textarea.scrollHeight)) + 'px';
+  };
+  textarea.addEventListener('input', autoResizeChat);
   const sendBtn = el('button', 'chat-send-btn', 'Send');
   sendBtn.type = 'button';
 
@@ -2840,6 +2845,7 @@ function buildChatSection(container, taskId, comments) {
     const body = textarea.value.trim();
     if (!body) return;
     textarea.value = '';
+    textarea.style.height = '';
     sendBtn.disabled = true;
     try {
       await sendComment(taskId, body);
@@ -3660,13 +3666,32 @@ function buildChecklistItem(item) {
   notesInput.value = item.notes || '';
   notesInput.placeholder = 'Add a note…';
   notesInput.rows = 1;
-  notesInput.addEventListener('input', () => {
+  const autoResize = () => {
     notesInput.style.height = 'auto';
-    notesInput.style.height = notesInput.scrollHeight + 'px';
+    notesInput.style.height = Math.max(28, notesInput.scrollHeight) + 'px';
+  };
+  notesInput.addEventListener('input', autoResize);
+  notesInput.addEventListener('focus', autoResize);
+  notesInput.addEventListener('blur', () => {
+    autoResize();
+    const val = (notesInput.value || '').trim();
+    if (val !== (item.notes || '').trim()) {
+      updateChecklistNotes(item.id, notesInput.value);
+    }
   });
+  requestAnimationFrame(autoResize);
 
   const saveBtn = el('button', 'checklist-save-btn', 'Save note');
-  saveBtn.addEventListener('click', () => updateChecklistNotes(item.id, notesInput.value));
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.textContent = 'Saving…';
+    saveBtn.disabled = true;
+    await updateChecklistNotes(item.id, notesInput.value);
+    saveBtn.textContent = 'Saved!';
+    setTimeout(() => {
+      saveBtn.textContent = 'Save note';
+      saveBtn.disabled = false;
+    }, 1200);
+  });
 
   const histBtn = el('span', 'checklist-history-toggle', `v${item.version}`);
   histBtn.title = 'Click to show version history';
@@ -3709,7 +3734,9 @@ function buildChecklistItem(item) {
 async function updateChecklistStatus(id, status) {
   const idx = checklistItems.findIndex(i => i.id === id);
   if (idx === -1) return;
-  const notes = checklistItems[idx].notes;
+  const row = document.querySelector(`.checklist-item[data-id="${id}"]`);
+  const currentNotesInput = row?.querySelector('.checklist-notes-input');
+  const notes = currentNotesInput ? currentNotesInput.value : checklistItems[idx].notes;
   try {
     const r = await fetch(`/api/checklist/${id}`, {
       method: 'PATCH',
