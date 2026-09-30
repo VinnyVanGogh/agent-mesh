@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/governance"
 	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
 	"github.com/google/uuid"
 )
@@ -532,6 +533,16 @@ func MarkTaskDone(db *sql.DB, id string) error {
 		return fmt.Errorf("cannot mark task as done without a registered work product")
 	}
 
+	// Watchdog: evaluate criteria on deliverable-status change before allowing done.
+	_ = governance.TriggerWatchdogEval(db, task.ID, "deliverable_update")
+	// Re-read block status — watchdog may have just set is_blocked = 1.
+	var isBlocked int
+	var blockReason string
+	_ = db.QueryRow(`SELECT is_blocked, COALESCE(block_reason,'') FROM tasks WHERE id = ?`, task.ID).Scan(&isBlocked, &blockReason)
+	if isBlocked == 1 {
+		return fmt.Errorf("task is blocked by watchdog: %s", blockReason)
+	}
+
 	query := `
 		UPDATE tasks
 		SET status = 'done', execution_stage = 'done', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -611,6 +622,8 @@ func AddTaskComment(db *sql.DB, taskID, author, message string) error {
 
 	// Any pending interactions configured to supersede on comment are superseded
 	_, _ = SupersedeInteractionsOnComment(db, task.ID)
+	// Watchdog: re-evaluate criteria on every comment (update-triggered, no polling).
+	_ = governance.TriggerWatchdogEval(db, task.ID, "comment")
 	_ = orchestrator.NotifyDaemon(task.ID, "comment", "")
 	return nil
 }
