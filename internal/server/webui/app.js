@@ -191,6 +191,7 @@ async function loadAll() {
 
     populateOrgFilter();
     populateTSOrgFilter();
+    populateAgentsFilters();
     renderAll();
     renderSidebarOrgTree();
   } catch (err) {
@@ -258,6 +259,7 @@ async function refreshFleetData() {
       state.fleet = fleetResp;
       populateOrgFilter();
       populateTSOrgFilter();
+      populateAgentsFilters();
       renderOverview();
       renderSidebarOrgTree();
     }
@@ -356,7 +358,7 @@ function navigateTo(viewName, orgName = null, pushHistory = true) {
     if (org) renderOrgDetailView(org);
   } else {
     if (viewName === 'projects')     renderProjects();
-    if (viewName === 'agents')       renderAgentsPage();
+    if (viewName === 'agents')       { populateAgentsFilters(); renderAgentsPage(); }
     if (viewName === 'recent-tasks') renderRecentTasks();
     if (viewName === 'task-status')  renderTaskStatusPage();
     if (viewName === 'cost')         renderCostPage();
