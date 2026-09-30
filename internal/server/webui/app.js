@@ -13,7 +13,9 @@ const state = {
     org: 'all',
     status: 'all',
   },
-  currentOrgDetail: null, // currently open org name in org-detail view
+  currentOrgDetail: null,    // currently open org name in org-detail view
+  openDetailTaskId: null,    // task id currently shown in detail panel
+  chatPollTimer:    null,    // setInterval handle for chat refresh
 };
 
 // ── Token (injected by Go template) ─────────────────────
@@ -1009,6 +1011,111 @@ function renderEventStream() {
   }
 }
 
+// ── Chat helpers ──────────────────────────────────────────
+
+function startChatPoll(taskId) {
+  stopChatPoll();
+  state.chatPollTimer = setInterval(() => refreshChatMessages(taskId), 8000);
+}
+
+function stopChatPoll() {
+  if (state.chatPollTimer) { clearInterval(state.chatPollTimer); state.chatPollTimer = null; }
+}
+
+async function refreshChatMessages(taskId) {
+  if (state.openDetailTaskId !== taskId) { stopChatPoll(); return; }
+  try {
+    const cr = await apiFetch(`/api/fleet/tasks/${taskId}/comments`);
+    const comments = cr.comments || (Array.isArray(cr) ? cr : []);
+    const messagesDiv = document.getElementById('panel-chat-messages');
+    const titleEl = document.querySelector('#panel-chat-section .panel-section-title');
+    if (!messagesDiv) return;
+    const atBottom = messagesDiv.scrollHeight - messagesDiv.scrollTop <= messagesDiv.clientHeight + 30;
+    renderChatMessages(messagesDiv, comments);
+    if (atBottom) messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    if (titleEl) titleEl.textContent = `Chat (${comments.length})`;
+  } catch { /* silent */ }
+}
+
+function renderChatMessages(container, comments) {
+  container.innerHTML = '';
+  if (!comments.length) {
+    container.appendChild(el('p', 'panel-field-muted', 'No messages yet.'));
+    return;
+  }
+  for (const c of comments) {
+    const authorType = (c.authorType || c.author_type || '').toLowerCase();
+    const isAgent = authorType === 'agent' || authorType === 'system';
+    const authorLabel = isAgent
+      ? (c.authorName || c.author_name || 'Agent')
+      : (c.author || 'You');
+    const ts = c.createdAt || c.created_at || c.timestamp || '';
+
+    const msg = el('div', `chat-msg ${isAgent ? 'chat-msg-agent' : 'chat-msg-user'}`);
+    msg.appendChild(el('div', 'chat-msg-meta', `${authorLabel}${ts ? ' · ' + fmtDateTime(ts) : ''}`));
+    const bubble = el('div', 'chat-msg-bubble');
+    bubble.appendChild(mdEl(c.body || c.message || ''));
+    msg.appendChild(bubble);
+    container.appendChild(msg);
+  }
+}
+
+function buildChatSection(container, taskId, comments) {
+  const section = el('div', 'chat-section');
+  section.id = 'panel-chat-section';
+  section.appendChild(el('div', 'panel-section-title', `Chat (${comments.length})`));
+
+  const messagesDiv = el('div', 'chat-messages');
+  messagesDiv.id = 'panel-chat-messages';
+  renderChatMessages(messagesDiv, comments);
+  section.appendChild(messagesDiv);
+
+  const compose = el('div', 'chat-compose');
+  const textarea = document.createElement('textarea');
+  textarea.className = 'chat-textarea';
+  textarea.placeholder = 'Message the agent… (⌘↵ to send)';
+  textarea.rows = 2;
+  const sendBtn = el('button', 'chat-send-btn', 'Send');
+  sendBtn.type = 'button';
+
+  const doSend = async () => {
+    const body = textarea.value.trim();
+    if (!body) return;
+    textarea.value = '';
+    sendBtn.disabled = true;
+    try {
+      await sendComment(taskId, body);
+      await refreshChatMessages(taskId);
+    } catch { /* ignore send error visually */ } finally {
+      sendBtn.disabled = false;
+      textarea.focus();
+    }
+  };
+
+  sendBtn.addEventListener('click', doSend);
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); doSend(); }
+  });
+
+  compose.appendChild(textarea);
+  compose.appendChild(sendBtn);
+  section.appendChild(compose);
+  container.appendChild(section);
+
+  // Scroll to bottom
+  messagesDiv.scrollTop = messagesDiv.scrollHeight;
+}
+
+async function sendComment(taskId, body) {
+  const resp = await fetch(`/api/fleet/tasks/${taskId}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeader() },
+    body: JSON.stringify({ body }),
+  });
+  if (!resp.ok) throw new Error(`Send failed: ${resp.status}`);
+  return resp.json().catch(() => null);
+}
+
 // ── Detail panel ──────────────────────────────────────────
 function addPanelField(content, label, value) {
   if (!value && value !== 0) return;
@@ -1105,10 +1212,13 @@ async function openDetail(taskId) {
   const panel   = document.getElementById('detail-panel');
   const content = document.getElementById('panel-content');
 
+  stopChatPoll();
+  state.openDetailTaskId = taskId;
   panel.classList.remove('hidden');
   content.innerHTML = '<p style="color:var(--muted)">Loading…</p>';
 
-  const apiBase = isFleetTaskId(taskId) ? '/api/fleet/tasks' : '/api/tasks';
+  const isFleet = isFleetTaskId(taskId);
+  const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
 
   try {
     const resp = await apiFetch(`${apiBase}/${taskId}`);
@@ -1119,15 +1229,26 @@ async function openDetail(taskId) {
 
     renderDetailContent(content, task);
 
-    if (inlineComments.length) {
-      appendComments(content, inlineComments);
+    if (isFleet) {
+      let comments = inlineComments;
+      if (!comments.length) {
+        try {
+          const cr = await apiFetch(`${apiBase}/${taskId}/comments`);
+          comments = cr.comments || (Array.isArray(cr) ? cr : []);
+        } catch { /* comments optional */ }
+      }
+      buildChatSection(content, taskId, comments);
+      startChatPoll(taskId);
     } else {
-      // Try loading comments separately (fleet tasks)
-      try {
-        const commResp = await apiFetch(`${apiBase}/${taskId}/comments`);
-        const comments = commResp.comments || (Array.isArray(commResp) ? commResp : []);
-        if (comments.length) appendComments(content, comments);
-      } catch { /* comments optional */ }
+      if (inlineComments.length) {
+        appendComments(content, inlineComments);
+      } else {
+        try {
+          const cr = await apiFetch(`${apiBase}/${taskId}/comments`);
+          const comments = cr.comments || (Array.isArray(cr) ? cr : []);
+          if (comments.length) appendComments(content, comments);
+        } catch { /* comments optional */ }
+      }
     }
 
   } catch {
@@ -1161,6 +1282,8 @@ function appendComments(container, comments) {
 
 document.getElementById('panel-close').addEventListener('click', () => {
   document.getElementById('detail-panel').classList.add('hidden');
+  stopChatPoll();
+  state.openDetailTaskId = null;
 });
 
 // ── Render All ────────────────────────────────────────────
