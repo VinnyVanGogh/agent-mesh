@@ -115,9 +115,13 @@ func handleHookPrompt() {
 	if dbConn != nil {
 		// A. Register / Heartbeat Session
 		branch := meshContext.GetCurrentGitBranch(cwd)
+		agentType := "claude"
+		if isAntigravity {
+			agentType = "gemini"
+		}
 		_ = telemetry.HeartbeatSession(dbConn, telemetry.AgentSession{
 			ID:        sessionID,
-			AgentType: "claude",
+			AgentType: agentType,
 			RepoPath:  cwd,
 			GitBranch: branch,
 			PID:       os.Getppid(),

@@ -12,6 +12,7 @@ import (
 	"github.com/VinnyVanGogh/staypoint/internal/config"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
+	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 	"github.com/spf13/cobra"
 )
 
@@ -66,11 +67,28 @@ The harness:
 		// Wire adapter.RunAdapter as the injected turn runner.
 		// The harness package cannot import adapter (import cycle), so the CLI bridges them.
 		adapterFn := func(ctx context.Context, cwd, prov string, rawArgs, extraEnv []string, stdout, stderr io.Writer) error {
-			// Prepend extraEnv to the OS env for the child process.
-			// adapter.RunAdapter reads env from os.Environ(); we pass our sanitized set
-			// via ctx so it takes precedence. A thin override context key is cleaner than
-			// patching os.Environ which is process-global.
-			//
+			// Register / heartbeat this Paperclip run as a StayPoint session so all
+			// adapter types (Gemini, OpenAI, local) appear in GET /api/sessions.
+			// Claude Code sessions also fire here, in addition to the hook_cmd path.
+			agentType := prov
+			if agentType == "" {
+				agentType = "claude"
+			}
+			sessID := agentID
+			if sessID == "" || sessID == "local" {
+				if len(taskID) >= 8 {
+					sessID = "paperclip-" + taskID[:8]
+				} else {
+					sessID = "paperclip-" + taskID
+				}
+			}
+			_ = telemetry.HeartbeatSession(store.DB(), telemetry.AgentSession{
+				ID:        sessID,
+				AgentType: agentType,
+				RepoPath:  cwd,
+				PID:       os.Getpid(),
+			})
+
 			// Inject sanitized extraEnv via context so RunAdapter forwards it to the child
 			// without changing its public signature.
 			if len(extraEnv) > 0 {

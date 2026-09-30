@@ -10,6 +10,11 @@ import (
 	"strings"
 )
 
+const sessionCookieName = "staypoint_session"
+
+// sessionCookieMaxAge is 30 days; long enough that a bookmark just works.
+const sessionCookieMaxAge = 30 * 24 * 60 * 60
+
 // SecurityMiddleware returns a middleware that validates Host and Origin headers,
 // enforces no-wildcard CORS, and verifies the local auth token.
 type SecurityMiddleware struct {
@@ -70,6 +75,27 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 		if !sm.isAuthorized(r) {
 			writeError(w, http.StatusUnauthorized, "unauthorized: invalid or missing auth token")
 			return
+		}
+
+		// 4. Cookie exchange: if browser hit a UI route with ?token=, set a session
+		// cookie and redirect to the clean URL. After this, the bookmark works.
+		if qToken := r.URL.Query().Get("token"); qToken != "" && !strings.HasPrefix(r.URL.Path, "/api/") {
+			if subtle.ConstantTimeCompare([]byte(qToken), []byte(sm.token)) == 1 {
+				http.SetCookie(w, &http.Cookie{
+					Name:     sessionCookieName,
+					Value:    qToken,
+					Path:     "/",
+					HttpOnly: true,
+					SameSite: http.SameSiteStrictMode,
+					MaxAge:   sessionCookieMaxAge,
+				})
+				cleanURL := *r.URL
+				q := cleanURL.Query()
+				q.Del("token")
+				cleanURL.RawQuery = q.Encode()
+				http.Redirect(w, r, cleanURL.String(), http.StatusFound)
+				return
+			}
 		}
 
 		next.ServeHTTP(w, r)
@@ -164,6 +190,13 @@ func (sm *SecurityMiddleware) isAuthorized(r *http.Request) bool {
 	// 3. Query param ?token=<token> (needed for browser EventSource / SSE)
 	if qToken := r.URL.Query().Get("token"); qToken != "" {
 		if subtle.ConstantTimeCompare([]byte(qToken), []byte(sm.token)) == 1 {
+			return true
+		}
+	}
+
+	// 4. Session cookie (set after first successful ?token= visit)
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		if subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(sm.token)) == 1 {
 			return true
 		}
 	}

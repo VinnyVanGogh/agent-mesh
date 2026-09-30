@@ -3,7 +3,10 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/fleet"
@@ -143,5 +146,80 @@ func (h *TelemetryHandler) GetFleetOverview(w http.ResponseWriter, r *http.Reque
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(overview)
+}
+
+// paperclipAPIBase returns the Paperclip local server base URL.
+func paperclipAPIBase() string {
+	if u := os.Getenv("PAPERCLIP_API_URL"); u != "" {
+		return strings.TrimRight(u, "/")
+	}
+	return "http://127.0.0.1:3100"
+}
+
+// proxyPaperclip forwards a GET request to the Paperclip API and pipes the response back.
+func proxyPaperclip(w http.ResponseWriter, r *http.Request, path string) {
+	target := paperclipAPIBase() + path
+	req, err := http.NewRequestWithContext(r.Context(), "GET", target, nil)
+	if err != nil {
+		http.Error(w, `{"error":"proxy request build failed"}`, http.StatusInternalServerError)
+		return
+	}
+	if key := os.Getenv("PAPERCLIP_API_KEY"); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, `{"error":"paperclip unreachable"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+// GetFleetTask proxies GET /api/fleet/tasks/{id} to the Paperclip issue detail API.
+// This lets the web UI show full task body and metadata for fleet (Paperclip) tasks.
+func (h *TelemetryHandler) GetFleetTask(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"missing task id"}`, http.StatusBadRequest)
+		return
+	}
+	proxyPaperclip(w, r, "/api/issues/"+id)
+}
+
+// GetFleetTaskComments proxies GET /api/fleet/tasks/{id}/comments to Paperclip.
+func (h *TelemetryHandler) GetFleetTaskComments(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"missing task id"}`, http.StatusBadRequest)
+		return
+	}
+	// Paperclip returns a JSON array; wrap it for consistent client-side handling.
+	target := paperclipAPIBase() + "/api/issues/" + id + "/comments"
+	req, err := http.NewRequestWithContext(r.Context(), "GET", target, nil)
+	if err != nil {
+		http.Error(w, `{"comments":[]}`, http.StatusOK)
+		return
+	}
+	if key := os.Getenv("PAPERCLIP_API_KEY"); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"comments":[]}`))
+		return
+	}
+	defer resp.Body.Close()
+	var raw json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"comments":[]}`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]json.RawMessage{"comments": raw})
 }
 

@@ -115,6 +115,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		telemetryH := NewTelemetryHandler(s.opts.DB, s.hub, s.opts.TelemetryDBPath)
 		mux.HandleFunc("GET /api/telemetry", telemetryH.GetTelemetry)
 		mux.HandleFunc("GET /api/fleet/overview", telemetryH.GetFleetOverview)
+		mux.HandleFunc("GET /api/fleet/tasks/{id}", telemetryH.GetFleetTask)
+		mux.HandleFunc("GET /api/fleet/tasks/{id}/comments", telemetryH.GetFleetTaskComments)
 	}
 
 	// Embedded web UI (must be registered last so /api/* patterns take precedence)
