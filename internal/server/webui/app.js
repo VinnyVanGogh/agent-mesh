@@ -84,6 +84,11 @@ function authHeader() {
   return TOKEN ? { 'Authorization': `Bearer ${TOKEN}` } : {};
 }
 
+// Close any open .report-dl-menu when clicking outside its wrapper.
+document.addEventListener('click', () => {
+  document.querySelectorAll('.report-dl-menu').forEach(m => { m.hidden = true; });
+});
+
 // ── Simple markdown renderer ──────────────────────────────
 function escapeHtml(s) {
   return String(s)
@@ -925,6 +930,44 @@ function renderBoss() {
   titleWrap.appendChild(el('div', 'boss-subtitle',
     `${total} task${total !== 1 ? 's' : ''} · ${active} agent${active !== 1 ? 's' : ''} active`));
   header.appendChild(titleWrap);
+
+  // Download Report dropdown
+  const dlWrap = el('div', 'report-dl-wrap');
+  const dlBtn = el('button', 'report-dl-btn', 'Download Report');
+  dlBtn.type = 'button';
+  const dlMenu = el('div', 'report-dl-menu');
+  dlMenu.hidden = true;
+  for (const { type, label } of [
+    { type: 'work',     label: 'Work / Boss Card' },
+    { type: 'personal', label: 'Personal' },
+    { type: 'gemini',   label: 'Gemini / Antigravity' },
+    { type: 'combined', label: 'Combined Fleet' },
+  ]) {
+    const item = el('button', 'report-dl-item', label);
+    item.type = 'button';
+    item.dataset.reportType = type;
+    item.addEventListener('click', () => {
+      dlMenu.hidden = true;
+      const url = `/api/report?type=${type}`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = '';
+      // Auth header can't be set on anchor; the auth cookie / token middleware handles it
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    });
+    dlMenu.appendChild(item);
+  }
+  dlBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    dlMenu.hidden = !dlMenu.hidden;
+  });
+  dlWrap.addEventListener('click', (e) => e.stopPropagation());
+  dlWrap.appendChild(dlBtn);
+  dlWrap.appendChild(dlMenu);
+  header.appendChild(dlWrap);
+
   card.appendChild(header);
 
   const grid = el('div', 'boss-stat-grid');

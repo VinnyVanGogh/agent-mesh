@@ -117,6 +117,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/fleet/overview", telemetryH.GetFleetOverview)
 		mux.HandleFunc("GET /api/fleet/tasks/{id}", telemetryH.GetFleetTask)
 		mux.HandleFunc("GET /api/fleet/tasks/{id}/comments", telemetryH.GetFleetTaskComments)
+		mux.HandleFunc("GET /api/report", telemetryH.GetReport)
 	}
 
 	// Embedded web UI (must be registered last so /api/* patterns take precedence)
