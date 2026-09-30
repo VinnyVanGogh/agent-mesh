@@ -100,6 +100,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		telemetryH := NewTelemetryHandler(s.opts.DB, s.hub)
 		mux.HandleFunc("GET /api/telemetry", telemetryH.GetTelemetry)
 	}
+
+	// Embedded web UI (must be registered last so /api/* patterns take precedence)
+	RegisterUIRoutes(mux, s.opts.AuthToken)
 }
 
 // Start binds to 127.0.0.1 and starts serving requests in the background.
