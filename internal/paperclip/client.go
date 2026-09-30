@@ -334,7 +334,6 @@ func (c *Client) ListProjects(ctx context.Context, companyID string) ([]ProjectR
 	return projects, nil
 }
 
-
 // FetchProjects retrieves live projects for a company.
 func (c *Client) FetchProjects(ctx context.Context, companyID string) ([]ProjectResponse, error) {
 	return c.ListProjects(ctx, companyID)
