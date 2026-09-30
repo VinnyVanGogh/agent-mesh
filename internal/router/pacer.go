@@ -156,18 +156,21 @@ func LoadPacerState() (*PacerState, error) {
 	// 3. Evaluate lockouts from window thresholds
 	now := time.Now()
 	for _, pool := range state.Pools {
-		// Auto-reset windows whose reset timestamp has passed
+		// Auto-reset windows whose reset timestamp has passed. Clear the stale
+		// ResetsAt so the UI does not show "resets soon" against a past timestamp.
 		if !pool.FiveHour.ResetsAt.IsZero() && now.After(pool.FiveHour.ResetsAt) && pool.FiveHour.ResetsAt.After(pool.LastUpdated) {
 			pool.FiveHour.UsedPct = 0.0
 			pool.FiveHour.RemainingPct = 100.0
 			pool.FiveHour.Known = true
 			pool.FiveHour.IsLocked = false
+			pool.FiveHour.ResetsAt = time.Time{}
 		}
 		if !pool.Weekly.ResetsAt.IsZero() && now.After(pool.Weekly.ResetsAt) && pool.Weekly.ResetsAt.After(pool.LastUpdated) {
 			pool.Weekly.UsedPct = 0.0
 			pool.Weekly.RemainingPct = 100.0
 			pool.Weekly.Known = true
 			pool.Weekly.IsLocked = false
+			pool.Weekly.ResetsAt = time.Time{}
 		}
 
 		if pool.FiveHour.RemainingPct <= 0.0 || pool.FiveHour.UsedPct >= 100.0 {
