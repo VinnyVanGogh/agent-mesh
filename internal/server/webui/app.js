@@ -3645,6 +3645,11 @@ function buildChecklistItem(item) {
   // Body
   const body = el('div', 'checklist-body');
   const titleEl = el('div', `checklist-title${item.status !== 'pending' ? ' status-' + item.status : ''}`, item.title);
+  if (item.contract) {
+    const contractTag = el('span', 'checklist-contract-tag', '⚙ contract');
+    contractTag.title = 'Machine-verifiable contract: ' + item.contract;
+    titleEl.appendChild(contractTag);
+  }
   body.appendChild(titleEl);
   if (item.description) body.appendChild(el('div', 'checklist-desc', item.description));
   if (item.how_to_test) body.appendChild(el('div', 'checklist-howto', item.how_to_test));
@@ -3752,9 +3757,42 @@ function updateChecklistProgress() {
 
 // Sidebar wire-up for checklist
 document.getElementById('checklist-seed-btn')?.addEventListener('click', seedChecklist);
+document.getElementById('checklist-verify-btn')?.addEventListener('click', verifyChecklistContracts);
 document.getElementById('checklist-sprint-filter')?.addEventListener('change', (e) => {
   loadChecklist(e.target.value);
 });
+
+async function verifyChecklistContracts() {
+  const sprint = document.getElementById('checklist-sprint-filter')?.value || 'STA-168';
+  const btn = document.getElementById('checklist-verify-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Verifying…';
+  }
+  try {
+    const res = await fetch(`/api/checklist/evaluate?sprint=${encodeURIComponent(sprint)}&downgrade=true`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${window.__STAYPOINT_TOKEN__ || ''}` }
+    });
+    const summary = await res.json();
+    if (summary.divergences > 0) {
+      alert(`⚠️ Divergence Detected!\n\n${summary.divergences} previously-verified item(s) regressed and were automatically downgraded to 'fail'.`);
+    } else if (summary.failed > 0) {
+      alert(`Checklist Evaluation:\n\n${summary.passed}/${summary.total} contracts passing, ${summary.failed} failing.`);
+    } else {
+      alert(`✅ All ${summary.total} machine contracts verified successfully!`);
+    }
+    await loadChecklist(sprint);
+  } catch (err) {
+    console.error('Failed to verify contracts:', err);
+    alert('Failed to evaluate checklist contracts: ' + err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '⚡ Verify Contracts';
+    }
+  }
+}
 
 // ── Filter listeners (projects page) ─────────────────────
 document.getElementById('projects-org-filter')?.addEventListener('change', () => {
