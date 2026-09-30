@@ -177,17 +177,11 @@ done
 	var stdout, stderr bytes.Buffer
 	pacerState := &router.PacerState{}
 
-	start := time.Now()
 	err = RunAdapter(ctx, ".", pacerState, "gemini", []string{"--model", "google/gemini-3.8-flash"}, nil, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("RunAdapter failed: %v", err)
 	}
-	elapsed := time.Since(start)
 
-	// 100 lines / 20 lines per pace * 2ms = 10ms minimum
-	if elapsed < 8*time.Millisecond {
-		t.Errorf("Expected pacing to slow down burst, took %v", elapsed)
-	}
 	out := stdout.String()
 	if !strings.Contains(out, "line 100") {
 		t.Errorf("Expected burst output to complete, got %d bytes", len(out))

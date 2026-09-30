@@ -24,8 +24,8 @@ import urllib.request
 
 REPO_MAIN = "VinnyVanGogh/staypoint"
 REPO_TAP = "VinnyVanGogh/homebrew-tap"
-TAG = "v0.2.0"
-VERSION = "0.2.0"
+TAG = "v0.3.0"
+VERSION = "0.3.0"
 
 PEEK = "--peek" in sys.argv
 
