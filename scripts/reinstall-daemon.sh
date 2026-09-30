@@ -10,7 +10,7 @@ LABEL="com.staypoint.daemon"
 
 echo "→ Building staypointd from $REPO ..."
 go build -o "$BINARY" "$REPO/cmd/staypointd"
-codesign -s - -f "$BINARY"
+codesign -s - -f -i com.staypoint.daemon "$BINARY"
 echo "  Built: $BINARY ($(staypointd -version 2>/dev/null || echo 'ok'))"
 
 if launchctl list | grep -q "$LABEL"; then

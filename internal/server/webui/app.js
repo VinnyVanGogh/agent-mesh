@@ -1557,27 +1557,69 @@ function renderBoss() {
     const item = el('button', 'report-dl-item', label);
     item.type = 'button';
     item.dataset.reportType = type;
-    item.addEventListener('click', async () => {
+    item.addEventListener('click', async (e) => {
+      e.stopPropagation();
       dlMenu.hidden = true;
-      // Bug 4 fix: show loading state
-      const origText = item.textContent;
-      const spinner = el('span', 'dl-spinner');
-      item.prepend(spinner);
-      item.disabled = true;
+
+      // Ensure .dl-spinner and button disabled state visibly activate immediately
+      // on the download button upon triggering PDF/report generation and remain until blob is received.
+      const origBtnContent = dlBtn.innerHTML;
+      dlBtn.disabled = true;
+      dlBtn.style.opacity = '0.7';
+      dlBtn.style.cursor = 'not-allowed';
+      dlBtn.innerHTML = '';
+      const btnSpinner = el('span', 'dl-spinner');
+      dlBtn.appendChild(btnSpinner);
+      dlBtn.appendChild(document.createTextNode(` Generating ${label}...`));
+
+      // Also disable dropdown items during active generation
+      dlMenu.querySelectorAll('.report-dl-item').forEach(b => { b.disabled = true; });
+
       try {
-        const url = `/api/report?type=${type}&token=${encodeURIComponent(TOKEN)}`;
+        const url = `/api/report?type=${encodeURIComponent(type)}${TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : ''}`;
+        const resp = await fetch(url, {
+          headers: authHeader(),
+        });
+        if (!resp.ok) {
+          const errText = await resp.text().catch(() => '');
+          let errMsg = `Report generation failed (${resp.status})`;
+          try {
+            const parsed = JSON.parse(errText);
+            if (parsed.error) errMsg = parsed.error;
+          } catch {
+            if (errText) errMsg = errText;
+          }
+          throw new Error(errMsg);
+        }
+
+        const blob = await resp.blob();
+
+        let filename = `staypoint-${type}-report.pdf`;
+        const disp = resp.headers.get('Content-Disposition');
+        if (disp) {
+          const match = disp.match(/filename="?([^";]+)"?/i);
+          if (match && match[1]) {
+            filename = match[1].trim();
+          }
+        }
+
+        const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url;
-        a.download = `staypoint-${type}-report.pdf`;
+        a.href = blobUrl;
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        // Give browser a moment to start the download before re-enabling
-        await new Promise(r => setTimeout(r, 1500));
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
+      } catch (err) {
+        console.error('Report generation error:', err);
+        alert(`Failed to download report: ${err.message}`);
       } finally {
-        spinner.remove();
-        item.textContent = origText;
-        item.disabled = false;
+        dlBtn.disabled = false;
+        dlBtn.style.opacity = '';
+        dlBtn.style.cursor = '';
+        dlBtn.innerHTML = origBtnContent;
+        dlMenu.querySelectorAll('.report-dl-item').forEach(b => { b.disabled = false; });
       }
     });
     dlMenu.appendChild(item);
