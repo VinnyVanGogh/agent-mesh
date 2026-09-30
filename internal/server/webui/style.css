@@ -362,6 +362,27 @@ html, body {
 .boss-stat-val  { font-size: 26px; font-weight: 700; color: var(--accent); }
 .boss-stat-label { font-size: 10px; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: .5px; }
 
+/* ── Report download dropdown ───────────────────────────────── */
+.report-dl-wrap { position: relative; flex-shrink: 0; }
+.report-dl-btn {
+  font-size: 12px; font-weight: 600; padding: 5px 12px;
+  background: var(--accent); color: #fff; border: none;
+  border-radius: var(--radius); cursor: pointer; white-space: nowrap;
+}
+.report-dl-btn:hover { opacity: .88; }
+.report-dl-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 50;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: 0 4px 12px rgba(0,0,0,.15);
+  min-width: 180px; overflow: hidden;
+}
+.report-dl-item {
+  display: block; width: 100%; text-align: left;
+  font-size: 12px; padding: 8px 14px;
+  background: none; border: none; cursor: pointer; color: var(--text);
+}
+.report-dl-item:hover { background: var(--surface2); }
+
 /* ── Thread stream in boss card ────────────────────────────── */
 .event-stream { margin-top: 18px; max-height: 380px; overflow: auto; }
 .event-row {
