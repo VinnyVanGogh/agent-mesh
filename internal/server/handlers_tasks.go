@@ -28,6 +28,9 @@ func (h *TasksHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	limit := 100
 	if limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			if l > 1000 {
+				l = 1000
+			}
 			limit = l
 		}
 	}
@@ -296,6 +299,13 @@ func (h *TasksHandler) SetStage(w http.ResponseWriter, r *http.Request) {
 	req.Stage = strings.TrimSpace(req.Stage)
 	if req.Stage == "" {
 		writeError(w, http.StatusBadRequest, "stage is required")
+		return
+	}
+
+	switch req.Stage {
+	case "todo", "in_progress", "in_review", "done":
+	default:
+		writeError(w, http.StatusBadRequest, "invalid stage: must be todo, in_progress, in_review, or done")
 		return
 	}
 
