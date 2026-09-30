@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -336,8 +337,22 @@ func (h *ChecklistHandler) Evaluate(w http.ResponseWriter, r *http.Request) {
 		notify = true
 	}
 
+	repoRoot := r.URL.Query().Get("repo_root")
+	if repoRoot == "" {
+		repoRoot = os.Getenv("STAYPOINT_REPO_ROOT")
+	}
+	if repoRoot == "" {
+		if _, err := os.Stat("go.mod"); err == nil {
+			repoRoot = "."
+		} else if _, err := os.Stat("/Users/vincevasile/Documents/dev/agent-mesh/go.mod"); err == nil {
+			repoRoot = "/Users/vincevasile/Documents/dev/agent-mesh"
+		} else {
+			repoRoot = "."
+		}
+	}
+
 	opts := checklist.EvaluateOptions{
-		RepoRoot:        ".",
+		RepoRoot:        repoRoot,
 		BaseURL:         "http://" + r.Host,
 		HTTPClient:      &http.Client{Timeout: 10 * time.Second},
 		Downgrade:       downgrade,

@@ -113,6 +113,14 @@ func evaluateCommand(ctx context.Context, c Contract, repoRoot string) Evaluatio
 
 	cmd := exec.CommandContext(cmdCtx, "sh", "-c", c.Command)
 	cmd.Dir = repoRoot
+	env := os.Environ()
+	pathVal := os.Getenv("PATH")
+	extraPaths := "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/go/bin"
+	if !strings.Contains(pathVal, "/opt/homebrew/bin") {
+		pathVal = extraPaths + ":" + pathVal
+		env = append(env, "PATH="+pathVal)
+	}
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	outStr := strings.TrimSpace(string(out))
 

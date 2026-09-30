@@ -13,6 +13,40 @@ go build -o "$BINARY" "$REPO/cmd/staypointd"
 codesign -s - -f -i com.staypoint.daemon "$BINARY"
 echo "  Built: $BINARY ($(staypointd -version 2>/dev/null || echo 'ok'))"
 
+cat <<EOF > "$PLIST"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.staypoint.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$BINARY</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$REPO</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/go/bin</string>
+        <key>HOME</key>
+        <string>$HOME</string>
+        <key>STAYPOINT_REPO_ROOT</key>
+        <string>$REPO</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/staypointd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/staypointd.err</string>
+</dict>
+</plist>
+EOF
+
 if launchctl list | grep -q "$LABEL"; then
     echo "→ Stopping $LABEL ..."
     launchctl unload "$PLIST"
