@@ -2943,22 +2943,46 @@ function renderDetailContent(content, task) {
   const title = task.title || task.name || '(untitled)';
   content.appendChild(el('h2', 'panel-title', title));
 
-  // Meta row: status pill, identifier, priority, org
+  // Meta row: status pill, identifier, priority, org with explicit labels
   const metaRow = el('div', 'panel-meta-row');
-  metaRow.appendChild(statusPill(task.status || 'unknown'));
-  if (task.identifier) metaRow.appendChild(el('span', 'card-id', task.identifier));
-  if (task.priority)   metaRow.appendChild(statusPill(task.priority));
-  if (task.organization) metaRow.appendChild(el('span', 'pill', task.organization));
+  metaRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;';
+  if (task.identifier) {
+    const idWrap = el('div', 'panel-meta-item');
+    idWrap.innerHTML = `<span class="panel-meta-tag-label" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-right:4px;">ID</span><span class="card-id" style="font-weight:600;">${escapeHtml(task.identifier)}</span>`;
+    metaRow.appendChild(idWrap);
+  }
+  const statusWrap = el('div', 'panel-meta-item');
+  statusWrap.innerHTML = `<span class="panel-meta-tag-label" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-right:4px;">Status</span>`;
+  statusWrap.appendChild(statusPill(task.status || 'unknown'));
+  metaRow.appendChild(statusWrap);
+
+  if (task.priority) {
+    const prioWrap = el('div', 'panel-meta-item');
+    prioWrap.innerHTML = `<span class="panel-meta-tag-label" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-right:4px;">Priority</span>`;
+    prioWrap.appendChild(statusPill(task.priority));
+    metaRow.appendChild(prioWrap);
+  }
+  if (task.organization) {
+    const orgWrap = el('div', 'panel-meta-item');
+    orgWrap.innerHTML = `<span class="panel-meta-tag-label" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-right:4px;">Org</span>`;
+    orgWrap.appendChild(el('span', 'pill', task.organization));
+    metaRow.appendChild(orgWrap);
+  }
   content.appendChild(metaRow);
 
-  // Description
-  const desc = task.description || '';
-  if (desc) {
-    const descField = el('div', 'panel-field');
-    descField.appendChild(el('div', 'panel-field-label', 'Description'));
-    descField.appendChild(mdEl(desc));
-    content.appendChild(descField);
+  // Description (with fallback to first comment)
+  let desc = task.description || '';
+  if (!desc && task.comments && task.comments.length) {
+    desc = task.comments[0].body || task.comments[0].message || '';
   }
+  const descField = el('div', 'panel-field');
+  descField.appendChild(el('div', 'panel-field-label', 'Description'));
+  if (desc) {
+    descField.appendChild(mdEl(desc));
+  } else {
+    descField.appendChild(el('div', 'panel-field-muted', 'No description provided.'));
+  }
+  content.appendChild(descField);
 
   // Properties grid
   addPanelField(content, 'Stage',    task.execution_stage || task.status);
@@ -2988,16 +3012,12 @@ function renderDetailContent(content, task) {
     content.appendChild(lblWrap);
   }
 
-  // Spend
-  if (task.spent_usd || task.spent_tokens) {
-    addPanelField(content, 'Spend',
-      `${fmtCurrency(task.spent_usd)} · ${fmtCompactNum(task.spent_tokens)} tokens`);
-  }
+  // Spend (always displayed so user sees tracking status)
+  addPanelField(content, 'Spend',
+    `${fmtCurrency(task.spent_usd || 0)} · ${fmtCompactNum(task.spent_tokens || 0)} tokens`);
 
   // Budget
-  if (task.max_budget_usd) {
-    addPanelField(content, 'Budget', `${fmtCurrency(task.max_budget_usd)} · ${task.max_turns || 50} turns max`);
-  }
+  addPanelField(content, 'Budget', `${fmtCurrency(task.max_budget_usd || 0)} · ${task.max_turns || 50} turns max`);
 
   // Governance Section: Reviewers, Approvers, Quality Gates
   const gov = task.governance;
@@ -3398,14 +3418,34 @@ function appendComments(container, comments) {
   }
 }
 
-document.getElementById('panel-close').addEventListener('click', () => {
-  document.getElementById('detail-panel').classList.add('hidden');
+function closeDetailPanel() {
+  const panel = document.getElementById('detail-panel');
+  if (!panel || panel.classList.contains('hidden')) return;
+  panel.classList.add('hidden');
   stopChatPoll();
   state.openDetailTaskId = null;
   if (window.location.pathname.startsWith('/tasks/') || window.location.pathname.startsWith('/issues/')) {
     const activeBtn = document.querySelector('.sidebar-item.active');
     const viewName = activeBtn?.dataset?.view || 'overview';
     navigateTo(viewName, state.currentOrgDetail, true);
+  }
+}
+
+document.getElementById('panel-close').addEventListener('click', closeDetailPanel);
+
+document.addEventListener('click', (e) => {
+  const panel = document.getElementById('detail-panel');
+  if (!panel || panel.classList.contains('hidden')) return;
+  if (panel.contains(e.target)) return;
+  if (e.target.closest('#panel-close')) return;
+  // If clicked on an element intended to open/switch detail, ignore so it doesn't immediately close
+  if (e.target.closest('.task-row, .task-card, .timeline-task, .clickable-task, [data-task-id]')) return;
+  closeDetailPanel();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeDetailPanel();
   }
 });
 
@@ -3618,6 +3658,7 @@ function renderChecklist() {
 
   for (const [sectionName, items] of Object.entries(sections)) {
     const sec = el('div', 'checklist-section dashboard-section');
+    sec.dataset.section = sectionName;
     const isFinished = items.every(i => i.status !== 'pending');
     const isCollapsed = getSectionCollapsed(sectionName, isFinished);
 
@@ -3662,7 +3703,7 @@ function renderChecklist() {
         requestAnimationFrame(() => {
           secBody.querySelectorAll('.checklist-notes-input').forEach(ta => {
             ta.style.height = 'auto';
-            ta.style.height = Math.max(36, ta.scrollHeight) + 'px';
+            ta.style.height = Math.max(48, ta.scrollHeight) + 'px';
           });
         });
       } else {
@@ -3679,7 +3720,7 @@ function renderChecklist() {
     container.querySelectorAll('.checklist-notes-input').forEach(ta => {
       if (ta.offsetParent !== null) {
         ta.style.height = 'auto';
-        ta.style.height = Math.max(36, ta.scrollHeight) + 'px';
+        ta.style.height = Math.max(48, ta.scrollHeight) + 'px';
       }
     });
   });
@@ -3699,6 +3740,7 @@ function buildChecklistItem(item) {
     ['not_done', '!', 'Not Done'],
   ]) {
     const btn = el('button', `cl-btn${item.status === status ? ' active-' + status : ''}`, icon);
+    btn.dataset.status = status;
     btn.title = label;
     btn.addEventListener('click', () => updateChecklistStatus(item.id, status));
     btnCol.appendChild(btn);
@@ -3722,18 +3764,17 @@ function buildChecklistItem(item) {
   const notesInput = el('textarea', 'checklist-notes-input');
   notesInput.value = item.notes || '';
   notesInput.placeholder = 'Add a note…';
-  const lineCount = (item.notes || '').split('\n').length;
-  notesInput.rows = Math.max(2, Math.min(12, lineCount));
+  const rawNote = item.notes || '';
+  const lineCount = Math.max(rawNote.split('\n').length, Math.ceil(rawNote.length / 50));
+  notesInput.rows = Math.max(2, Math.min(15, lineCount));
   const autoResize = () => {
-    if (notesInput.offsetParent !== null || notesInput.scrollHeight > 36) {
-      notesInput.style.height = 'auto';
-      notesInput.style.height = Math.max(36, notesInput.scrollHeight) + 'px';
-    }
+    notesInput.style.height = 'auto';
+    notesInput.style.height = Math.max(48, notesInput.scrollHeight) + 'px';
   };
   notesInput.addEventListener('input', autoResize);
   notesInput.addEventListener('focus', autoResize);
   notesInput.addEventListener('blur', () => {
-    autoResize();
+    // Note: NEVER collapse height on blur
     const val = (notesInput.value || '').trim();
     if (val !== (item.notes || '').trim()) {
       updateChecklistNotes(item.id, notesInput.value);
@@ -3791,6 +3832,24 @@ function buildChecklistItem(item) {
   return row;
 }
 
+function updateSectionCounts(sectionName) {
+  const sec = document.querySelector(`.checklist-section[data-section="${CSS.escape(sectionName)}"]`);
+  if (!sec) return;
+  const items = checklistItems.filter(i => i.section === sectionName);
+  const passCount = items.filter(i => i.status === 'pass').length;
+  const partialCount = items.filter(i => i.status === 'partial').length;
+  const failCount = items.filter(i => i.status === 'fail').length;
+  const notDoneCount = items.filter(i => i.status === 'not_done').length;
+  const badges = sec.querySelector('.checklist-section-badges');
+  if (badges) {
+    if (passCount || partialCount || failCount || notDoneCount) {
+      badges.innerHTML = `✅ ${passCount}${partialCount ? ` ◐ ${partialCount}` : ''} ❌ ${failCount}${notDoneCount ? ` ⚠️ ${notDoneCount}` : ''}`;
+    } else {
+      badges.innerHTML = '';
+    }
+  }
+}
+
 async function updateChecklistStatus(id, status) {
   const idx = checklistItems.findIndex(i => i.id === id);
   if (idx === -1) return;
@@ -3806,7 +3865,20 @@ async function updateChecklistStatus(id, status) {
     if (!r.ok) throw new Error(await r.text());
     const updated = await r.json();
     checklistItems[idx] = updated;
-    renderChecklist();
+
+    if (row) {
+      row.querySelectorAll('.cl-btn').forEach(btn => {
+        btn.className = `cl-btn${btn.dataset.status === updated.status ? ' active-' + updated.status : ''}`;
+      });
+      const titleEl = row.querySelector('.checklist-title');
+      if (titleEl) {
+        titleEl.className = `checklist-title${updated.status !== 'pending' ? ' status-' + updated.status : ''}`;
+      }
+      const histBtn = row.querySelector('.checklist-history-toggle');
+      if (histBtn) histBtn.textContent = `v${updated.version}`;
+    }
+    updateChecklistProgress();
+    updateSectionCounts(checklistItems[idx].section);
   } catch (err) {
     console.error('checklist update failed', err);
   }

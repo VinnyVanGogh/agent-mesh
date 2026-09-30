@@ -1465,7 +1465,7 @@ html, body {
 .checklist-notes-input {
   flex: 1; background: var(--bg-input, var(--bg-card)); border: 1px solid var(--border);
   border-radius: 4px; color: var(--fg); font-size: 12px; padding: 6px 8px;
-  resize: vertical; min-height: 36px; max-height: none; line-height: 1.4; overflow-y: auto;
+  resize: vertical; min-height: 48px; max-height: none; line-height: 1.4; overflow-y: auto;
   box-sizing: border-box; font-family: inherit; transition: border-color 0.15s ease;
   field-sizing: content;
 }
