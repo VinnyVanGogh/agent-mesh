@@ -79,9 +79,9 @@ type Usage struct {
 	ThinkingTokens      int64 `json:"thinking_tokens"`
 }
 
-// adapterFor returns the adapter for a provider key. Unknown providers route to
+// AdapterFor returns the adapter for a provider key. Unknown providers route to
 // agy, matching the historical default of the adapter command.
-func adapterFor(provider string) ProviderAdapter {
+func AdapterFor(provider string) ProviderAdapter {
 	switch provider {
 	case "claude":
 		return ClaudeAdapter{}
@@ -94,6 +94,10 @@ func adapterFor(provider string) ProviderAdapter {
 	default:
 		return AgyAdapter{}
 	}
+}
+
+func adapterFor(provider string) ProviderAdapter {
+	return AdapterFor(provider)
 }
 
 // Adapters returns every built-in provider adapter.
