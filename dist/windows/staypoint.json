@@ -6,11 +6,11 @@
   "architecture": {
     "64bit": {
       "url": "https://github.com/VinnyVanGogh/staypoint/releases/download/v0.3.0/staypoint_0.3.0_windows_amd64.zip",
-      "hash": "PLACEHOLDER_SHA256_AMD64"
+      "hash": "9d3e854f8b6e20422554ae56dead36a68f44acdf30be48011a0ffb8d0dea0f25"
     },
     "arm64": {
       "url": "https://github.com/VinnyVanGogh/staypoint/releases/download/v0.3.0/staypoint_0.3.0_windows_arm64.zip",
-      "hash": "PLACEHOLDER_SHA256_ARM64"
+      "hash": "b745693f7f0620b79138e638e206b678bc4ea3591e644e6d0ec1a66f986621dc"
     }
   },
   "bin": [
