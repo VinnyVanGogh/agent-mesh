@@ -204,6 +204,7 @@ CREATE TABLE IF NOT EXISTS checklist_items (
     title       TEXT NOT NULL,
     description TEXT,
     how_to_test TEXT,
+    contract    TEXT,
     status      TEXT NOT NULL DEFAULT 'pending'
                 CHECK (status IN ('pending','pass','fail','skip','not_done')),
     notes       TEXT,
@@ -586,6 +587,19 @@ var Migrations = []Migration{
 				if _, err := conn.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 					return err
 				}
+			}
+			return nil
+		},
+	},
+	{
+		Version: 9,
+		Name:    "checklist_contract",
+		Up: func(conn *sql.DB) error {
+			// Add contract column if not present
+			var count int
+			_ = conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('checklist_items') WHERE name='contract'").Scan(&count)
+			if count == 0 {
+				_, _ = conn.Exec("ALTER TABLE checklist_items ADD COLUMN contract TEXT;")
 			}
 			return nil
 		},

@@ -7,7 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/VinnyVanGogh/staypoint/internal/checklist"
+	"github.com/VinnyVanGogh/staypoint/internal/paperclip"
 )
 
 // ChecklistHandler serves the /api/checklist endpoints.
@@ -33,6 +34,7 @@ func ensureChecklistTables(db *sql.DB) error {
 		title       TEXT NOT NULL,
 		description TEXT,
 		how_to_test TEXT,
+		contract    TEXT,
 		status      TEXT NOT NULL DEFAULT 'pending'
 		            CHECK (status IN ('pending','pass','partial','fail','skip','not_done')),
 		notes       TEXT,
@@ -55,6 +57,13 @@ func ensureChecklistTables(db *sql.DB) error {
 		return err
 	}
 
+	// Idempotently add contract column if missing
+	var contractColCount int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('checklist_items') WHERE name='contract'").Scan(&contractColCount)
+	if contractColCount == 0 {
+		_, _ = db.Exec("ALTER TABLE checklist_items ADD COLUMN contract TEXT;")
+	}
+
 	// Idempotently check and migrate CHECK constraint if partial is missing
 	var sqlDef string
 	_ = db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='checklist_items'`).Scan(&sqlDef)
@@ -68,6 +77,7 @@ func ensureChecklistTables(db *sql.DB) error {
 				title       TEXT NOT NULL,
 				description TEXT,
 				how_to_test TEXT,
+				contract    TEXT,
 				status      TEXT NOT NULL DEFAULT 'pending'
 				            CHECK (status IN ('pending','pass','partial','fail','skip','not_done')),
 				notes       TEXT,
@@ -75,7 +85,8 @@ func ensureChecklistTables(db *sql.DB) error {
 				created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
 				updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 			);
-			INSERT INTO checklist_items_new SELECT * FROM checklist_items;
+			INSERT INTO checklist_items_new (id, sprint, section, title, description, how_to_test, contract, status, notes, version, created_at, updated_at)
+			SELECT id, sprint, section, title, description, how_to_test, contract, status, notes, version, created_at, updated_at FROM checklist_items;
 			DROP TABLE checklist_items;
 			ALTER TABLE checklist_items_new RENAME TO checklist_items;
 			CREATE INDEX IF NOT EXISTS idx_checklist_sprint_section ON checklist_items (sprint, section);
@@ -87,17 +98,18 @@ func ensureChecklistTables(db *sql.DB) error {
 
 // ChecklistItem represents one verifiable claim.
 type ChecklistItem struct {
-	ID          string  `json:"id"`
-	Sprint      string  `json:"sprint"`
-	Section     string  `json:"section"`
-	Title       string  `json:"title"`
-	Description string  `json:"description,omitempty"`
-	HowToTest   string  `json:"how_to_test,omitempty"`
-	Status      string  `json:"status"`   // pending | pass | fail | skip | not_done
-	Notes       string  `json:"notes"`
-	Version     int     `json:"version"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
+	ID          string `json:"id"`
+	Sprint      string `json:"sprint"`
+	Section     string `json:"section"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	HowToTest   string `json:"how_to_test,omitempty"`
+	Contract    string `json:"contract,omitempty"`
+	Status      string `json:"status"` // pending | pass | fail | skip | not_done
+	Notes       string `json:"notes"`
+	Version     int    `json:"version"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 // ChecklistHistoryEntry is a single audit record for a status change.
@@ -114,7 +126,7 @@ type ChecklistHistoryEntry struct {
 func (h *ChecklistHandler) ListItems(w http.ResponseWriter, r *http.Request) {
 	_ = ensureChecklistTables(h.db)
 	sprint := r.URL.Query().Get("sprint")
-	query := `SELECT id, sprint, section, title, description, how_to_test, status, notes, version, created_at, updated_at
+	query := `SELECT id, sprint, section, title, description, how_to_test, contract, status, notes, version, created_at, updated_at
 		FROM checklist_items`
 	args := []any{}
 	if sprint != "" {
@@ -133,15 +145,16 @@ func (h *ChecklistHandler) ListItems(w http.ResponseWriter, r *http.Request) {
 	items := []ChecklistItem{}
 	for rows.Next() {
 		var it ChecklistItem
-		var desc, howTo, notes sql.NullString
+		var desc, howTo, contract, notes sql.NullString
 		if err := rows.Scan(&it.ID, &it.Sprint, &it.Section, &it.Title,
-			&desc, &howTo, &it.Status, &notes, &it.Version,
+			&desc, &howTo, &contract, &it.Status, &notes, &it.Version,
 			&it.CreatedAt, &it.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		it.Description = desc.String
 		it.HowToTest = howTo.String
+		it.Contract = contract.String
 		it.Notes = notes.String
 		items = append(items, it)
 	}
@@ -175,8 +188,9 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Status string `json:"status"`
-		Notes  string `json:"notes"`
+		Status   string `json:"status"`
+		Notes    string `json:"notes"`
+		Contract string `json:"contract"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json: "+err.Error())
@@ -196,11 +210,11 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch current item to bump version
 	var current ChecklistItem
-	var desc, howTo, notes sql.NullString
+	var desc, howTo, contract, notes sql.NullString
 	err := h.db.QueryRowContext(r.Context(),
-		`SELECT id, sprint, section, title, description, how_to_test, status, notes, version, created_at, updated_at FROM checklist_items WHERE id = ?`, id).
+		`SELECT id, sprint, section, title, description, how_to_test, contract, status, notes, version, created_at, updated_at FROM checklist_items WHERE id = ?`, id).
 		Scan(&current.ID, &current.Sprint, &current.Section, &current.Title,
-			&desc, &howTo, &current.Status, &notes, &current.Version,
+			&desc, &howTo, &contract, &current.Status, &notes, &current.Version,
 			&current.CreatedAt, &current.UpdatedAt)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, "item not found")
@@ -212,6 +226,7 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	}
 	current.Description = desc.String
 	current.HowToTest = howTo.String
+	current.Contract = contract.String
 	current.Notes = notes.String
 
 	newStatus := current.Status
@@ -221,6 +236,10 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	newNotes := current.Notes
 	if body.Notes != "" {
 		newNotes = body.Notes
+	}
+	newContract := current.Contract
+	if body.Contract != "" {
+		newContract = body.Contract
 	}
 
 	tx, err := h.db.BeginTx(r.Context(), nil)
@@ -232,8 +251,8 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 
 	newVersion := current.Version + 1
 	if _, err := tx.ExecContext(r.Context(),
-		`UPDATE checklist_items SET status=?, notes=?, version=?, updated_at=? WHERE id=?`,
-		newStatus, newNotes, newVersion, now, id); err != nil {
+		`UPDATE checklist_items SET status=?, notes=?, contract=?, version=?, updated_at=? WHERE id=?`,
+		newStatus, newNotes, newContract, newVersion, now, id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -249,6 +268,8 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	current.Status = newStatus
+	current.Notes = newNotes
+	current.Contract = newContract
 	current.Notes = newNotes
 	current.Version = newVersion
 	current.UpdatedAt = now
@@ -290,200 +311,70 @@ func (h *ChecklistHandler) Seed(w http.ResponseWriter, r *http.Request) {
 		sprint = "STA-168"
 	}
 
-	// Skip if rows already exist for this sprint (unless force)
-	var count int
-	_ = h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM checklist_items WHERE sprint=?`, sprint).Scan(&count)
-	if count > 0 && !body.Force {
-		writeJSON(w, map[string]any{"seeded": 0, "skipped": count})
+	seeded, skipped, err := checklist.Seed(r.Context(), h.db, sprint, body.Force)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "seed failed: "+err.Error())
 		return
 	}
+	writeJSON(w, map[string]any{"seeded": seeded, "skipped": skipped})
+}
 
-	items := defaultChecklist(sprint)
-	tx, err := h.db.BeginTx(r.Context(), nil)
+// POST /api/checklist/evaluate — evaluates machine-verifiable contracts and auto-downgrades regressed items
+func (h *ChecklistHandler) Evaluate(w http.ResponseWriter, r *http.Request) {
+	_ = ensureChecklistTables(h.db)
+	sprint := r.URL.Query().Get("sprint")
+	if sprint == "" {
+		sprint = "STA-168"
+	}
+
+	downgrade := true
+	if d := r.URL.Query().Get("downgrade"); d == "false" || d == "0" {
+		downgrade = false
+	}
+	notify := false
+	if n := r.URL.Query().Get("notify_paperclip"); n == "true" || n == "1" {
+		notify = true
+	}
+
+	opts := checklist.EvaluateOptions{
+		RepoRoot:        ".",
+		BaseURL:         "http://" + r.Host,
+		HTTPClient:      &http.Client{Timeout: 10 * time.Second},
+		Downgrade:       downgrade,
+		NotifyPaperclip: notify,
+		BroadcastFn: func(event string, data any) {
+			if h.hub != nil {
+				h.hub.Publish(event, data)
+			}
+		},
+	}
+	if notify {
+		opts.PaperclipClient = paperclip.NewClient("", "")
+	}
+
+	summary, err := checklist.EvaluateSprint(r.Context(), h.db, sprint, opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	defer tx.Rollback()
-
-	if body.Force {
-		if _, err := tx.ExecContext(r.Context(), `DELETE FROM checklist_items WHERE sprint=?`, sprint); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to reset sprint items: "+err.Error())
-			return
-		}
-	}
-
-	for _, it := range items {
-		if it.ID == "" {
-			it.ID = uuid.NewSHA1(uuid.NameSpaceURL, []byte(sprint+":"+it.Section+":"+it.Title)).String()
-		}
-		if _, err := tx.ExecContext(r.Context(),
-			`INSERT OR IGNORE INTO checklist_items (id, sprint, section, title, description, how_to_test, status) VALUES (?,?,?,?,?,?,?)`,
-			it.ID, sprint, it.Section, it.Title, it.Description, it.HowToTest, "pending",
-		); err != nil {
-			writeError(w, http.StatusInternalServerError, "seed failed: "+err.Error())
-			return
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, map[string]any{"seeded": len(items)})
+	writeJSON(w, summary)
 }
 
 // defaultChecklist returns the STA-168 verification items.
 func defaultChecklist(sprint string) []ChecklistItem {
-	type row struct{ section, title, desc, howTo string }
-	rows := []row{
-		// Infrastructure
-		{"Infrastructure", "Binary rebuilt from feat/webui-cookie-auth (e3a39ba)",
-			"The go:embed binary must include all STA-168 UI changes.",
-			"ls -la ~/.local/bin/staypointd — mtime should be Sep 30 09:52+"},
-		{"Infrastructure", "Daemon restarted with new binary (PID 34952+)",
-			"Old PID 73862 should no longer be active.",
-			"lsof -i :41421 — PID should be 34952 or newer"},
-		{"Infrastructure", "go build ./... passes clean",
-			"No compilation errors in any package.",
-			"cd ~/Documents/dev/agent-mesh && go build ./... — exit 0"},
-		{"Infrastructure", "feat/webui-cookie-auth pushed to remote (e3a39ba)",
-			"Remote branch should include STA-168 commit.",
-			"git log --oneline -1 in agent-mesh repo"},
-
-		// Bug 1
-		{"Bug 1 — Two Claude Accounts", "Quota section shows Claude (Work) card",
-			"Separate card for work seat Claude pool.",
-			"All Organizations view → 5-Hour Rolling Quota section → look for 'Claude (Work)'"},
-		{"Bug 1 — Two Claude Accounts", "Quota section shows Claude (Personal) card",
-			"Separate card for personal seat Claude pool.",
-			"Same section → look for 'Claude (Personal)'"},
-		{"Bug 1 — Two Claude Accounts", "Old combined 'Claude' card absent when split cards present",
-			"Should not show a third duplicate card.",
-			"Count cards in quota grid — should be 2 Claude cards not 3"},
-
-		// Bug 2
-		{"Bug 2 — Blocked via TUI", "Blocked task does NOT show 'Blocked via TUI' in detail panel",
-			"normalizeBlockReason() strips the literal TUI string.",
-			"Open any blocked task → detail panel → look for orange blocker tag"},
-		{"Bug 2 — Blocked via TUI", "Blocked reason shows generic text or real reason",
-			"Should show 'Blocked — no specific reason recorded' or actual reason.",
-			"Same as above — check text in blocker tag"},
-
-		// Bug 3 (not fixed)
-		{"Bug 3 — Gemini Cost (NOT FIXED)", "Cost page shows Gemini spend > $0",
-			"Telemetry watcher does not yet record Gemini cost_usd. This item should FAIL until fixed.",
-			"Cost & Accounting → Spend by Provider → Gemini row"},
-
-		// Bug 4
-		{"Bug 4 — PDF Spinner", "Report download button shows spinner while downloading",
-			"Boss Card → Download Report dropdown → click a type → button should disable + spin.",
-			"Boss Card view → Download Report → Combined Fleet — watch button state"},
-
-		// Bug 5
-		{"Bug 5 — Spend Breakdown", "Cost page has per-model spend card",
-			"Spend by Model card with bar charts.",
-			"Sidebar → Cost & Accounting → Spend by Model"},
-		{"Bug 5 — Spend Breakdown", "Cost page has per-organization spend card",
-			"Spend by Organization card with bar charts.",
-			"Sidebar → Cost & Accounting → Spend by Organization"},
-		{"Bug 5 — Spend Breakdown", "Cost page has per-provider spend card",
-			"Spend by Provider card — Claude, Gemini, OpenAI.",
-			"Sidebar → Cost & Accounting → Spend by Provider"},
-		{"Bug 5 — Spend Breakdown", "Cost page has Top Tasks by Spend card",
-			"Lists tasks with spent_usd > 0.",
-			"Sidebar → Cost & Accounting → Top Tasks by Spend"},
-
-		// Projects
-		{"Projects Page", "Sidebar → Projects navigates to projects view", "", ""},
-		{"Projects Page", "Tasks grouped by project field into cards", "", ""},
-		{"Projects Page", "Project card shows running / blocked / done / spend stats", "", ""},
-		{"Projects Page", "Project card shows preview of up to 5 tasks", "", ""},
-		{"Projects Page", "Clicking a task in preview opens detail panel", "", ""},
-		{"Projects Page", "Org filter dropdown narrows projects", "", ""},
-		{"Projects Page", "Tasks with no project field group under (No Project)", "", ""},
-
-		// Agents
-		{"Agents Page", "Sidebar → Agents navigates to agents view", "", ""},
-		{"Agents Page", "Agent cards show provider badge", "", ""},
-		{"Agents Page", "Agent cards show status pill", "", ""},
-		{"Agents Page", "Agent cards show 5h quota bar", "", ""},
-		{"Agents Page", "Agent cards show last heartbeat time", "", ""},
-		{"Agents Page", "Search input filters agents by name/role", "", ""},
-		{"Agents Page", "Provider filter dropdown works", "", ""},
-
-		// Recent Tasks
-		{"Recent Tasks Page", "Sidebar → Recent Tasks navigates to activity feed", "", ""},
-		{"Recent Tasks Page", "Feed sorted by updated_at descending", "", ""},
-		{"Recent Tasks Page", "Dots colored by status (cyan/red/green)", "", ""},
-		{"Recent Tasks Page", "Clicking task title opens detail panel", "", ""},
-
-		// Task Status
-		{"Task Status Page", "Sidebar → Task Status shows 9-column table", "", ""},
-		{"Task Status Page", "Table has Identifier / Task / Org / Project / Assignee / Status / Priority / Cost / Updated", "", ""},
-		{"Task Status Page", "Search input filters table", "", ""},
-		{"Task Status Page", "Org filter works", "", ""},
-		{"Task Status Page", "Status filter works", "", ""},
-		{"Task Status Page", "Row click opens detail panel", "", ""},
-
-		// Cost
-		{"Cost & Accounting Page", "Sidebar → Cost & Accounting navigates", "", ""},
-		{"Cost & Accounting Page", "KPI row shows 5 metrics", "", ""},
-		{"Cost & Accounting Page", "All 4 spend cards render", "", ""},
-
-		// Settings
-		{"Settings Page", "Sidebar → Settings navigates", "", ""},
-		{"Settings Page", "Connection section shows endpoint + auth + SSE status", "", ""},
-		{"Settings Page", "Provider Accounts section lists quota pools", "", ""},
-		{"Settings Page", "Fleet Info section shows counts", "", ""},
-
-		// Detail Panel
-		{"Detail Panel", "Clicking task opens right-side detail panel", "", ""},
-		{"Detail Panel", "Panel shows title / status / identifier / priority / org", "", ""},
-		{"Detail Panel", "Panel renders description as markdown", "", ""},
-		{"Detail Panel", "Panel shows Stage / Assignee / Project / Goal / Repo / Labels", "", ""},
-		{"Detail Panel", "Panel shows Spend and Budget if present", "", ""},
-		{"Detail Panel", "Panel shows normalized blocker tag for blocked tasks", "", ""},
-		{"Detail Panel", "Panel shows timestamps", "", ""},
-		{"Detail Panel", "Chat section shows comments thread", "", ""},
-		{"Detail Panel", "Chat compose box sends message (⌘↵)", "", ""},
-		{"Detail Panel", "Close button (×) works", "", ""},
-
-		// Stubs
-		{"Phase 2 Stubs", "Sidebar → Routines shows stub page with 'Coming in Phase 2'", "", ""},
-		{"Phase 2 Stubs", "Sidebar → Artifacts shows stub page", "", ""},
-		{"Phase 2 Stubs", "Sidebar → Skills shows stub page", "", ""},
-		{"Phase 2 Stubs", "Sidebar → Connectors shows stub page", "", ""},
-		{"Phase 2 Stubs", "Sidebar → Audit shows stub page", "", ""},
-
-		// Architecture
-		{"Architecture (NOT DONE — STA-167)", "Web UI reads tasks from native StayPoint SQLite",
-			"Currently Paperclip-proxied. handlers_telemetry.go GetFleetTask/GetFleetTaskComments forward to 127.0.0.1:3100. This item should FAIL until STA-167 is done.",
-			"Check handlers_telemetry.go — proxyPaperclip() must be replaced"},
-
-		// Regression
-		{"Regression — Existing Views", "All Organizations overview loads with KPI cards", "", ""},
-		{"Regression — Existing Views", "5-Hour Quota section renders gauge cards", "", ""},
-		{"Regression — Existing Views", "Organization cards grid renders", "", ""},
-		{"Regression — Existing Views", "Clicking org card opens org detail", "", ""},
-		{"Regression — Existing Views", "Org detail shows tasks / agents / spend", "", ""},
-		{"Regression — Existing Views", "Kanban board renders 4 columns", "", ""},
-		{"Regression — Existing Views", "Boss Card renders stat grid + download button", "", ""},
-		{"Regression — Existing Views", "SSE live badge shows 'live'", "", ""},
-		{"Regression — Existing Views", "Quick filter buttons work in overview", "", ""},
-		{"Regression — Existing Views", "Sidebar org tree populates", "", ""},
-		{"Regression — Existing Views", "Clicking org in sidebar tree opens org detail", "", ""},
-	}
-
-	out := make([]ChecklistItem, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, ChecklistItem{
-			ID:          uuid.NewString(),
-			Sprint:      sprint,
-			Section:     r.section,
-			Title:       r.title,
-			Description: r.desc,
-			HowToTest:   r.howTo,
-		})
+	items := checklist.DefaultChecklist(sprint)
+	out := make([]ChecklistItem, len(items))
+	for i, it := range items {
+		out[i] = ChecklistItem{
+			ID:          it.ID,
+			Sprint:      it.Sprint,
+			Section:     it.Section,
+			Title:       it.Title,
+			Description: it.Description,
+			HowToTest:   it.HowToTest,
+			Contract:    it.Contract,
+			Status:      it.Status,
+		}
 	}
 	return out
 }

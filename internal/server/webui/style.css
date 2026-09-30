@@ -1443,6 +1443,21 @@ html, body {
 .checklist-title.status-fail    { color: var(--red); }
 .checklist-title.status-skip    { color: var(--muted); text-decoration: line-through; }
 .checklist-title.status-not_done { color: var(--amber); }
+.checklist-contract-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  border-radius: 4px;
+  cursor: help;
+  vertical-align: middle;
+}
 .checklist-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .checklist-howto { font-size: 11px; color: var(--cyan); font-family: monospace; margin-top: 3px; }
 .checklist-notes-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }

@@ -130,6 +130,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("PATCH /api/checklist/{id}", checklistH.UpdateItem)
 		mux.HandleFunc("GET /api/checklist/{id}/history", checklistH.GetHistory)
 		mux.HandleFunc("POST /api/checklist/seed", checklistH.Seed)
+		mux.HandleFunc("POST /api/checklist/evaluate", checklistH.Evaluate)
 	}
 
 	// Embedded web UI (must be registered last so /api/* patterns take precedence)
