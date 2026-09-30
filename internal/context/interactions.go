@@ -287,9 +287,19 @@ func CreateInteraction(db *sql.DB, in *TaskInteraction) (*TaskInteraction, error
 
 // ResolveInteraction marks an interaction as accepted, rejected, cancelled, or superseded.
 func ResolveInteraction(db *sql.DB, interactionID int, status string, response any) (*TaskInteraction, error) {
+	switch status {
+	case InteractionStatusAccepted, InteractionStatusRejected, InteractionStatusCancelled, InteractionStatusSuperseded:
+	default:
+		return nil, fmt.Errorf("invalid terminal status %q", status)
+	}
+
 	existing, err := GetInteraction(db, interactionID)
 	if err != nil {
 		return nil, err
+	}
+
+	if existing.Status != InteractionStatusPending {
+		return nil, fmt.Errorf("interaction #%d already resolved (status: %s)", existing.ID, existing.Status)
 	}
 
 	var respJSON string

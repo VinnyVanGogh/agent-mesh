@@ -3,6 +3,8 @@ package context
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -378,5 +380,43 @@ func TestResolveInteraction(t *testing.T) {
 	}
 	if len(parsedResp.AcceptedTasks) != 1 || parsedResp.AcceptedTasks[0].ID != "t1" {
 		t.Fatalf("unexpected response contents: %+v", parsedResp)
+	}
+
+	// 1. Attempting to resolve an already resolved interaction must fail
+	_, err = ResolveInteraction(testDB, in.ID, InteractionStatusRejected, nil)
+	if err == nil {
+		t.Fatalf("expected error resolving already resolved interaction")
+	}
+	expectedErr := fmt.Sprintf("interaction #%d already resolved (status: accepted)", in.ID)
+	if err.Error() != expectedErr {
+		t.Fatalf("expected error %q, got %q", expectedErr, err.Error())
+	}
+
+	// 2. Creating another pending interaction to test invalid status validation
+	in2, err := CreateInteraction(testDB, &TaskInteraction{
+		TaskID:          task.ID,
+		InteractionKind: KindSuggestTasks,
+		Payload:         string(pBytes),
+	})
+	if err != nil {
+		t.Fatalf("failed to create interaction: %v", err)
+	}
+
+	// Attempting to resolve with invalid status string
+	_, err = ResolveInteraction(testDB, in2.ID, "unknown_status", nil)
+	if err == nil {
+		t.Fatalf("expected error resolving with invalid status")
+	}
+	if !strings.Contains(err.Error(), "invalid terminal status") {
+		t.Fatalf("expected 'invalid terminal status' error, got %v", err)
+	}
+
+	// Attempting to resolve with "pending" (not a terminal status)
+	_, err = ResolveInteraction(testDB, in2.ID, InteractionStatusPending, nil)
+	if err == nil {
+		t.Fatalf("expected error resolving with pending status")
+	}
+	if !strings.Contains(err.Error(), "invalid terminal status") {
+		t.Fatalf("expected 'invalid terminal status' error, got %v", err)
 	}
 }

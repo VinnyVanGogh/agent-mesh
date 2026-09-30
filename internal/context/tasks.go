@@ -235,7 +235,8 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		query = `
 			SELECT id, name, repo_path, git_branch, status, account_role,
 			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-			       organization, project, is_blocked, block_reason, created_at, updated_at, deleted_at
+			       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id,
+			       is_blocked, block_reason, created_at, updated_at, deleted_at
 			FROM tasks
 			WHERE status != 'soft_deleted'
 			ORDER BY created_at DESC
@@ -244,7 +245,8 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		query = `
 			SELECT id, name, repo_path, git_branch, status, account_role,
 			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-			       organization, project, is_blocked, block_reason, created_at, updated_at, deleted_at
+			       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id,
+			       is_blocked, block_reason, created_at, updated_at, deleted_at
 			FROM tasks
 			WHERE status = 'active'
 			ORDER BY created_at DESC

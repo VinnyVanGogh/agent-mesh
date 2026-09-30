@@ -150,7 +150,7 @@ func TestAskQuestionsCard_KeyboardControls(t *testing.T) {
 	if len(answers.Answers[0].SelectedOptions) != 1 || answers.Answers[0].SelectedOptions[0] != "Microservices" {
 		t.Fatalf("unexpected answer for Q1: %+v", answers.Answers[0])
 	}
-	if len(answers.Answers[1].SelectedOptions) != 2 {
+	if len(answers.Answers[1].SelectedOptions) != 2 || answers.Answers[1].SelectedOptions[0] != "macOS" || answers.Answers[1].SelectedOptions[1] != "Linux" {
 		t.Fatalf("unexpected answer for Q2: %+v", answers.Answers[1])
 	}
 

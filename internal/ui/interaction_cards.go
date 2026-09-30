@@ -371,8 +371,8 @@ func (m AskQuestionsCardModel) GetAnswers() context.AskQuestionsResponse {
 	var resp context.AskQuestionsResponse
 	for i, q := range m.Questions {
 		var selected []string
-		for optIdx, isSel := range m.Selections[i] {
-			if isSel && optIdx < len(q.Options) {
+		for optIdx := 0; optIdx < len(q.Options); optIdx++ {
+			if m.Selections[i][optIdx] {
 				selected = append(selected, q.Options[optIdx])
 			}
 		}
