@@ -704,3 +704,44 @@ func TestServer_REST_Telemetry(t *testing.T) {
 		t.Fatalf("expected pool_key work_claude, got: %v", tel.QuotaPools[0]["pool_key"])
 	}
 }
+
+func TestServer_REST_FleetOverview(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	client := &http.Client{}
+
+	// Seed task across organization
+	_, err := database.Exec(`
+		INSERT INTO tasks (id, name, repo_path, organization, project, status, execution_stage, is_blocked, spent_usd, spent_tokens)
+		VALUES
+		('task-f1', 'Multi-Org Fleet Feature', '/repo/sta', 'StayPoint', 'Core', 'active', 'in_progress', 0, 15.0, 60000),
+		('task-f2', 'Enterprise Sync', '/repo/man', 'Managed Solution', 'Cloud', 'active', 'in_progress', 0, 30.0, 120000);
+	`)
+	if err != nil {
+		t.Fatalf("insert tasks failed: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL()+"/api/fleet/overview", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("get fleet overview failed: %v, status: %d", err, resp.StatusCode)
+	}
+	defer resp.Body.Close()
+
+	var overview map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&overview); err != nil {
+		t.Fatalf("failed to decode fleet overview: %v", err)
+	}
+
+	if overview["global_tasks"] == nil {
+		t.Errorf("expected global_tasks in fleet overview")
+	}
+	if overview["provider_quotas"] == nil {
+		t.Errorf("expected provider_quotas in fleet overview")
+	}
+	if overview["organizations"] == nil {
+		t.Errorf("expected organizations in fleet overview")
+	}
+}
+

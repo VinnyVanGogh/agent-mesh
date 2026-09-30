@@ -97,9 +97,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("POST /api/sessions/{id}/heartbeat", sessionsH.Heartbeat)
 		mux.HandleFunc("POST /api/sessions/{id}/close", sessionsH.CloseSession)
 
-		// Telemetry REST API
-		telemetryH := NewTelemetryHandler(s.opts.DB, s.hub)
+		// Telemetry & Fleet REST API
+		telemetryH := NewTelemetryHandler(s.opts.DB, s.hub, s.opts.TelemetryDBPath)
 		mux.HandleFunc("GET /api/telemetry", telemetryH.GetTelemetry)
+		mux.HandleFunc("GET /api/fleet/overview", telemetryH.GetFleetOverview)
 	}
 
 	// Embedded web UI (must be registered last so /api/* patterns take precedence)

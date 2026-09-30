@@ -3,17 +3,25 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/VinnyVanGogh/staypoint/internal/fleet"
 )
 
 type TelemetryHandler struct {
-	db  *sql.DB
-	hub *EventHub
+	db       *sql.DB
+	hub      *EventHub
+	fleetAgg *fleet.Aggregator
 }
 
-func NewTelemetryHandler(db *sql.DB, hub *EventHub) *TelemetryHandler {
-	return &TelemetryHandler{db: db, hub: hub}
+func NewTelemetryHandler(db *sql.DB, hub *EventHub, telemetryDBPath string) *TelemetryHandler {
+	return &TelemetryHandler{
+		db:       db,
+		hub:      hub,
+		fleetAgg: fleet.NewAggregator(db, telemetryDBPath, nil),
+	}
 }
 
 type QuotaWindowRecord struct {
@@ -105,10 +113,34 @@ func (h *TelemetryHandler) GetTelemetry(w http.ResponseWriter, r *http.Request) 
 	_ = row.Scan(&spend.TotalSpentUSD, &spend.TotalSpentTokens, &spend.TotalTurns, &spend.ActiveTasks, &spend.DoneTasks)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	respMap := map[string]any{
 		"timestamp":    time.Now().UTC(),
 		"quota_pools":  windows,
 		"fetch_states": fetchStates,
 		"task_spend":   spend,
-	})
+	}
+
+	if h.fleetAgg != nil {
+		if fleetOverview, err := h.fleetAgg.Gather(r.Context()); err == nil {
+			respMap["fleet"] = fleetOverview
+		}
+	}
+
+	_ = json.NewEncoder(w).Encode(respMap)
 }
+
+// GetFleetOverview handles GET /api/fleet/overview
+func (h *TelemetryHandler) GetFleetOverview(w http.ResponseWriter, r *http.Request) {
+	if h.fleetAgg == nil {
+		http.Error(w, `{"error":"fleet aggregator unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+	overview, err := h.fleetAgg.Gather(r.Context())
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(overview)
+}
+

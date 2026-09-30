@@ -4,23 +4,152 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="staypoint-token" content="{{.Token}}">
-<title>StayPoint</title>
+<title>StayPoint :: Multi-Org Fleet Dashboard</title>
 <link rel="stylesheet" href="/ui/style.css">
 </head>
 <body>
 <header id="header">
-  <span class="logo">StayPoint</span>
+  <div class="logo-group">
+    <span class="logo">StayPoint</span>
+    <span class="badge badge-version">Fleet Pacer</span>
+  </div>
   <nav>
-    <button class="tab active" data-view="kanban">Kanban</button>
-    <button class="tab" data-view="fleet">Fleet</button>
+    <button class="tab active" data-view="overview">All Organizations</button>
+    <button class="tab" data-view="kanban">Kanban</button>
+    <button class="tab" data-view="fleet">Agents & Sessions</button>
     <button class="tab" data-view="boss">Boss Card</button>
   </nav>
-  <span id="conn-badge" class="badge badge-connecting">connecting</span>
+  <div class="header-right">
+    <span id="pacing-pill" class="pill pill-green">Fleet On Track</span>
+    <span id="conn-badge" class="badge badge-connecting">connecting</span>
+  </div>
 </header>
 
 <main>
+  <!-- All Organizations Unified Overview -->
+  <section id="view-overview" class="view active">
+    <!-- Top Level KPI Cards -->
+    <div class="overview-kpis" id="overview-kpis">
+      <div class="kpi-card">
+        <div class="kpi-label">Organizations</div>
+        <div class="kpi-value" id="kpi-orgs">—</div>
+        <div class="kpi-sub" id="kpi-orgs-sub">Active fleet units</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Running Tasks</div>
+        <div class="kpi-value highlight-cyan" id="kpi-running-tasks">—</div>
+        <div class="kpi-sub" id="kpi-tasks-total">across all orgs</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Active Agents</div>
+        <div class="kpi-value highlight-green" id="kpi-active-agents">—</div>
+        <div class="kpi-sub" id="kpi-agents-breakdown">Claude · Gemini · OpenAI</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Total Tokens</div>
+        <div class="kpi-value" id="kpi-total-tokens">—</div>
+        <div class="kpi-sub" id="kpi-tokens-io">In / Out / Cache</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Estimated Spend</div>
+        <div class="kpi-value highlight-gold" id="kpi-total-cost">—</div>
+        <div class="kpi-sub" id="kpi-cost-sub">Ratecard published value</div>
+      </div>
+    </div>
+
+    <!-- Section: 5-Hour Rolling Quotas & Lockout Gauges -->
+    <div class="dashboard-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">5-Hour Rolling Quota & Lockout Indicators</h2>
+          <p class="section-desc">Real-time provider burn rates, 5-hour headroom limits, lockout thresholds, and weekly pacing projection.</p>
+        </div>
+        <span class="refresh-indicator" id="quota-last-refreshed">Updated live</span>
+      </div>
+      <div class="quota-gauges-grid" id="quota-gauges-grid">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+
+    <!-- Section: Organizations & Active Agents Breakdown -->
+    <div class="dashboard-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Organizations & Active Agent Deployment</h2>
+          <p class="section-desc">Fleet deployment by organization and runtime AI model provider.</p>
+        </div>
+      </div>
+      <div class="orgs-grid-container" id="orgs-grid">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+
+    <!-- Section: Token Telemetry & Cost Accounting -->
+    <div class="dashboard-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Token Telemetry & Cost Accounting</h2>
+          <p class="section-desc">Real-time input/output token usage aggregation and spend breakdown across models and organizations.</p>
+        </div>
+      </div>
+      <div class="telemetry-grid">
+        <!-- Left: Aggregation Cards -->
+        <div class="telemetry-col" id="telemetry-aggregates">
+          <!-- Rendered dynamically -->
+        </div>
+        <!-- Right: Model & Org Spend Breakdown -->
+        <div class="telemetry-col" id="telemetry-spend-breakdown">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Section: Global Task Overview Across All Organizations -->
+    <div class="dashboard-section">
+      <div class="section-header">
+        <div>
+          <h2 class="section-title">Global Task Status Overview</h2>
+          <p class="section-desc">Consolidated task status tracking (running, active, stopped, blocked, errored) across every organization.</p>
+        </div>
+        <div class="table-controls">
+          <input type="text" id="task-search-input" placeholder="Filter tasks by name, id, or org…" class="search-input">
+          <select id="task-org-filter" class="select-filter">
+            <option value="all">All Organizations</option>
+          </select>
+          <select id="task-status-filter" class="select-filter">
+            <option value="all">All Statuses</option>
+            <option value="running">Running</option>
+            <option value="active">Active / Todo</option>
+            <option value="blocked">Blocked</option>
+            <option value="stopped">Stopped / Cancelled</option>
+            <option value="errored">Errored</option>
+            <option value="done">Done</option>
+          </select>
+        </div>
+      </div>
+      <div class="task-table-wrapper">
+        <table class="global-task-table">
+          <thead>
+            <tr>
+              <th>Identifier</th>
+              <th>Task</th>
+              <th>Organization</th>
+              <th>Status</th>
+              <th>Priority</th>
+              <th>Cost & Tokens</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody id="global-task-tbody">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <!-- Kanban view -->
-  <section id="view-kanban" class="view active">
+  <section id="view-kanban" class="view">
     <div id="kanban-board" class="kanban-board">
       <div class="kanban-col" data-status="todo">
         <h2 class="col-title">Todo</h2>

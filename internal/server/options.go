@@ -51,6 +51,9 @@ type Options struct {
 
 	// SubscriberBufferSize is the bounded buffer size per SSE client channel (default 128).
 	SubscriberBufferSize int
+
+	// TelemetryDBPath is the path to telemetry.db (default ~/.config/token-telemetry/telemetry.db).
+	TelemetryDBPath string
 }
 
 // GenerateAuthToken generates a 32-byte (64-character hex) cryptographically secure random token.
