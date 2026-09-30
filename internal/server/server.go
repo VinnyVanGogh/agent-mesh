@@ -119,6 +119,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/fleet/tasks/{id}/comments", telemetryH.GetFleetTaskComments)
 		mux.HandleFunc("POST /api/fleet/tasks/{id}/comments", telemetryH.PostFleetTaskComment)
 		mux.HandleFunc("GET /api/report", telemetryH.GetReport)
+
+		// Checklist REST API
+		checklistH := NewChecklistHandler(s.opts.DB, s.hub)
+		mux.HandleFunc("GET /api/checklist", checklistH.ListItems)
+		mux.HandleFunc("GET /api/checklist/sprints", checklistH.ListSprints)
+		mux.HandleFunc("PATCH /api/checklist/{id}", checklistH.UpdateItem)
+		mux.HandleFunc("GET /api/checklist/{id}/history", checklistH.GetHistory)
+		mux.HandleFunc("POST /api/checklist/seed", checklistH.Seed)
 	}
 
 	// Embedded web UI (must be registered last so /api/* patterns take precedence)

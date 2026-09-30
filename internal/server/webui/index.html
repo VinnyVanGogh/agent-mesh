@@ -49,6 +49,9 @@
       <button class="sidebar-item" data-view="boss">
         <span class="sidebar-icon">&#9670;</span>Boss Card
       </button>
+      <button class="sidebar-item" data-view="checklist">
+        <span class="sidebar-icon">&#9745;</span>Checklist
+      </button>
       <div class="sidebar-nav-divider"></div>
       <button class="sidebar-item" data-view="settings">
         <span class="sidebar-icon">&#9881;</span>Settings
@@ -326,6 +329,21 @@
         <h1 class="view-title">Boss Card</h1>
       </div>
       <div id="boss-container" class="boss-container"></div>
+    </section>
+
+    <!-- Checklist page -->
+    <section id="view-checklist" class="view">
+      <div class="view-header">
+        <h1 class="view-title">Verification Checklist</h1>
+        <div class="table-controls">
+          <select id="checklist-sprint-filter" class="select-filter">
+            <option value="STA-168">STA-168</option>
+          </select>
+          <button id="checklist-seed-btn" class="sidebar-filter-btn">Seed / Reset</button>
+          <span id="checklist-progress" class="muted-text"></span>
+        </div>
+      </div>
+      <div id="checklist-container"></div>
     </section>
 
     <!-- Settings page -->

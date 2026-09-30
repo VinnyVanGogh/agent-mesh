@@ -319,6 +319,7 @@ document.querySelectorAll('.sidebar-item').forEach(btn => {
     if (v === 'task-status')  renderTaskStatusPage();
     if (v === 'cost')         renderCostPage();
     if (v === 'settings')     renderSettings();
+    if (v === 'checklist') { loadChecklistSprints().then(() => loadChecklist()); }
   });
 });
 
@@ -1902,6 +1903,239 @@ document.getElementById('agents-search')?.addEventListener('input', (e) => {
 document.getElementById('agents-provider-filter')?.addEventListener('change', (e) => {
   state.agentsFilter.provider = e.target.value;
   renderAgentsPage();
+});
+
+// ── Checklist View ────────────────────────────────────────
+
+let checklistItems = [];   // local cache
+
+async function loadChecklist(sprint) {
+  const s = sprint || document.getElementById('checklist-sprint-filter')?.value || 'STA-168';
+  try {
+    const r = await apiFetch(`/api/checklist?sprint=${encodeURIComponent(s)}`);
+    checklistItems = r.items || [];
+    renderChecklist();
+  } catch (err) {
+    const c = document.getElementById('checklist-container');
+    if (c) c.innerHTML = `<p style="color:var(--red)">Failed to load checklist: ${err.message}. Try seeding first.</p>`;
+  }
+}
+
+async function seedChecklist() {
+  const sprint = document.getElementById('checklist-sprint-filter')?.value || 'STA-168';
+  const btn = document.getElementById('checklist-seed-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Seeding…'; }
+  try {
+    await fetch('/api/checklist/seed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ sprint, force: true }),
+    });
+    await loadChecklist(sprint);
+  } catch (err) {
+    alert('Seed failed: ' + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Seed / Reset'; }
+  }
+}
+
+async function loadChecklistSprints() {
+  try {
+    const r = await apiFetch('/api/checklist/sprints');
+    const sel = document.getElementById('checklist-sprint-filter');
+    if (!sel || !r.sprints?.length) return;
+    sel.innerHTML = '';
+    for (const s of r.sprints) {
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = s;
+      sel.appendChild(opt);
+    }
+  } catch { /* sprints endpoint optional */ }
+}
+
+function renderChecklist() {
+  const container = document.getElementById('checklist-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (!checklistItems.length) {
+    const p = el('p', 'muted-text', 'No checklist items. Click "Seed / Reset" to populate from STA-168.');
+    container.appendChild(p);
+    updateChecklistProgress();
+    return;
+  }
+
+  // Group by section
+  const sections = {};
+  for (const item of checklistItems) {
+    if (!sections[item.section]) sections[item.section] = [];
+    sections[item.section].push(item);
+  }
+
+  // Progress bar
+  const total = checklistItems.length;
+  const done  = checklistItems.filter(i => i.status === 'pass' || i.status === 'fail' || i.status === 'skip').length;
+  const pct   = total ? Math.round(done / total * 100) : 0;
+
+  const progBar = el('div', 'checklist-progress-bar');
+  const progFill = el('div', 'checklist-progress-fill');
+  progFill.style.width = `${pct}%`;
+  progBar.appendChild(progFill);
+  container.appendChild(progBar);
+
+  const progEl = document.getElementById('checklist-progress');
+  if (progEl) progEl.textContent = `${done}/${total} reviewed (${pct}%)`;
+
+  for (const [sectionName, items] of Object.entries(sections)) {
+    const sec = el('div', 'checklist-section dashboard-section');
+
+    const titleEl = el('div', 'checklist-section-title', sectionName);
+    const passCount = items.filter(i => i.status === 'pass').length;
+    const failCount = items.filter(i => i.status === 'fail').length;
+    const notDoneCount = items.filter(i => i.status === 'not_done').length;
+    if (passCount || failCount || notDoneCount) {
+      titleEl.textContent += ` — ✅ ${passCount} ❌ ${failCount}${notDoneCount ? ` ⚠️ ${notDoneCount}` : ''}`;
+    }
+    sec.appendChild(titleEl);
+
+    for (const item of items) {
+      sec.appendChild(buildChecklistItem(item));
+    }
+    container.appendChild(sec);
+  }
+}
+
+function buildChecklistItem(item) {
+  const row = el('div', 'checklist-item');
+  row.dataset.id = item.id;
+
+  // Status buttons column
+  const btnCol = el('div', 'checklist-status-btns');
+  for (const [status, icon, label] of [
+    ['pass',     '✓', 'Pass'],
+    ['fail',     '✗', 'Fail'],
+    ['skip',     '–', 'Skip'],
+    ['not_done', '!', 'Not Done'],
+  ]) {
+    const btn = el('button', `cl-btn${item.status === status ? ' active-' + status : ''}`, icon);
+    btn.title = label;
+    btn.addEventListener('click', () => updateChecklistStatus(item.id, status));
+    btnCol.appendChild(btn);
+  }
+  row.appendChild(btnCol);
+
+  // Body
+  const body = el('div', 'checklist-body');
+  const titleEl = el('div', `checklist-title${item.status !== 'pending' ? ' status-' + item.status : ''}`, item.title);
+  body.appendChild(titleEl);
+  if (item.description) body.appendChild(el('div', 'checklist-desc', item.description));
+  if (item.how_to_test) body.appendChild(el('div', 'checklist-howto', item.how_to_test));
+
+  // Notes + version history
+  const notesRow = el('div', 'checklist-notes-row');
+  const notesInput = el('textarea', 'checklist-notes-input');
+  notesInput.value = item.notes || '';
+  notesInput.placeholder = 'Add a note…';
+  notesInput.rows = 1;
+  notesInput.addEventListener('input', () => {
+    notesInput.style.height = 'auto';
+    notesInput.style.height = notesInput.scrollHeight + 'px';
+  });
+
+  const saveBtn = el('button', 'checklist-save-btn', 'Save note');
+  saveBtn.addEventListener('click', () => updateChecklistNotes(item.id, notesInput.value));
+
+  const histBtn = el('span', 'checklist-history-toggle', `v${item.version}`);
+  histBtn.title = 'Click to show version history';
+  const histList = el('div', 'checklist-history-list');
+  histList.style.display = 'none';
+  histBtn.addEventListener('click', async () => {
+    if (histList.style.display === 'none') {
+      histList.style.display = 'block';
+      histList.innerHTML = '<span class="muted-text">Loading…</span>';
+      try {
+        const r = await apiFetch(`/api/checklist/${item.id}/history`);
+        histList.innerHTML = '';
+        if (!r.history?.length) {
+          histList.appendChild(el('div', 'checklist-history-entry', 'No history yet.'));
+        } else {
+          for (const e of r.history) {
+            const entry = el('div', 'checklist-history-entry');
+            entry.innerHTML = `<strong>${e.status}</strong> — ${fmtDateTime(e.changed_at)}${e.notes ? ': ' + escapeHtml(e.notes) : ''}`;
+            histList.appendChild(entry);
+          }
+        }
+      } catch {
+        histList.innerHTML = '<span class="muted-text">Failed to load history.</span>';
+      }
+    } else {
+      histList.style.display = 'none';
+    }
+  });
+
+  notesRow.appendChild(notesInput);
+  notesRow.appendChild(saveBtn);
+  notesRow.appendChild(histBtn);
+  body.appendChild(notesRow);
+  body.appendChild(histList);
+  row.appendChild(body);
+
+  return row;
+}
+
+async function updateChecklistStatus(id, status) {
+  const idx = checklistItems.findIndex(i => i.id === id);
+  if (idx === -1) return;
+  const notes = checklistItems[idx].notes;
+  try {
+    const r = await fetch(`/api/checklist/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ status, notes }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const updated = await r.json();
+    checklistItems[idx] = updated;
+    renderChecklist();
+  } catch (err) {
+    console.error('checklist update failed', err);
+  }
+}
+
+async function updateChecklistNotes(id, notes) {
+  const idx = checklistItems.findIndex(i => i.id === id);
+  if (idx === -1) return;
+  try {
+    const r = await fetch(`/api/checklist/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ notes }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    const updated = await r.json();
+    checklistItems[idx] = updated;
+    // Re-render just the version badge without full re-render for UX
+    const row = document.querySelector(`.checklist-item[data-id="${id}"]`);
+    const histBtn = row?.querySelector('.checklist-history-toggle');
+    if (histBtn) histBtn.textContent = `v${updated.version}`;
+    updateChecklistProgress();
+  } catch (err) {
+    console.error('checklist note save failed', err);
+  }
+}
+
+function updateChecklistProgress() {
+  const total = checklistItems.length;
+  const done  = checklistItems.filter(i => i.status === 'pass' || i.status === 'fail' || i.status === 'skip').length;
+  const pct   = total ? Math.round(done / total * 100) : 0;
+  const progEl = document.getElementById('checklist-progress');
+  if (progEl) progEl.textContent = total ? `${done}/${total} reviewed (${pct}%)` : '';
+}
+
+// Sidebar wire-up for checklist
+document.getElementById('checklist-seed-btn')?.addEventListener('click', seedChecklist);
+document.getElementById('checklist-sprint-filter')?.addEventListener('change', (e) => {
+  loadChecklist(e.target.value);
 });
 
 // ── Filter listeners (projects page) ─────────────────────
