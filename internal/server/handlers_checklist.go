@@ -16,7 +16,42 @@ type ChecklistHandler struct {
 }
 
 func NewChecklistHandler(db *sql.DB, hub *EventHub) *ChecklistHandler {
+	_ = ensureChecklistTables(db)
 	return &ChecklistHandler{db: db, hub: hub}
+}
+
+func ensureChecklistTables(db *sql.DB) error {
+	if db == nil {
+		return nil
+	}
+	schema := `
+	CREATE TABLE IF NOT EXISTS checklist_items (
+		id          TEXT PRIMARY KEY,
+		sprint      TEXT NOT NULL DEFAULT 'STA-168',
+		section     TEXT NOT NULL,
+		title       TEXT NOT NULL,
+		description TEXT,
+		how_to_test TEXT,
+		status      TEXT NOT NULL DEFAULT 'pending'
+		            CHECK (status IN ('pending','pass','fail','skip','not_done')),
+		notes       TEXT,
+		version     INTEGER NOT NULL DEFAULT 1,
+		created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+		updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+	);
+	CREATE INDEX IF NOT EXISTS idx_checklist_sprint_section ON checklist_items (sprint, section);
+	CREATE TABLE IF NOT EXISTS checklist_history (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		item_id     TEXT NOT NULL REFERENCES checklist_items(id) ON DELETE CASCADE,
+		status      TEXT NOT NULL,
+		notes       TEXT,
+		changed_by  TEXT NOT NULL DEFAULT 'user',
+		changed_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+	);
+	CREATE INDEX IF NOT EXISTS idx_checklist_history_item ON checklist_history (item_id, id DESC);
+	`
+	_, err := db.Exec(schema)
+	return err
 }
 
 // ChecklistItem represents one verifiable claim.
@@ -46,6 +81,7 @@ type ChecklistHistoryEntry struct {
 
 // GET /api/checklist
 func (h *ChecklistHandler) ListItems(w http.ResponseWriter, r *http.Request) {
+	_ = ensureChecklistTables(h.db)
 	sprint := r.URL.Query().Get("sprint")
 	query := `SELECT id, sprint, section, title, description, how_to_test, status, notes, version, created_at, updated_at
 		FROM checklist_items`
@@ -83,6 +119,7 @@ func (h *ChecklistHandler) ListItems(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/checklist/sprints — list distinct sprint identifiers
 func (h *ChecklistHandler) ListSprints(w http.ResponseWriter, r *http.Request) {
+	_ = ensureChecklistTables(h.db)
 	rows, err := h.db.QueryContext(r.Context(),
 		`SELECT DISTINCT sprint FROM checklist_items ORDER BY sprint DESC`)
 	if err != nil {
@@ -208,6 +245,7 @@ func (h *ChecklistHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/checklist/seed — idempotently inserts default STA-168 checklist
 func (h *ChecklistHandler) Seed(w http.ResponseWriter, r *http.Request) {
+	_ = ensureChecklistTables(h.db)
 	var body struct {
 		Sprint string `json:"sprint"`
 		Force  bool   `json:"force"`
@@ -243,7 +281,7 @@ func (h *ChecklistHandler) Seed(w http.ResponseWriter, r *http.Request) {
 
 	for _, it := range items {
 		if it.ID == "" {
-			it.ID = uuid.NewString()
+			it.ID = uuid.NewSHA1(uuid.NameSpaceURL, []byte(sprint+":"+it.Section+":"+it.Title)).String()
 		}
 		if _, err := tx.ExecContext(r.Context(),
 			`INSERT OR IGNORE INTO checklist_items (id, sprint, section, title, description, how_to_test, status) VALUES (?,?,?,?,?,?,?)`,

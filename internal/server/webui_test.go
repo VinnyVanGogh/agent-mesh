@@ -73,3 +73,31 @@ func TestRegisterUIRoutes_TokenXSSEscape(t *testing.T) {
 		t.Error("token was not HTML-escaped — XSS risk in meta content attribute")
 	}
 }
+
+func TestRegisterUIRoutes_SPARoutes(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterUIRoutes(mux, "test-tok")
+
+	routes := []string{
+		"/checklist",
+		"/projects",
+		"/agents",
+		"/cost",
+		"/task-status",
+		"/recent-tasks",
+		"/settings",
+		"/org/StayPoint",
+	}
+
+	for _, route := range routes {
+		req := httptest.NewRequest("GET", route, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 for SPA route %q, got %d", route, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "staypoint-token") {
+			t.Errorf("SPA route %q response missing staypoint-token meta tag", route)
+		}
+	}
+}

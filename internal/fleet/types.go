@@ -116,10 +116,11 @@ type OrgFleetSummary struct {
 	TaskCounts             TaskStatusCounts `json:"task_counts"`
 	ActiveAgents           int              `json:"active_agents"`
 	ActiveAgentsByProvider map[string]int   `json:"active_agents_by_provider"`
-	SpentUSD               float64          `json:"spent_usd"`
-	SpentTokens            int64            `json:"spent_tokens"`
-	Tasks                  []TaskItem       `json:"tasks,omitempty"`
-	Agents                 []AgentItem      `json:"agents,omitempty"`
+	SpentUSD               float64                        `json:"spent_usd"`
+	SpentTokens            int64                          `json:"spent_tokens"`
+	ProviderQuotas         map[string]*ProviderQuotaGauge `json:"provider_quotas,omitempty"`
+	Tasks                  []TaskItem                     `json:"tasks,omitempty"`
+	Agents                 []AgentItem                    `json:"agents,omitempty"`
 }
 
 // FleetOverview is the unified root response for the All Organizations overview screen.

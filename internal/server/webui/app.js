@@ -303,31 +303,78 @@ document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
   sidebar?.classList.toggle('collapsed');
 });
 
+// ── SPA URL Routing ──────────────────────────────────────
+function viewToPath(viewName, orgName) {
+  if (orgName) return `/org/${encodeURIComponent(orgName)}`;
+  if (!viewName || viewName === 'overview') return '/';
+  return `/${viewName}`;
+}
+
+function pathToRoute(pathname) {
+  const p = (pathname || window.location.pathname).replace(/\/+$/, '') || '/';
+  if (p === '/' || p === '/overview') return { view: 'overview', org: null };
+  if (p.startsWith('/org/')) {
+    const org = decodeURIComponent(p.slice(5));
+    return { view: 'org-detail', org };
+  }
+  const clean = p.replace(/^\//, '');
+  return { view: clean, org: null };
+}
+
+function navigateTo(viewName, orgName = null, pushHistory = true) {
+  const targetPath = viewToPath(viewName, orgName);
+  if (pushHistory && window.location.pathname !== targetPath) {
+    history.pushState({ view: viewName, org: orgName }, '', targetPath);
+  }
+
+  state.currentOrgDetail = orgName;
+
+  // Update sidebar active buttons
+  document.querySelectorAll('.sidebar-item').forEach(b => {
+    b.classList.toggle('active', !orgName && b.dataset.view === viewName);
+  });
+
+  // Switch view visibility
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  const targetViewId = orgName ? 'view-org-detail' : `view-${viewName}`;
+  const targetEl = document.getElementById(targetViewId);
+  if (targetEl) targetEl.classList.add('active');
+
+  renderSidebarOrgTree();
+
+  // Render view content
+  if (orgName) {
+    const org = (state.fleet?.organizations || []).find(o => o.name === orgName || o.name.toLowerCase() === orgName.toLowerCase());
+    if (org) renderOrgDetailView(org);
+  } else {
+    if (viewName === 'projects')     renderProjects();
+    if (viewName === 'agents')       renderAgentsPage();
+    if (viewName === 'recent-tasks') renderRecentTasks();
+    if (viewName === 'task-status')  renderTaskStatusPage();
+    if (viewName === 'cost')         renderCostPage();
+    if (viewName === 'settings')     renderSettings();
+    if (viewName === 'checklist')    loadChecklistSprints().then(() => loadChecklist());
+    if (viewName === 'overview')     renderOverview();
+    if (viewName === 'kanban')       renderKanban();
+    if (viewName === 'boss')         renderBoss();
+  }
+}
+
+function showView(viewName) {
+  navigateTo(viewName, null, true);
+}
+
 // Sidebar nav item clicks
 document.querySelectorAll('.sidebar-item').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.sidebar-item').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    showView(btn.dataset.view);
-    state.currentOrgDetail = null;
-    renderSidebarOrgTree();
-    // Render the new view on first visit
-    const v = btn.dataset.view;
-    if (v === 'projects')     renderProjects();
-    if (v === 'agents')       renderAgentsPage();
-    if (v === 'recent-tasks') renderRecentTasks();
-    if (v === 'task-status')  renderTaskStatusPage();
-    if (v === 'cost')         renderCostPage();
-    if (v === 'settings')     renderSettings();
-    if (v === 'checklist') { loadChecklistSprints().then(() => loadChecklist()); }
+    navigateTo(btn.dataset.view, null, true);
   });
 });
 
-function showView(viewName) {
-  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-  const view = document.getElementById(`view-${viewName}`);
-  if (view) view.classList.add('active');
-}
+window.addEventListener('popstate', () => {
+  const route = pathToRoute();
+  navigateTo(route.view, route.org, false);
+});
 
 // ── Quick filter buttons ──────────────────────────────────
 document.getElementById('filter-running')?.addEventListener('click', () => {
@@ -556,6 +603,31 @@ function renderOrganizationsGrid(orgs) {
     spendRow.appendChild(el('span', null, `Spend: ${fmtCurrency(org.spent_usd)}`));
     spendRow.appendChild(el('span', null, `Tokens: ${fmtCompactNum(org.spent_tokens)}`));
     card.appendChild(spendRow);
+
+    // Organization Rolling Quota & Lockout Indicators
+    const orgQuotas = org.provider_quotas || {};
+    const lockouts = Object.values(orgQuotas).filter(q => q.is_locked);
+    if (lockouts.length) {
+      const lockRow = el('div', 'org-lockout-row');
+      lockRow.style.cssText = 'color:#f87171;font-size:0.75rem;font-weight:600;margin-top:8px;padding:4px 8px;background:rgba(239,68,68,0.1);border-radius:4px;border:1px solid rgba(239,68,68,0.3);';
+      lockRow.textContent = `🔒 Locked: ${lockouts.map(l => l.display_name).join(', ')}`;
+      card.appendChild(lockRow);
+    } else {
+      const quotaKeys = ['gemini', 'claude_work', 'claude_personal', 'openai'].filter(k => orgQuotas[k]);
+      if (quotaKeys.length) {
+        const qWrap = el('div', 'org-quota-mini-strip');
+        qWrap.style.cssText = 'margin-top:8px;display:flex;flex-direction:column;gap:4px;';
+        for (const k of quotaKeys) {
+          const q = orgQuotas[k];
+          const qRow = el('div');
+          qRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;font-size:0.72rem;color:var(--muted);';
+          qRow.appendChild(el('span', null, q.display_name));
+          qRow.appendChild(el('span', 'gauge-metric-val', `${q.five_hour_used_pct}% 5h`));
+          qWrap.appendChild(qRow);
+        }
+        card.appendChild(qWrap);
+      }
+    }
 
     card.addEventListener('click', () => openOrgDetail(org.name));
     container.appendChild(card);
@@ -1251,16 +1323,7 @@ function renderSettings() {
 
 // ── Org Detail View ────────────────────────────────────────
 function openOrgDetail(orgName) {
-  const org = (state.fleet?.organizations || []).find(o => o.name === orgName);
-  if (!org) return;
-
-  state.currentOrgDetail = orgName;
-  showView('org-detail');
-
-  document.querySelectorAll('.sidebar-item').forEach(b => b.classList.remove('active'));
-  renderSidebarOrgTree();
-
-  renderOrgDetailView(org);
+  navigateTo('org-detail', orgName, true);
 }
 
 function renderOrgDetailView(org) {
@@ -1271,12 +1334,7 @@ function renderOrgDetailView(org) {
   const hdr = el('div', 'org-detail-header');
   const backBtn = el('button', 'back-btn', '← Back');
   backBtn.addEventListener('click', () => {
-    state.currentOrgDetail = null;
-    showView('overview');
-    document.querySelectorAll('.sidebar-item').forEach(b => {
-      b.classList.toggle('active', b.dataset.view === 'overview');
-    });
-    renderSidebarOrgTree();
+    navigateTo('overview', null, true);
   });
   hdr.appendChild(backBtn);
 
@@ -1306,6 +1364,23 @@ function renderOrgDetailView(org) {
     statsRow.appendChild(d);
   }
   container.appendChild(statsRow);
+
+  // 5-Hour Rolling Quotas & Lockout Gauges for this organization
+  const orgQuotas = org.provider_quotas || {};
+  if (Object.keys(orgQuotas).length) {
+    const quotaSec = el('div', 'org-detail-section');
+    quotaSec.appendChild(el('div', 'org-detail-section-title', '5-Hour Rolling Quotas & Lockout Status'));
+    const quotaGrid = el('div', 'quota-gauges-grid');
+    const order = ['gemini', 'claude_work', 'claude_personal', 'claude', 'openai'];
+    for (const key of order) {
+      const q = orgQuotas[key];
+      if (!q) continue;
+      if (key === 'claude' && (orgQuotas['claude_work'] || orgQuotas['claude_personal'])) continue;
+      quotaGrid.appendChild(buildGaugeCard(key, q));
+    }
+    quotaSec.appendChild(quotaGrid);
+    container.appendChild(quotaSec);
+  }
 
   // Tasks section
   const orgTasks = (org.tasks || []).concat(
@@ -1704,7 +1779,27 @@ function renderDetailContent(content, task) {
   addPanelField(content, 'Project',  task.project || null);
   addPanelField(content, 'Goal',     task.goal_title || task.goal_id ? (task.goal_title || task.goal_id?.slice(0, 12)) : null);
   addPanelField(content, 'Repo',     task.repo_path ? `${task.repo_path} (${task.git_branch || 'main'})` : null);
-  addPanelField(content, 'Labels',   task.labels?.join(', ') || null);
+
+  // Labels rendering as colorful badges
+  let labels = task.labels;
+  if (typeof labels === 'string') {
+    try { labels = JSON.parse(labels); } catch { labels = labels ? [labels] : []; }
+  }
+  if (Array.isArray(labels) && labels.length) {
+    const lblWrap = el('div', 'panel-field');
+    lblWrap.appendChild(el('div', 'panel-field-label', 'Labels'));
+    const badgeContainer = el('div', 'panel-labels-container');
+    badgeContainer.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;';
+    for (const l of labels) {
+      const name = typeof l === 'object' ? l.name : l;
+      const color = typeof l === 'object' && l.color ? l.color : '#38bdf8';
+      const badge = el('span', 'task-label-badge', name);
+      badge.style.cssText = `font-size:0.75rem;padding:2px 8px;border-radius:12px;font-weight:600;background:${color}22;border:1px solid ${color};color:${color};`;
+      badgeContainer.appendChild(badge);
+    }
+    lblWrap.appendChild(badgeContainer);
+    content.appendChild(lblWrap);
+  }
 
   // Spend
   if (task.spent_usd || task.spent_tokens) {
@@ -1715,6 +1810,78 @@ function renderDetailContent(content, task) {
   // Budget
   if (task.max_budget_usd) {
     addPanelField(content, 'Budget', `${fmtCurrency(task.max_budget_usd)} · ${task.max_turns || 50} turns max`);
+  }
+
+  // Governance Section: Reviewers, Approvers, Quality Gates
+  const gov = task.governance;
+  if (gov || task.reviewers?.length || task.approvers?.length) {
+    const govSection = el('div', 'panel-gov-section');
+    govSection.style.cssText = 'margin-top:16px;padding:12px;background:rgba(255,255,255,0.03);border:1px solid var(--border);border-radius:6px;';
+    govSection.appendChild(el('div', 'panel-section-title', 'Governance & Quality Gates'));
+
+    // Reviewers
+    const reviewers = gov?.reviewers || task.reviewers || [];
+    const revWrap = el('div', 'panel-field');
+    revWrap.appendChild(el('div', 'panel-field-label', 'Reviewers'));
+    if (reviewers.length) {
+      const revList = el('div', 'panel-gov-list');
+      revList.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-top:4px;';
+      for (const r of reviewers) {
+        const item = el('div', 'panel-gov-item');
+        item.style.cssText = 'display:flex;align-items:center;justify-content:space-between;font-size:0.8rem;';
+        const name = r.reviewer_name || r.name || (r.reviewer_id ? `Reviewer (${r.reviewer_id.slice(0, 8)})` : 'Reviewer');
+        item.appendChild(el('span', 'pill', name));
+        const dec = gov?.decisions?.find(d => d.reviewer_id === (r.reviewer_id || r.id));
+        if (dec) {
+          const decSpan = el('span', 'status-pill', dec.decision);
+          item.appendChild(decSpan);
+        } else {
+          item.appendChild(el('span', 'muted-text', 'Pending review'));
+        }
+        revList.appendChild(item);
+      }
+      revWrap.appendChild(revList);
+    } else {
+      revWrap.appendChild(el('div', 'panel-field-muted', 'None assigned'));
+    }
+    govSection.appendChild(revWrap);
+
+    // Approvers
+    const approvers = gov?.approvers || task.approvers || [];
+    const appWrap = el('div', 'panel-field');
+    appWrap.appendChild(el('div', 'panel-field-label', 'Approvers'));
+    if (approvers.length) {
+      const appList = el('div', 'panel-gov-list');
+      appList.style.cssText = 'display:flex;flex-direction:column;gap:4px;margin-top:4px;';
+      for (const a of approvers) {
+        const item = el('div', 'panel-gov-item');
+        item.style.cssText = 'display:flex;align-items:center;justify-content:space-between;font-size:0.8rem;';
+        const name = a.approver_name || a.name || (a.approver_id ? `Approver (${a.approver_id.slice(0, 8)})` : 'Approver');
+        item.appendChild(el('span', 'pill', name));
+        const vote = gov?.votes?.find(v => v.approver_id === (a.approver_id || a.id));
+        if (vote) {
+          const voteSpan = el('span', 'status-pill', vote.vote);
+          item.appendChild(voteSpan);
+        } else {
+          item.appendChild(el('span', 'muted-text', 'Pending approval'));
+        }
+        appList.appendChild(item);
+      }
+      appWrap.appendChild(appList);
+    } else {
+      appWrap.appendChild(el('div', 'panel-field-muted', 'None assigned'));
+    }
+    govSection.appendChild(appWrap);
+
+    // Gate Policy
+    const reqReview = (gov?.config?.require_review ?? true) ? 'Required' : 'Optional';
+    const thresh = gov?.config ? `${gov.config.approval_threshold} vote(s)` : '1 vote';
+    const gateInfo = el('div', 'panel-field');
+    gateInfo.appendChild(el('div', 'panel-field-label', 'Gate Policy'));
+    gateInfo.appendChild(el('div', 'panel-field-value', `Review: ${reqReview} · Approval Threshold: ${thresh}`));
+    govSection.appendChild(gateInfo);
+
+    content.appendChild(govSection);
   }
 
   // Blocker — Bug 2 fix: show normalized reason
@@ -1787,6 +1954,14 @@ async function openDetail(taskId) {
     const resp = await apiFetch(`${apiBase}/${taskId}`);
     const task = resp.task || resp;
     const inlineComments = resp.comments || [];
+
+    // Also fetch native StayPoint governance snapshot if available
+    try {
+      const govResp = await apiFetch(`/api/tasks/${taskId}/governance`);
+      if (govResp && !govResp.error) {
+        task.governance = govResp;
+      }
+    } catch { /* governance optional */ }
 
     renderDetailContent(content, task);
 
@@ -2144,4 +2319,8 @@ document.getElementById('projects-org-filter')?.addEventListener('change', () =>
 });
 
 // ── Boot ──────────────────────────────────────────────────
-loadAll().then(() => connectSSE());
+loadAll().then(() => {
+  const initialRoute = pathToRoute();
+  navigateTo(initialRoute.view, initialRoute.org, false);
+  connectSSE();
+});

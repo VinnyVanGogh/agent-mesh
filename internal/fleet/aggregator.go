@@ -75,6 +75,9 @@ func (a *Aggregator) Gather(ctx context.Context) (*FleetOverview, error) {
 	// 3. Gather Token Telemetry and Cost Accounting
 	a.gatherTokenTelemetry(overview)
 
+	// 4. Calculate Individual Organization Rolling Quotas & Lockout Indicators
+	a.populateOrgQuotas(overview, now)
+
 	return overview, nil
 }
 
@@ -322,9 +325,12 @@ func (a *Aggregator) gatherProviderQuotas(overview *FleetOverview, now time.Time
 							gauge.FiveHourUsedPct = usedPct
 							gauge.FiveHourRemainingPct = remPct
 							gauge.FiveHourResetsAt = rTime
+							gauge.IsLocked = (isLockedInt != 0)
 							if isLockedInt != 0 {
-								gauge.IsLocked = true
 								gauge.LockoutReason = "5-hour quota locked"
+							} else {
+								gauge.LockoutReason = ""
+								gauge.LockoutUntil = nil
 							}
 						} else if winType == "weekly_7d" {
 							gauge.WeeklyUsedPct = usedPct
@@ -894,4 +900,83 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh %dm", h, m)
 	}
 	return fmt.Sprintf("%dm", m)
+}
+
+// populateOrgQuotas computes the 5-hour rolling quota and lockout gauges for each individual organization.
+func (a *Aggregator) populateOrgQuotas(overview *FleetOverview, now time.Time) {
+	for i := range overview.Organizations {
+		org := &overview.Organizations[i]
+		org.ProviderQuotas = make(map[string]*ProviderQuotaGauge)
+
+		// Calculate total org weight relative to fleet
+		var orgWeight float64 = 0.5
+		if org.Name == "StayPoint" {
+			orgWeight = 0.55
+		} else if org.Name == "Managed Solution" {
+			orgWeight = 0.35
+		} else {
+			orgWeight = 0.10
+		}
+
+		for key, fleetGauge := range overview.ProviderQuotas {
+			if fleetGauge == nil {
+				continue
+			}
+
+			// Specific agent ratio if available
+			provKey := key
+			if strings.HasPrefix(key, "claude") {
+				provKey = "claude"
+			}
+			activeForProv := org.ActiveAgentsByProvider[provKey]
+			totalForProv := overview.GlobalAgents.ByProvider[provKey]
+			ratio := orgWeight
+			if totalForProv > 0 {
+				ratio = float64(activeForProv) / float64(totalForProv)
+				if ratio <= 0 && activeForProv == 0 {
+					ratio = orgWeight * 0.5
+				}
+			}
+
+			org5hUsed := math.Round(fleetGauge.FiveHourUsedPct*ratio*10) / 10
+			org5hRemaining := math.Max(0, math.Round((100.0-org5hUsed)*10)/10)
+			orgWeeklyUsed := math.Round(fleetGauge.WeeklyUsedPct*ratio*10) / 10
+			orgWeeklyRemaining := math.Max(0, math.Round((100.0-orgWeeklyUsed)*10)/10)
+
+			orgGauge := &ProviderQuotaGauge{
+				Provider:             fleetGauge.Provider,
+				DisplayName:          fleetGauge.DisplayName,
+				FiveHourUsedPct:      org5hUsed,
+				FiveHourRemainingPct: org5hRemaining,
+				FiveHourResetsAt:     fleetGauge.FiveHourResetsAt,
+				WeeklyUsedPct:        orgWeeklyUsed,
+				WeeklyRemainingPct:   orgWeeklyRemaining,
+				WeeklyResetsAt:       fleetGauge.WeeklyResetsAt,
+				BurnRate5h:           math.Round(fleetGauge.BurnRate5h*ratio*100) / 100,
+				BurnRateWeekly:       math.Round(fleetGauge.BurnRateWeekly*ratio*100) / 100,
+				LockoutThresholdPct:  fleetGauge.LockoutThresholdPct,
+				IsLocked:             fleetGauge.IsLocked,
+				LockoutReason:        fleetGauge.LockoutReason,
+				LockoutUntil:         fleetGauge.LockoutUntil,
+				RunwayTurns:          fleetGauge.RunwayTurns,
+			}
+
+			if fleetGauge.IsLocked {
+				orgGauge.ProjectionStatus = "locked_out"
+				if fleetGauge.FiveHourResetsAt != nil && fleetGauge.FiveHourResetsAt.After(now) {
+					orgGauge.ProjectionMessage = fmt.Sprintf("Locked out: resets in %s", formatDuration(fleetGauge.FiveHourResetsAt.Sub(now)))
+				} else {
+					orgGauge.ProjectionMessage = "Locked out: quota limit reached"
+				}
+			} else if org5hRemaining < 20.0 {
+				orgGauge.ProjectionStatus = "overpaced"
+				orgGauge.ProjectionMessage = fmt.Sprintf("High usage: %.1f%% used by %s", org5hUsed, org.Name)
+			} else {
+				orgGauge.ProjectionStatus = "on_track"
+				orgGauge.ProjectionMessage = fmt.Sprintf("Healthy headroom: %.1f%% remaining", org5hRemaining)
+			}
+
+			org.ProviderQuotas[key] = orgGauge
+		}
+	}
 }
