@@ -79,6 +79,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("POST /api/tasks/{id}/done", tasksH.MarkDone)
 		mux.HandleFunc("POST /api/tasks/{id}/block", tasksH.BlockTask)
 		mux.HandleFunc("POST /api/tasks/{id}/unblock", tasksH.UnblockTask)
+		mux.HandleFunc("GET /api/tasks/{id}/dependencies", tasksH.GetTaskDependencies)
+		mux.HandleFunc("POST /api/tasks/{id}/blockers", tasksH.AddBlocker)
+		mux.HandleFunc("DELETE /api/tasks/{id}/blockers/{bid}", tasksH.RemoveBlocker)
 		mux.HandleFunc("POST /api/tasks/{id}/stage", tasksH.SetStage)
 
 		// Threads REST API

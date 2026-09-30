@@ -536,6 +536,114 @@ func TestServer_REST_Tasks(t *testing.T) {
 	resp.Body.Close()
 }
 
+func TestServer_REST_BlockersAndDependencies(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	client := &http.Client{}
+
+	// Create 2 tasks
+	createBody1 := []byte(`{"name":"Backend Migration","repo_path":"/tmp/repo","git_branch":"main"}`)
+	req1, _ := http.NewRequest(http.MethodPost, srv.URL()+"/api/tasks", bytes.NewReader(createBody1))
+	req1.Header.Set("Authorization", "Bearer "+token)
+	resp1, err := client.Do(req1)
+	if err != nil || resp1.StatusCode != http.StatusCreated {
+		t.Fatalf("create task 1 failed: %v", err)
+	}
+	var t1Resp map[string]any
+	_ = json.NewDecoder(resp1.Body).Decode(&t1Resp)
+	resp1.Body.Close()
+	t1ID := t1Resp["id"].(string)
+
+	createBody2 := []byte(`{"name":"Frontend Feature","repo_path":"/tmp/repo","git_branch":"main"}`)
+	req2, _ := http.NewRequest(http.MethodPost, srv.URL()+"/api/tasks", bytes.NewReader(createBody2))
+	req2.Header.Set("Authorization", "Bearer "+token)
+	resp2, err := client.Do(req2)
+	if err != nil || resp2.StatusCode != http.StatusCreated {
+		t.Fatalf("create task 2 failed: %v", err)
+	}
+	var t2Resp map[string]any
+	_ = json.NewDecoder(resp2.Body).Decode(&t2Resp)
+	resp2.Body.Close()
+	t2ID := t2Resp["id"].(string)
+
+	// Block task 2 on task 1 with explicit rationale
+	blockPayload, _ := json.Marshal(map[string]any{
+		"reason": "Blocked on migration",
+		"blockers": []map[string]string{
+			{"id": t1ID, "rationale": "Database schema migration must be applied first"},
+		},
+	})
+	reqBlock, _ := http.NewRequest(http.MethodPost, srv.URL()+"/api/tasks/"+t2ID+"/block", bytes.NewReader(blockPayload))
+	reqBlock.Header.Set("Authorization", "Bearer "+token)
+	respBlock, err := client.Do(reqBlock)
+	if err != nil || respBlock.StatusCode != http.StatusOK {
+		t.Fatalf("block task 2 failed: %v", err)
+	}
+	respBlock.Body.Close()
+
+	// GET /api/tasks/{id} should have blocked_by populated with rationale
+	reqGet, _ := http.NewRequest(http.MethodGet, srv.URL()+"/api/tasks/"+t2ID, nil)
+	reqGet.Header.Set("Authorization", "Bearer "+token)
+	respGet, err := client.Do(reqGet)
+	if err != nil || respGet.StatusCode != http.StatusOK {
+		t.Fatalf("get task 2 failed: %v", err)
+	}
+	var getResp map[string]any
+	_ = json.NewDecoder(respGet.Body).Decode(&getResp)
+	respGet.Body.Close()
+
+	taskObj := getResp["task"].(map[string]any)
+	if isBlocked, _ := taskObj["is_blocked"].(bool); !isBlocked {
+		t.Errorf("expected task 2 to be blocked")
+	}
+	blockedBy, ok := taskObj["blocked_by"].([]any)
+	if !ok || len(blockedBy) != 1 {
+		t.Fatalf("expected 1 blocked_by entry, got: %+v", taskObj["blocked_by"])
+	}
+	b0 := blockedBy[0].(map[string]any)
+	if b0["rationale"] != "Database schema migration must be applied first" {
+		t.Errorf("expected explicit rationale, got: %v", b0["rationale"])
+	}
+
+	// GET /api/tasks/{id}/dependencies
+	reqDep, _ := http.NewRequest(http.MethodGet, srv.URL()+"/api/tasks/"+t2ID+"/dependencies", nil)
+	reqDep.Header.Set("Authorization", "Bearer "+token)
+	respDep, err := client.Do(reqDep)
+	if err != nil || respDep.StatusCode != http.StatusOK {
+		t.Fatalf("get dependencies failed: %v", err)
+	}
+	var depResp map[string]any
+	_ = json.NewDecoder(respDep.Body).Decode(&depResp)
+	respDep.Body.Close()
+	if depResp["task_id"] != t2ID {
+		t.Errorf("expected task_id %s in dependencies, got: %v", t2ID, depResp["task_id"])
+	}
+
+	// DELETE /api/tasks/{id}/blockers/{bid}
+	reqDelBlocker, _ := http.NewRequest(http.MethodDelete, srv.URL()+"/api/tasks/"+t2ID+"/blockers/"+t1ID, nil)
+	reqDelBlocker.Header.Set("Authorization", "Bearer "+token)
+	respDelBlocker, err := client.Do(reqDelBlocker)
+	if err != nil || respDelBlocker.StatusCode != http.StatusOK {
+		t.Fatalf("delete blocker failed: %v", err)
+	}
+	respDelBlocker.Body.Close()
+
+	// Verify task 2 is now unblocked
+	reqGetAfter, _ := http.NewRequest(http.MethodGet, srv.URL()+"/api/tasks/"+t2ID, nil)
+	reqGetAfter.Header.Set("Authorization", "Bearer "+token)
+	respGetAfter, err := client.Do(reqGetAfter)
+	if err != nil || respGetAfter.StatusCode != http.StatusOK {
+		t.Fatalf("get task 2 after unblock failed: %v", err)
+	}
+	var getAfterResp map[string]any
+	_ = json.NewDecoder(respGetAfter.Body).Decode(&getAfterResp)
+	respGetAfter.Body.Close()
+	taskAfterObj := getAfterResp["task"].(map[string]any)
+	if isBlocked, _ := taskAfterObj["is_blocked"].(bool); isBlocked {
+		t.Errorf("expected task 2 to be unblocked")
+	}
+}
+
 func TestServer_REST_Threads_Pagination(t *testing.T) {
 	database := setupTestDB(t)
 	srv, token := startTestServer(t, database)

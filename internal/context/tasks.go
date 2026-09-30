@@ -36,8 +36,47 @@ type Task struct {
 	CreatedAt       string  `json:"created_at"`
 	UpdatedAt       string  `json:"updated_at"`
 	DeletedAt       *string `json:"deleted_at,omitempty"`
-	IsBlocked       bool    `json:"is_blocked"`
-	BlockReason     string  `json:"block_reason"`
+	IsBlocked       bool              `json:"is_blocked"`
+	BlockReason     string            `json:"block_reason"`
+	BlockedBy       []TaskBlockerInfo `json:"blocked_by,omitempty"`
+	Blocks          []TaskBlockerInfo `json:"blocks,omitempty"`
+}
+
+// TaskBlockerInfo contains summarized info about an upstream or downstream related task.
+type TaskBlockerInfo struct {
+	ID             string `json:"id"`
+	Identifier     string `json:"identifier,omitempty"`
+	Name           string `json:"name"`
+	Title          string `json:"title,omitempty"` // Alias for Name for WebUI compatibility
+	Status         string `json:"status"`
+	ExecutionStage string `json:"execution_stage"`
+	IsBlocked      bool   `json:"is_blocked"`
+	BlockReason    string `json:"block_reason,omitempty"`
+	Rationale      string `json:"rationale,omitempty"`
+}
+
+// BlockerInput represents an upstream task to block on with an explicit rationale.
+type BlockerInput struct {
+	ID        string `json:"id"`
+	Rationale string `json:"rationale,omitempty"`
+}
+
+// TaskDependencyNode represents a node in a dependency tree.
+type TaskDependencyNode struct {
+	TaskBlockerInfo
+	Children []*TaskDependencyNode `json:"children,omitempty"`
+}
+
+// TaskDependencyGraph provides structured dependency graph information for a task.
+type TaskDependencyGraph struct {
+	TaskID       string              `json:"task_id"`
+	Task         *TaskBlockerInfo    `json:"task"`
+	Parent       *TaskBlockerInfo    `json:"parent,omitempty"`
+	Subtasks     []TaskBlockerInfo   `json:"subtasks,omitempty"`
+	BlockedBy    []TaskBlockerInfo   `json:"blocked_by"`              // direct upstream blockers
+	Blocks       []TaskBlockerInfo   `json:"blocks"`                  // direct downstream blocked tasks
+	RootBlockers []TaskBlockerInfo   `json:"root_blockers,omitempty"` // transitive blockers at root of tree
+	UpstreamTree *TaskDependencyNode `json:"upstream_tree,omitempty"`
 }
 
 // TaskCreateOptions holds configuration for creating a task with budgets.
@@ -392,7 +431,191 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 	if deletedAt.Valid {
 		t.DeletedAt = &deletedAt.String
 	}
+	t.BlockedBy, _ = GetTaskBlockedBy(db, t.ID)
+	t.Blocks, _ = GetTaskBlocks(db, t.ID)
 	return &t, nil
+}
+
+// GetTaskBlockedBy returns all upstream tasks that block taskID.
+func GetTaskBlockedBy(db *sql.DB, taskID string) ([]TaskBlockerInfo, error) {
+	query := `
+		SELECT tr.task_id, COALESCE(t.name, tr.task_id), COALESCE(t.status, 'active'), COALESCE(t.execution_stage, 'todo'),
+		       COALESCE(t.is_blocked, 0), COALESCE(t.block_reason, ''), COALESCE(tr.rationale, '')
+		FROM task_relations tr
+		LEFT JOIN tasks t ON tr.task_id = t.id
+		WHERE tr.blocks_id = ?
+		ORDER BY tr.created_at ASC
+	`
+	rows, err := db.Query(query, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []TaskBlockerInfo
+	for rows.Next() {
+		var info TaskBlockerInfo
+		var isBlockedInt int
+		if err := rows.Scan(&info.ID, &info.Name, &info.Status, &info.ExecutionStage, &isBlockedInt, &info.BlockReason, &info.Rationale); err != nil {
+			return nil, err
+		}
+		info.Identifier = info.ID
+		info.Title = info.Name
+		info.IsBlocked = isBlockedInt == 1
+		if info.Rationale == "" && info.BlockReason != "" {
+			info.Rationale = info.BlockReason
+		}
+		list = append(list, info)
+	}
+	return list, rows.Err()
+}
+
+// GetTaskBlocks returns all downstream tasks blocked by taskID.
+func GetTaskBlocks(db *sql.DB, taskID string) ([]TaskBlockerInfo, error) {
+	query := `
+		SELECT tr.blocks_id, COALESCE(t.name, tr.blocks_id), COALESCE(t.status, 'active'), COALESCE(t.execution_stage, 'todo'),
+		       COALESCE(t.is_blocked, 0), COALESCE(t.block_reason, ''), COALESCE(tr.rationale, '')
+		FROM task_relations tr
+		LEFT JOIN tasks t ON tr.blocks_id = t.id
+		WHERE tr.task_id = ?
+		ORDER BY tr.created_at ASC
+	`
+	rows, err := db.Query(query, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []TaskBlockerInfo
+	for rows.Next() {
+		var info TaskBlockerInfo
+		var isBlockedInt int
+		if err := rows.Scan(&info.ID, &info.Name, &info.Status, &info.ExecutionStage, &isBlockedInt, &info.BlockReason, &info.Rationale); err != nil {
+			return nil, err
+		}
+		info.Identifier = info.ID
+		info.Title = info.Name
+		info.IsBlocked = isBlockedInt == 1
+		if info.Rationale == "" && info.BlockReason != "" {
+			info.Rationale = info.BlockReason
+		}
+		list = append(list, info)
+	}
+	return list, rows.Err()
+}
+
+// GetTaskDependencyGraph builds a comprehensive dependency graph and hierarchy around taskID.
+func GetTaskDependencyGraph(db *sql.DB, taskID string) (*TaskDependencyGraph, error) {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	taskInfo := &TaskBlockerInfo{
+		ID:             task.ID,
+		Identifier:     task.ID,
+		Name:           task.Name,
+		Title:          task.Name,
+		Status:         task.Status,
+		ExecutionStage: task.ExecutionStage,
+		IsBlocked:      task.IsBlocked,
+		BlockReason:    task.BlockReason,
+	}
+
+	graph := &TaskDependencyGraph{
+		TaskID:    task.ID,
+		Task:      taskInfo,
+		BlockedBy: task.BlockedBy,
+		Blocks:    task.Blocks,
+	}
+
+	// Fetch parent if configured
+	if task.ParentID != "" {
+		if parentTask, err := GetTask(db, task.ParentID); err == nil {
+			graph.Parent = &TaskBlockerInfo{
+				ID:             parentTask.ID,
+				Identifier:     parentTask.ID,
+				Name:           parentTask.Name,
+				Title:          parentTask.Name,
+				Status:         parentTask.Status,
+				ExecutionStage: parentTask.ExecutionStage,
+				IsBlocked:      parentTask.IsBlocked,
+				BlockReason:    parentTask.BlockReason,
+			}
+		}
+	}
+
+	// Fetch subtasks (where parent_id = task.ID)
+	subRows, err := db.Query(`
+		SELECT id, name, status, execution_stage, is_blocked, COALESCE(block_reason, '')
+		FROM tasks
+		WHERE parent_id = ? AND status != 'soft_deleted'
+		ORDER BY created_at ASC
+	`, task.ID)
+	if err == nil {
+		defer subRows.Close()
+		for subRows.Next() {
+			var st TaskBlockerInfo
+			var isBlockedInt int
+			if err := subRows.Scan(&st.ID, &st.Name, &st.Status, &st.ExecutionStage, &isBlockedInt, &st.BlockReason); err == nil {
+				st.Identifier = st.ID
+				st.Title = st.Name
+				st.IsBlocked = isBlockedInt == 1
+				graph.Subtasks = append(graph.Subtasks, st)
+			}
+		}
+	}
+
+	// Build upstream recursive dependency tree with cycle prevention
+	visited := map[string]bool{task.ID: true}
+	var buildUpstreamTree func(currID string, depth int) *TaskDependencyNode
+	buildUpstreamTree = func(currID string, depth int) *TaskDependencyNode {
+		if depth > 8 {
+			return nil
+		}
+		blockers, _ := GetTaskBlockedBy(db, currID)
+		node := &TaskDependencyNode{}
+		for _, b := range blockers {
+			childNode := &TaskDependencyNode{TaskBlockerInfo: b}
+			if !visited[b.ID] {
+				visited[b.ID] = true
+				subTree := buildUpstreamTree(b.ID, depth+1)
+				if subTree != nil && len(subTree.Children) > 0 {
+					childNode.Children = subTree.Children
+				}
+			}
+			node.Children = append(node.Children, childNode)
+		}
+		return node
+	}
+
+	upstreamTree := buildUpstreamTree(task.ID, 0)
+	if upstreamTree != nil {
+		graph.UpstreamTree = upstreamTree
+	}
+
+	// Determine root blockers: tasks in the chain that have no upstream blockers of their own and are not done
+	rootBlockersMap := make(map[string]TaskBlockerInfo)
+	var collectRoots func(nodes []*TaskDependencyNode)
+	collectRoots = func(nodes []*TaskDependencyNode) {
+		for _, n := range nodes {
+			if len(n.Children) == 0 {
+				if n.Status != "done" && n.ExecutionStage != "done" {
+					rootBlockersMap[n.ID] = n.TaskBlockerInfo
+				}
+			} else {
+				collectRoots(n.Children)
+			}
+		}
+	}
+	if upstreamTree != nil {
+		collectRoots(upstreamTree.Children)
+	}
+	for _, rb := range rootBlockersMap {
+		graph.RootBlockers = append(graph.RootBlockers, rb)
+	}
+
+	return graph, nil
 }
 
 // GetActiveTaskForRepo finds the most recently updated active task for a repo (or globally).
@@ -651,9 +874,45 @@ func GetTaskComments(db *sql.DB, taskID string) ([]TaskComment, error) {
 }
 
 func BlockTask(db *sql.DB, taskID, reason string, blockedByIDs ...string) error {
+	var blockers []BlockerInput
+	for _, id := range blockedByIDs {
+		blockers = append(blockers, BlockerInput{ID: id, Rationale: reason})
+	}
+	return BlockTaskWithBlockers(db, taskID, reason, blockers)
+}
+
+func BlockTaskWithBlockers(db *sql.DB, taskID, reason string, blockers []BlockerInput) error {
 	task, err := GetTask(db, taskID)
 	if err != nil {
 		return err
+	}
+
+	type resolvedBlocker struct {
+		id        string
+		rationale string
+	}
+	var resolved []resolvedBlocker
+	cleanReason := reason
+	for _, b := range blockers {
+		blockedByTask, err := GetTask(db, b.ID)
+		if err != nil {
+			return err
+		}
+		rationale := b.Rationale
+		if rationale == "" {
+			rationale = reason
+		}
+		if cleanReason == "" && rationale != "" {
+			cleanReason = rationale
+		}
+		resolved = append(resolved, resolvedBlocker{
+			id:        blockedByTask.ID,
+			rationale: rationale,
+		})
+	}
+
+	if cleanReason == "" && len(resolved) > 0 {
+		cleanReason = fmt.Sprintf("Blocked by %s", resolved[0].id)
 	}
 
 	tx, err := db.Begin()
@@ -661,19 +920,18 @@ func BlockTask(db *sql.DB, taskID, reason string, blockedByIDs ...string) error 
 		return err
 	}
 
-	query := `UPDATE tasks SET is_blocked = 1, block_reason = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
-	if _, err := tx.Exec(query, reason, task.ID); err != nil {
+	query := `UPDATE tasks SET is_blocked = 1, block_reason = ?, execution_stage = 'blocked', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
+	if _, err := tx.Exec(query, cleanReason, task.ID); err != nil {
 		tx.Rollback()
 		return err
 	}
 
-	for _, blockedByID := range blockedByIDs {
-		blockedByTask, err := GetTask(db, blockedByID)
-		if err != nil {
-			tx.Rollback()
-			return err
-		}
-		if _, err := tx.Exec(`INSERT INTO task_relations (task_id, blocks_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, blockedByTask.ID, task.ID); err != nil {
+	for _, b := range resolved {
+		if _, err := tx.Exec(`
+			INSERT INTO task_relations (task_id, blocks_id, rationale)
+			VALUES (?, ?, ?)
+			ON CONFLICT(task_id, blocks_id) DO UPDATE SET rationale = excluded.rationale
+		`, b.id, task.ID, b.rationale); err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -682,8 +940,12 @@ func BlockTask(db *sql.DB, taskID, reason string, blockedByIDs ...string) error 
 	return tx.Commit()
 }
 
-func UnblockTask(db *sql.DB, taskID string, unblockFromIDs ...string) error {
+func AddTaskBlocker(db *sql.DB, taskID, blockerID, rationale string) error {
 	task, err := GetTask(db, taskID)
+	if err != nil {
+		return err
+	}
+	blockerTask, err := GetTask(db, blockerID)
 	if err != nil {
 		return err
 	}
@@ -693,15 +955,63 @@ func UnblockTask(db *sql.DB, taskID string, unblockFromIDs ...string) error {
 		return err
 	}
 
+	if _, err := tx.Exec(`
+		INSERT INTO task_relations (task_id, blocks_id, rationale)
+		VALUES (?, ?, ?)
+		ON CONFLICT(task_id, blocks_id) DO UPDATE SET rationale = excluded.rationale
+	`, blockerTask.ID, task.ID, rationale); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	reason := task.BlockReason
+	if reason == "" || strings.EqualFold(reason, "blocked via tui") {
+		if rationale != "" {
+			reason = rationale
+		} else {
+			reason = fmt.Sprintf("Blocked by %s", blockerTask.ID)
+		}
+	}
+	if _, err := tx.Exec(`
+		UPDATE tasks
+		SET is_blocked = 1, block_reason = ?, execution_stage = 'blocked', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		WHERE id = ?
+	`, reason, task.ID); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}
+
+func RemoveTaskBlocker(db *sql.DB, taskID, blockerID string) error {
+	return UnblockTask(db, taskID, blockerID)
+}
+
+func UnblockTask(db *sql.DB, taskID string, unblockFromIDs ...string) error {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return err
+	}
+
+	var resolvedUnblockIDs []string
+	for _, unblockFromID := range unblockFromIDs {
+		unblockFromTask, err := GetTask(db, unblockFromID)
+		if err != nil {
+			return err
+		}
+		resolvedUnblockIDs = append(resolvedUnblockIDs, unblockFromTask.ID)
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+
 	var actuallyUnblocked bool
-	if len(unblockFromIDs) > 0 {
-		for _, unblockFromID := range unblockFromIDs {
-			unblockFromTask, err := GetTask(db, unblockFromID)
-			if err != nil {
-				tx.Rollback()
-				return err
-			}
-			if _, err := tx.Exec(`DELETE FROM task_relations WHERE task_id = ? AND blocks_id = ?`, unblockFromTask.ID, task.ID); err != nil {
+	if len(resolvedUnblockIDs) > 0 {
+		for _, unblockID := range resolvedUnblockIDs {
+			if _, err := tx.Exec(`DELETE FROM task_relations WHERE task_id = ? AND blocks_id = ?`, unblockID, task.ID); err != nil {
 				tx.Rollback()
 				return err
 			}
@@ -714,7 +1024,7 @@ func UnblockTask(db *sql.DB, taskID string, unblockFromIDs ...string) error {
 		}
 
 		if count == 0 {
-			if _, err := tx.Exec(`UPDATE tasks SET is_blocked = 0, block_reason = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, task.ID); err != nil {
+			if _, err := tx.Exec(`UPDATE tasks SET is_blocked = 0, block_reason = '', execution_stage = CASE WHEN execution_stage = 'blocked' THEN 'todo' ELSE execution_stage END, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, task.ID); err != nil {
 				tx.Rollback()
 				return err
 			}
@@ -725,7 +1035,7 @@ func UnblockTask(db *sql.DB, taskID string, unblockFromIDs ...string) error {
 			tx.Rollback()
 			return err
 		}
-		if _, err := tx.Exec(`UPDATE tasks SET is_blocked = 0, block_reason = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, task.ID); err != nil {
+		if _, err := tx.Exec(`UPDATE tasks SET is_blocked = 0, block_reason = '', execution_stage = CASE WHEN execution_stage = 'blocked' THEN 'todo' ELSE execution_stage END, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, task.ID); err != nil {
 			tx.Rollback()
 			return err
 		}

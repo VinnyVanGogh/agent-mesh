@@ -92,11 +92,13 @@ func (h *TasksHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	comments, _ := context.GetTaskComments(h.db, task.ID)
+	depGraph, _ := context.GetTaskDependencyGraph(h.db, task.ID)
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"task":     task,
-		"comments": comments,
+		"task":         task,
+		"comments":     comments,
+		"dependencies": depGraph,
 	})
 }
 
@@ -246,17 +248,117 @@ func (h *TasksHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Reason string `json:"reason"`
+		Reason       string   `json:"reason"`
+		BlockedByIDs []string `json:"blocked_by_ids"`
+		Blockers     []struct {
+			ID        string `json:"id"`
+			Rationale string `json:"rationale"`
+		} `json:"blockers"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	if err := context.BlockTask(h.db, id, req.Reason); err != nil {
+	var blockers []context.BlockerInput
+	for _, b := range req.Blockers {
+		if b.ID != "" {
+			blockers = append(blockers, context.BlockerInput{
+				ID:        b.ID,
+				Rationale: b.Rationale,
+			})
+		}
+	}
+	for _, bid := range req.BlockedByIDs {
+		if bid != "" {
+			blockers = append(blockers, context.BlockerInput{
+				ID:        bid,
+				Rationale: req.Reason,
+			})
+		}
+	}
+
+	var err error
+	if len(blockers) > 0 {
+		err = context.BlockTaskWithBlockers(h.db, id, req.Reason, blockers)
+	} else {
+		err = context.BlockTask(h.db, id, req.Reason)
+	}
+
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to block task: "+err.Error())
 		return
 	}
 
 	if h.hub != nil {
-		h.hub.Publish("task_blocked", map[string]string{"task_id": id, "reason": req.Reason})
+		h.hub.Publish("task_blocked", map[string]any{"task_id": id, "reason": req.Reason, "blockers": blockers})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// GetTaskDependencies handles GET /api/tasks/{id}/dependencies
+func (h *TasksHandler) GetTaskDependencies(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+
+	depGraph, err := context.GetTaskDependencyGraph(h.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(depGraph)
+}
+
+// AddBlocker handles POST /api/tasks/{id}/blockers
+func (h *TasksHandler) AddBlocker(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+
+	var req struct {
+		BlockerID string `json:"blocker_id"`
+		Rationale string `json:"rationale"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.BlockerID == "" {
+		writeError(w, http.StatusBadRequest, "blocker_id is required")
+		return
+	}
+
+	if err := context.AddTaskBlocker(h.db, id, req.BlockerID, req.Rationale); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add blocker: "+err.Error())
+		return
+	}
+
+	if h.hub != nil {
+		h.hub.Publish("task_blocked", map[string]any{"task_id": id, "blocker_id": req.BlockerID, "rationale": req.Rationale})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// RemoveBlocker handles DELETE /api/tasks/{id}/blockers/{bid}
+func (h *TasksHandler) RemoveBlocker(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	bid := r.PathValue("bid")
+	if id == "" || bid == "" {
+		writeError(w, http.StatusBadRequest, "task id and blocker id are required")
+		return
+	}
+
+	if err := context.RemoveTaskBlocker(h.db, id, bid); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to remove blocker: "+err.Error())
+		return
+	}
+
+	if h.hub != nil {
+		h.hub.Publish("task_unblocked", map[string]any{"task_id": id, "unblocked_from": bid})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
