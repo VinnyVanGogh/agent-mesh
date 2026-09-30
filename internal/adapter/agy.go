@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/VinnyVanGogh/staypoint/internal/router"
 	"strconv"
 	"strings"
-	"github.com/VinnyVanGogh/staypoint/internal/router"
 )
 
 // AgyAdapter drives the Antigravity CLI (`agy`) used for the Gemini pool.
@@ -121,7 +121,6 @@ func (AgyAdapter) ParseStreamDelta(line []byte) ([]StreamDelta, error) {
 
 	return []StreamDelta{{Kind: DeltaOther, Raw: ev.Event}}, nil
 }
-
 
 func buildAgyArgs(opts ParsedOptions) []string {
 	args := []string{

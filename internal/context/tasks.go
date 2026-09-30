@@ -14,24 +14,28 @@ import (
 
 // Task represents an engineering task tracked within SQLite mesh.db.
 type Task struct {
-	ID           string  `json:"id"`
-	Name         string  `json:"name"`
-	RepoPath     string  `json:"repo_path"`
-	GitBranch    string  `json:"git_branch"`
-	Status       string  `json:"status"`       // active, done, soft_deleted
-	AccountRole  string  `json:"account_role"` // work, personal, other
-	MaxBudgetUSD float64 `json:"max_budget_usd"`
-	MaxTurns     int     `json:"max_turns"`
-	SpentTokens  int64   `json:"spent_tokens"`
-	SpentUSD     float64 `json:"spent_usd"`
-	SpentTurns   int     `json:"spent_turns"`
-	Organization string  `json:"organization,omitempty"`
-	Project      string  `json:"project,omitempty"`
-	CreatedAt    string  `json:"created_at"`
-	UpdatedAt    string  `json:"updated_at"`
-	DeletedAt    *string `json:"deleted_at,omitempty"`
-	IsBlocked    bool    `json:"is_blocked"`
-	BlockReason  string  `json:"block_reason"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	RepoPath        string  `json:"repo_path"`
+	GitBranch       string  `json:"git_branch"`
+	Status          string  `json:"status"`       // active, done, soft_deleted
+	AccountRole     string  `json:"account_role"` // work, personal, other
+	MaxBudgetUSD    float64 `json:"max_budget_usd"`
+	MaxTurns        int     `json:"max_turns"`
+	SpentTokens     int64   `json:"spent_tokens"`
+	SpentUSD        float64 `json:"spent_usd"`
+	SpentTurns      int     `json:"spent_turns"`
+	Organization    string  `json:"organization,omitempty"`
+	Project         string  `json:"project,omitempty"`
+	ParentID        string  `json:"parent_id,omitempty"`
+	ExecutionStage  string  `json:"execution_stage"`
+	CheckoutRunID   string  `json:"checkout_run_id,omitempty"`
+	CheckoutAgentID string  `json:"checkout_agent_id,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
+	DeletedAt       *string `json:"deleted_at,omitempty"`
+	IsBlocked       bool    `json:"is_blocked"`
+	BlockReason     string  `json:"block_reason"`
 }
 
 // TaskCreateOptions holds configuration for creating a task with budgets.
@@ -44,6 +48,7 @@ type TaskCreateOptions struct {
 	MaxTurns     int
 	Organization string
 	Project      string
+	ParentID     string
 }
 
 // GetCurrentGitBranch returns the current active git branch for a directory.
@@ -111,13 +116,18 @@ func CreateTaskWithOptions(db *sql.DB, opts TaskCreateOptions) (*Task, error) {
 		INSERT INTO tasks (
 			id, name, repo_path, git_branch, status, account_role,
 			max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-			organization, project,
+			organization, project, parent_id,
 			created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 0, 0.0, 0, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 0, 0.0, 0, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 	`
 
-	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns, opts.Organization, opts.Project); err != nil {
+	var parentID interface{}
+	if opts.ParentID != "" {
+		parentID = opts.ParentID
+	}
+
+	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns, opts.Organization, opts.Project, parentID); err != nil {
 		return nil, fmt.Errorf("failed to insert task: %w", err)
 	}
 
@@ -250,7 +260,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 	var tasks []Task
 	for rows.Next() {
 		var t Task
-		var deletedAt, org, proj, blockReason sql.NullString
+		var deletedAt, org, proj, blockReason, parentID, checkoutRunID, checkoutAgentID sql.NullString
 		if err := rows.Scan(
 			&t.ID,
 			&t.Name,
@@ -265,6 +275,10 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 			&t.SpentTurns,
 			&org,
 			&proj,
+			&parentID,
+			&t.ExecutionStage,
+			&checkoutRunID,
+			&checkoutAgentID,
 			&t.IsBlocked,
 			&blockReason,
 			&t.CreatedAt,
@@ -275,6 +289,15 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		}
 		if blockReason.Valid {
 			t.BlockReason = blockReason.String
+		}
+		if parentID.Valid {
+			t.ParentID = parentID.String
+		}
+		if checkoutRunID.Valid {
+			t.CheckoutRunID = checkoutRunID.String
+		}
+		if checkoutAgentID.Valid {
+			t.CheckoutAgentID = checkoutAgentID.String
 		}
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
@@ -303,7 +326,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-		       organization, project, is_blocked, block_reason, created_at, updated_at, deleted_at
+		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE id = ? OR id = ? OR id LIKE ?
 		ORDER BY created_at DESC
@@ -317,7 +340,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 
 	row := db.QueryRow(query, id, fullID, prefixMatch)
 	var t Task
-	var deletedAt, org, proj, blockReason sql.NullString
+	var deletedAt, org, proj, blockReason, parentID, checkoutRunID, checkoutAgentID sql.NullString
 	if err := row.Scan(
 		&t.ID,
 		&t.Name,
@@ -332,6 +355,10 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 		&t.SpentTurns,
 		&org,
 		&proj,
+		&parentID,
+		&t.ExecutionStage,
+		&checkoutRunID,
+		&checkoutAgentID,
 		&t.IsBlocked,
 		&blockReason,
 		&t.CreatedAt,
@@ -345,6 +372,15 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 	}
 	if blockReason.Valid {
 		t.BlockReason = blockReason.String
+	}
+	if parentID.Valid {
+		t.ParentID = parentID.String
+	}
+	if checkoutRunID.Valid {
+		t.CheckoutRunID = checkoutRunID.String
+	}
+	if checkoutAgentID.Valid {
+		t.CheckoutAgentID = checkoutAgentID.String
 	}
 	if deletedAt.Valid {
 		t.DeletedAt = &deletedAt.String
@@ -360,7 +396,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	query := `
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-		       organization, project, is_blocked, block_reason, created_at, updated_at, deleted_at
+		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE status = 'active' AND (repo_path = ? OR repo_path LIKE ?)
 		ORDER BY updated_at DESC
@@ -368,7 +404,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	`
 	row := db.QueryRow(query, cleanPath, cleanPath+"/%")
 	var t Task
-	var deletedAt, org, proj, blockReason sql.NullString
+	var deletedAt, org, proj, blockReason, parentID, checkoutRunID, checkoutAgentID sql.NullString
 	err := row.Scan(
 		&t.ID,
 		&t.Name,
@@ -383,6 +419,10 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.SpentTurns,
 		&org,
 		&proj,
+		&parentID,
+		&t.ExecutionStage,
+		&checkoutRunID,
+		&checkoutAgentID,
 		&t.IsBlocked,
 		&blockReason,
 		&t.CreatedAt,
@@ -415,7 +455,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	fallbackQuery := `
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-		       organization, project, is_blocked, block_reason, created_at, updated_at, deleted_at
+		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE status = 'active'
 		ORDER BY updated_at DESC
@@ -474,9 +514,17 @@ func MarkTaskDone(db *sql.DB, id string) error {
 		return err
 	}
 
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM task_work_products WHERE task_id = ?`, task.ID).Scan(&count); err != nil {
+		return fmt.Errorf("failed to check work products: %w", err)
+	}
+	if count == 0 {
+		return fmt.Errorf("cannot mark task as done without a registered work product")
+	}
+
 	query := `
 		UPDATE tasks
-		SET status = 'done', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		SET status = 'done', execution_stage = 'done', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 		WHERE id = ?
 	`
 	res, err := db.Exec(query, task.ID)
@@ -555,24 +603,86 @@ func GetTaskComments(db *sql.DB, taskID string) ([]TaskComment, error) {
 	return comments, rows.Err()
 }
 
-func BlockTask(db *sql.DB, taskID, reason string) error {
+func BlockTask(db *sql.DB, taskID, reason string, blockedByIDs ...string) error {
 	task, err := GetTask(db, taskID)
 	if err != nil {
 		return err
 	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+
 	query := `UPDATE tasks SET is_blocked = 1, block_reason = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
-	_, err = db.Exec(query, reason, task.ID)
-	return err
+	if _, err := tx.Exec(query, reason, task.ID); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	for _, blockedByID := range blockedByIDs {
+		blockedByTask, err := GetTask(db, blockedByID)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO task_relations (task_id, blocks_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, blockedByTask.ID, task.ID); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
-func UnblockTask(db *sql.DB, taskID string) error {
+func UnblockTask(db *sql.DB, taskID string, unblockFromIDs ...string) error {
 	task, err := GetTask(db, taskID)
 	if err != nil {
 		return err
 	}
-	query := `UPDATE tasks SET is_blocked = 0, block_reason = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
-	_, err = db.Exec(query, task.ID)
-	return err
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+
+	if len(unblockFromIDs) > 0 {
+		for _, unblockFromID := range unblockFromIDs {
+			unblockFromTask, err := GetTask(db, unblockFromID)
+			if err != nil {
+				tx.Rollback()
+				return err
+			}
+			if _, err := tx.Exec(`DELETE FROM task_relations WHERE task_id = ? AND blocks_id = ?`, unblockFromTask.ID, task.ID); err != nil {
+				tx.Rollback()
+				return err
+			}
+		}
+
+		var count int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM task_relations WHERE blocks_id = ?`, task.ID).Scan(&count); err != nil {
+			tx.Rollback()
+			return err
+		}
+
+		if count == 0 {
+			if _, err := tx.Exec(`UPDATE tasks SET is_blocked = 0, block_reason = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, task.ID); err != nil {
+				tx.Rollback()
+				return err
+			}
+		}
+	} else {
+		if _, err := tx.Exec(`DELETE FROM task_relations WHERE blocks_id = ?`, task.ID); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE tasks SET is_blocked = 0, block_reason = '', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`, task.ID); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
 
 func ArchiveTask(db *sql.DB, taskID string) error {
@@ -598,5 +708,54 @@ func TouchTask(db *sql.DB, taskID string) error {
 	}
 	query := `UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`
 	_, err = db.Exec(query, task.ID)
+	return err
+}
+
+type TaskDocument struct {
+	ID        int    `json:"id"`
+	TaskID    string `json:"task_id"`
+	DocKey    string `json:"doc_key"`
+	Version   int    `json:"version"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"created_at"`
+}
+
+type TaskWorkProduct struct {
+	ID          int    `json:"id"`
+	TaskID      string `json:"task_id"`
+	ProductType string `json:"product_type"`
+	Reference   string `json:"reference"`
+	CreatedAt   string `json:"created_at"`
+}
+
+type ActivityLog struct {
+	ID        int    `json:"id"`
+	TaskID    string `json:"task_id"`
+	EventType string `json:"event_type"`
+	Details   string `json:"details"`
+	CreatedAt string `json:"created_at"`
+}
+
+func AddTaskDocument(db *sql.DB, taskID, docKey, content string) error {
+	var maxVer sql.NullInt32
+	err := db.QueryRow(`SELECT MAX(version) FROM task_documents WHERE task_id = ? AND doc_key = ?`, taskID, docKey).Scan(&maxVer)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	v := 1
+	if maxVer.Valid {
+		v = int(maxVer.Int32) + 1
+	}
+	_, err = db.Exec(`INSERT INTO task_documents (task_id, doc_key, version, content) VALUES (?, ?, ?, ?)`, taskID, docKey, v, content)
+	return err
+}
+
+func AddWorkProduct(db *sql.DB, taskID, productType, reference string) error {
+	_, err := db.Exec(`INSERT INTO task_work_products (task_id, product_type, reference) VALUES (?, ?, ?)`, taskID, productType, reference)
+	return err
+}
+
+func LogActivity(db *sql.DB, taskID, eventType, details string) error {
+	_, err := db.Exec(`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, ?, ?)`, taskID, eventType, details)
 	return err
 }

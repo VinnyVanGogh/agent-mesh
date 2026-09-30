@@ -211,6 +211,11 @@ var taskCheckoutCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		if task.IsBlocked {
+			fmt.Fprintf(os.Stderr, "Cannot start a blocked task (Reason: %s)\n", task.BlockReason)
+			os.Exit(1)
+		}
+
 		// Set as active repository task by touching the updated_at
 		if err := meshContext.TouchTask(store.DB(), task.ID); err != nil {
 			fmt.Fprintf(os.Stderr, "Error updating task: %v\n", err)
@@ -245,9 +250,9 @@ var taskCheckoutCmd = &cobra.Command{
 }
 
 var taskBlockCmd = &cobra.Command{
-	Use:   "block [id|name]",
+	Use:   "block [id|name] [blocked-by-id...]",
 	Short: "Flag a task as blocked",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		store, err := db.Open(cfg.DBPath)
 		if err != nil {
@@ -257,7 +262,11 @@ var taskBlockCmd = &cobra.Command{
 		defer store.Close()
 
 		reason, _ := cmd.Flags().GetString("reason")
-		if err := meshContext.BlockTask(store.DB(), args[0], reason); err != nil {
+		var blockers []string
+		if len(args) > 1 {
+			blockers = args[1:]
+		}
+		if err := meshContext.BlockTask(store.DB(), args[0], reason, blockers...); err != nil {
 			fmt.Fprintf(os.Stderr, "Error blocking task: %v\n", err)
 			os.Exit(1)
 		}
@@ -267,9 +276,9 @@ var taskBlockCmd = &cobra.Command{
 }
 
 var taskUnblockCmd = &cobra.Command{
-	Use:   "unblock [id|name]",
+	Use:   "unblock [id|name] [unblocked-by-id...]",
 	Short: "Unflag a task as blocked",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		store, err := db.Open(cfg.DBPath)
 		if err != nil {
@@ -278,7 +287,11 @@ var taskUnblockCmd = &cobra.Command{
 		}
 		defer store.Close()
 
-		if err := meshContext.UnblockTask(store.DB(), args[0]); err != nil {
+		var unblockFrom []string
+		if len(args) > 1 {
+			unblockFrom = args[1:]
+		}
+		if err := meshContext.UnblockTask(store.DB(), args[0], unblockFrom...); err != nil {
 			fmt.Fprintf(os.Stderr, "Error unblocking task: %v\n", err)
 			os.Exit(1)
 		}
@@ -346,6 +359,7 @@ func init() {
 	taskCmd.AddCommand(taskCheckoutCmd)
 	taskCmd.AddCommand(taskBlockCmd)
 	taskCmd.AddCommand(taskUnblockCmd)
+	taskCmd.AddCommand(taskTreeCmd)
 	taskCmd.AddCommand(taskCommentCmd)
 	taskCmd.AddCommand(taskCancelCmd)
 
@@ -368,4 +382,41 @@ func init() {
 	taskAddCmd.Flags().String("role", "", "Override assignee role or agent")
 	taskBudgetCmd.Flags().Float64("usd", 0.0, "Budget limit in USD")
 	taskBudgetCmd.Flags().Int("turns", 0, "Maximum allowed turns")
+}
+
+var taskTreeCmd = &cobra.Command{
+	Use:   "tree",
+	Short: "Show the task dependency tree",
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+
+		tasks, err := meshContext.ListTasks(store.DB(), true)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing tasks: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Println("\033[1;36mTask Dependency Tree:\033[0m")
+
+		var printTree func(parentID string, indent string)
+		printTree = func(parentID string, indent string) {
+			for _, t := range tasks {
+				if t.ParentID == parentID {
+					status := t.Status
+					if t.IsBlocked {
+						status = "blocked"
+					}
+					fmt.Printf("%s- %s (%s) [%s]\n", indent, t.ID, t.Name, status)
+					printTree(t.ID, indent+"  ")
+				}
+			}
+		}
+
+		printTree("", "")
+	},
 }

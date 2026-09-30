@@ -188,9 +188,9 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		if companyID == "" {
 			companyID = os.Getenv("PAPERCLIP_COMPANY_ID")
 			compCtx, compCancel := context.WithTimeout(ctx, 15*time.Second)
-		comp, compErr := paperclipClient.GetCompany(compCtx, companyID)
-		compCancel()
-		if compErr == nil && comp != nil {
+			comp, compErr := paperclipClient.GetCompany(compCtx, companyID)
+			compCancel()
+			if compErr == nil && comp != nil {
 				companyPrefix = comp.IssuePrefix
 			}
 		}
@@ -263,9 +263,9 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 			genResult.Task.Status = "todo"
 			if (assigneeID == "" || assigneeName == "Unassigned") && companyID != "" {
 				listCtx, listCancel := context.WithTimeout(ctx, 15*time.Second)
-		agents, agentErr := paperclipClient.ListAgents(listCtx, companyID)
-		listCancel()
-		if agentErr == nil {
+				agents, agentErr := paperclipClient.ListAgents(listCtx, companyID)
+				listCancel()
+				if agentErr == nil {
 					for _, agent := range agents {
 						if strings.Contains(strings.ToLower(agent.Name), "chief of staff") || strings.EqualFold(agent.Role, "ceo") {
 							assigneeID = agent.ID
@@ -285,9 +285,9 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 					assigneeName = "Unassigned"
 				} else if (assigneeID == "" || assigneeName == "Unassigned") && companyID != "" {
 					listCtx, listCancel := context.WithTimeout(ctx, 15*time.Second)
-		agents, agentErr := paperclipClient.ListAgents(listCtx, companyID)
-		listCancel()
-		if agentErr == nil {
+					agents, agentErr := paperclipClient.ListAgents(listCtx, companyID)
+					listCancel()
+					if agentErr == nil {
 						for _, agent := range agents {
 							if strings.Contains(strings.ToLower(agent.Name), "chief of staff") || strings.EqualFold(agent.Role, "ceo") {
 								assigneeID = agent.ID
@@ -358,7 +358,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 			Labels:          genResult.Task.Labels,
 			Status:          genResult.Task.Status,
 		}
-		
+
 		if genResult.Task.Status == "backlog" {
 			req.AssigneeAgentId = "" // Unassigned backlog dispatch to save tokens
 		}
