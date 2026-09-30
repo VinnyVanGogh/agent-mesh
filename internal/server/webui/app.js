@@ -14,7 +14,7 @@ const state = {
     status: 'all',
   },
   tsFilter: { search: '', org: 'all', status: 'all' },
-  agentsFilter: { search: '', provider: 'all' },
+  agentsFilter: { search: '', provider: 'all', org: 'all', status: 'all' },
   currentOrgDetail: null,
   openDetailTaskId: null,
   chatPollTimer:    null,
@@ -898,6 +898,38 @@ function renderProjects() {
 }
 
 // ── Agents Dedicated View ─────────────────────────────────
+function getHeartbeatFreshness(hb) {
+  if (!hb) return { text: 'None', pillClass: 'standby', dotClass: 'idle' };
+  const d = new Date(hb);
+  if (isNaN(d.getTime())) return { text: 'Unknown', pillClass: 'standby', dotClass: 'idle' };
+  const diffMs = Date.now() - d.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 10) {
+    return { text: `Fresh (${fmtRelTime(hb)})`, pillClass: 'fresh', dotClass: 'running' };
+  } else if (diffMin < 60) {
+    return { text: `Recent (${fmtRelTime(hb)})`, pillClass: 'recent', dotClass: 'idle' };
+  } else {
+    return { text: `Standby (${fmtRelTime(hb)})`, pillClass: 'standby', dotClass: 'idle' };
+  }
+}
+
+function resetAgentFilters() {
+  state.agentsFilter.search = '';
+  state.agentsFilter.provider = 'all';
+  state.agentsFilter.org = 'all';
+  state.agentsFilter.status = 'all';
+  const searchInput = document.getElementById('agents-search');
+  const provSelect = document.getElementById('agents-provider-filter');
+  const orgSelect = document.getElementById('agents-org-filter');
+  if (searchInput) searchInput.value = '';
+  if (provSelect) provSelect.value = 'all';
+  if (orgSelect) orgSelect.value = 'all';
+  document.querySelectorAll('.agent-filter-pill').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.status === 'all');
+  });
+  renderAgentsPage();
+}
+
 function renderAgentsPage() {
   const grid = document.getElementById('agents-grid');
   if (!grid) return;
@@ -919,7 +951,7 @@ function renderAgentsPage() {
     if (!exists) {
       allAgents.push({
         id: s.id,
-        name: s.agent_type || 'Local Agent',
+        name: s.agent_type ? `${titleCase(s.agent_type)} Session` : 'Local Session',
         role: 'Local Session',
         provider: s.agent_type || 'other',
         status: s.status || 'active',
@@ -929,74 +961,232 @@ function renderAgentsPage() {
     }
   }
 
+  // Match each agent with its assigned and current running task
+  const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
+  const enrichedAgents = allAgents.map(a => {
+    const agentTasks = allTasks.filter(t =>
+      (t.checkout_agent_id && t.checkout_agent_id === a.id) ||
+      (t.assignee_agent_id && t.assignee_agent_id === a.id) ||
+      (t.assigned_agent && (t.assigned_agent === a.name || t.assigned_agent === a.id)) ||
+      (t.assignee_name && t.assignee_name === a.name)
+    );
+
+    const runningTask = agentTasks.find(t => t.status === 'running' || t.status === 'in_progress');
+
+    let st = (a.status || 'idle').toLowerCase();
+    if (runningTask || st === 'running' || st === 'in_progress') {
+      st = 'running';
+    } else if (st === 'paused' || st === 'stopped' || a.pause_reason) {
+      st = 'paused';
+    } else {
+      st = 'idle';
+    }
+
+    return {
+      ...a,
+      normalizedStatus: st,
+      agentTasks,
+      runningTask,
+    };
+  });
+
+  // Update summary pill counts
+  const totalCount = enrichedAgents.length;
+  const runningCount = enrichedAgents.filter(a => a.normalizedStatus === 'running').length;
+  const idleCount = enrichedAgents.filter(a => a.normalizedStatus === 'idle').length;
+  const pausedCount = enrichedAgents.filter(a => a.normalizedStatus === 'paused').length;
+
+  const countAllEl = document.getElementById('count-agents-all');
+  const countRunningEl = document.getElementById('count-agents-running');
+  const countIdleEl = document.getElementById('count-agents-idle');
+  const countPausedEl = document.getElementById('count-agents-paused');
+  if (countAllEl) countAllEl.textContent = totalCount;
+  if (countRunningEl) countRunningEl.textContent = runningCount;
+  if (countIdleEl) countIdleEl.textContent = idleCount;
+  if (countPausedEl) countPausedEl.textContent = pausedCount;
+
+  // Populate Org filter dropdown
+  const orgSelect = document.getElementById('agents-org-filter');
+  if (orgSelect) {
+    const curOrg = state.agentsFilter.org || 'all';
+    const uniqueOrgs = Array.from(new Set(enrichedAgents.map(a => a.org).filter(Boolean))).sort();
+    orgSelect.innerHTML = '<option value="all">All Organizations</option>';
+    for (const orgName of uniqueOrgs) {
+      const opt = document.createElement('option');
+      opt.value = orgName;
+      opt.textContent = orgName;
+      orgSelect.appendChild(opt);
+    }
+    orgSelect.value = curOrg;
+  }
+
+  // Populate summary metrics chip
+  const metricsContainer = document.getElementById('agents-summary-metrics');
+  if (metricsContainer && f?.provider_quotas) {
+    metricsContainer.innerHTML = '';
+    const qGemini = f.provider_quotas['gemini'];
+    const qClaude = f.provider_quotas['claude'] || f.provider_quotas['claude_personal'];
+    if (qGemini || qClaude) {
+      const chip = el('div', 'agents-metric-chip');
+      const gHeadroom = qGemini ? (qGemini.five_hour_remaining_pct ?? 100).toFixed(0) : '—';
+      const cHeadroom = qClaude ? (qClaude.five_hour_remaining_pct ?? 100).toFixed(0) : '—';
+      chip.innerHTML = `Fleet Quota Headroom: Gemini <span class="agents-metric-val">${gHeadroom}%</span> · Claude <span class="agents-metric-val">${cHeadroom}%</span>`;
+      metricsContainer.appendChild(chip);
+    }
+  }
+
+  // Filter agents
   const searchTerm = (state.agentsFilter.search || '').toLowerCase();
   const provFilter = state.agentsFilter.provider || 'all';
+  const orgFilter = state.agentsFilter.org || 'all';
+  const statusFilter = state.agentsFilter.status || 'all';
 
-  const filtered = allAgents.filter(a => {
-    if (provFilter !== 'all' && a.provider !== provFilter) return false;
+  const filtered = enrichedAgents.filter(a => {
+    if (statusFilter !== 'all' && a.normalizedStatus !== statusFilter) return false;
+    if (provFilter !== 'all' && (a.provider || 'other').toLowerCase() !== provFilter.toLowerCase()) return false;
+    if (orgFilter !== 'all' && a.org !== orgFilter) return false;
     if (searchTerm) {
       const name = (a.name || '').toLowerCase();
       const role = (a.role || '').toLowerCase();
-      if (!name.includes(searchTerm) && !role.includes(searchTerm)) return false;
+      const org = (a.org || '').toLowerCase();
+      const task = (a.runningTask?.title || a.runningTask?.identifier || '').toLowerCase();
+      if (!name.includes(searchTerm) && !role.includes(searchTerm) && !org.includes(searchTerm) && !task.includes(searchTerm)) {
+        return false;
+      }
     }
     return true;
   });
 
   if (!filtered.length) {
-    grid.appendChild(el('p', 'muted-text', 'No agents match filter.'));
+    const empty = el('div', 'muted-text');
+    empty.style.padding = '30px';
+    empty.style.textAlign = 'center';
+    empty.style.gridColumn = '1 / -1';
+    empty.innerHTML = `No agents match current filters. <button class="btn btn-secondary btn-sm" style="margin-left: 8px;" onclick="resetAgentFilters()">Clear Filters</button>`;
+    grid.appendChild(empty);
     return;
   }
 
   for (const a of filtered) {
-    const card = el('div', 'agent-card');
+    const card = el('div', `agent-card status-${a.normalizedStatus}`);
 
+    // ── Card Header ───────────────────────────────────────
     const hdr = el('div', 'agent-card-header');
-    const nameWrap = el('div');
-    nameWrap.appendChild(el('div', 'agent-card-name', a.name || a.id?.slice(0, 12) || 'Agent'));
-    nameWrap.appendChild(el('div', 'agent-card-role', a.role || 'agent'));
-    hdr.appendChild(nameWrap);
+    const titleGroup = el('div', 'agent-card-title-group');
+    const nameEl = el('div', 'agent-card-name', a.name || a.id?.slice(0, 12) || 'Agent');
+    nameEl.title = a.name || a.id || '';
+    titleGroup.appendChild(nameEl);
+    titleGroup.appendChild(el('div', 'agent-card-role', a.role || 'Autonomous Agent'));
+    hdr.appendChild(titleGroup);
+
+    const badgesCol = el('div', 'agent-card-badges');
+    // Status Badge
+    const stBadge = el('div', `agent-status-badge ${a.normalizedStatus}`);
+    const dot = el('span', `status-indicator-dot ${a.normalizedStatus}${a.normalizedStatus === 'running' ? ' pulse' : ''}`);
+    stBadge.appendChild(dot);
+    stBadge.appendChild(document.createTextNode(a.normalizedStatus === 'running' ? 'Running' : a.normalizedStatus === 'paused' ? 'Paused' : 'Idle'));
+    badgesCol.appendChild(stBadge);
+
+    // Provider Badge
     const provBadge = el('span', `fleet-provider-badge provider-${a.provider || 'other'}`, a.provider || 'other');
-    hdr.appendChild(provBadge);
+    badgesCol.appendChild(provBadge);
+    hdr.appendChild(badgesCol);
     card.appendChild(hdr);
 
+    // ── Meta: Organization & Model ────────────────────────
     const meta = el('div', 'agent-card-meta');
-    meta.appendChild(statusPill(a.status || 'active'));
-    if (a.org) meta.appendChild(el('span', 'muted-text', a.org));
+    if (a.org) {
+      const orgPill = el('span', 'agent-org-badge');
+      orgPill.innerHTML = `&#9632; ${escapeHtml(a.org)}`;
+      meta.appendChild(orgPill);
+    }
+    if (a.model) {
+      meta.appendChild(el('span', 'agent-model-badge', a.model));
+    }
     card.appendChild(meta);
 
-    if (a.last_heartbeat) {
-      card.appendChild(el('div', 'agent-card-task',
-        `Last heartbeat: ${fmtRelTime(a.last_heartbeat)}`));
+    // ── Current Checkout Task Box ─────────────────────────
+    const taskBox = el('div', `agent-task-box${a.runningTask ? ' has-running-task' : ''}`);
+    const taskBoxHdr = el('div', 'agent-task-box-header');
+    taskBoxHdr.appendChild(el('span', '', 'Current Checkout Task'));
+    if (a.runningTask) {
+      const liveTag = el('span', 'agent-task-tag');
+      liveTag.innerHTML = `&#9889; Active`;
+      taskBoxHdr.appendChild(liveTag);
     }
+    taskBox.appendChild(taskBoxHdr);
 
-    // If agent has a current task in fleet
-    const agentTasks = (state.fleet?.tasks || []).filter(t =>
-      t.checkout_agent_id === a.id || t.assignee_name === a.name
-    );
-    if (agentTasks.length) {
-      const running = agentTasks.find(t => t.status === 'running' || t.status === 'in_progress');
-      const taskEl = el('div', 'agent-card-task');
-      taskEl.innerHTML = `<strong>Task:</strong> ${running ? (running.title || running.identifier || running.id?.slice(0,8)) : `${agentTasks.length} tasks`}`;
-      card.appendChild(taskEl);
+    if (a.runningTask) {
+      const link = el('div', 'agent-task-link');
+      if (a.runningTask.identifier) {
+        const ident = el('span', 'agent-task-ident', a.runningTask.identifier);
+        link.appendChild(ident);
+      }
+      link.appendChild(document.createTextNode(a.runningTask.title || 'Untitled Task'));
+      link.title = `Click to view task details: ${a.runningTask.title || a.runningTask.id}`;
+      link.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openDetail(a.runningTask.id);
+      });
+      taskBox.appendChild(link);
+    } else if (a.agentTasks && a.agentTasks.length > 0) {
+      const otherTask = a.agentTasks[0];
+      const link = el('div', 'agent-task-link');
+      if (otherTask.identifier) {
+        link.appendChild(el('span', 'agent-task-ident', otherTask.identifier));
+      }
+      link.appendChild(document.createTextNode(otherTask.title || 'Assigned task'));
+      link.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openDetail(otherTask.id);
+      });
+      taskBox.appendChild(link);
+    } else {
+      const empty = el('div', 'agent-task-empty');
+      empty.innerHTML = `&#9675; Standby · Ready for assignment`;
+      taskBox.appendChild(empty);
     }
+    card.appendChild(taskBox);
 
-    // Quota bar if provider quota available
-    const quotaKey = a.provider;
-    const quota = f?.provider_quotas?.[quotaKey];
+    // ── Heartbeat Freshness Row ───────────────────────────
+    const hbRow = el('div', 'agent-heartbeat-row');
+    hbRow.appendChild(el('span', 'muted-text', 'Heartbeat freshness:'));
+    const hbFreshness = getHeartbeatFreshness(a.last_heartbeat);
+    const hbPill = el('span', `heartbeat-freshness-pill ${hbFreshness.pillClass}`);
+    hbPill.innerHTML = `<span class="status-indicator-dot ${hbFreshness.dotClass}"></span> ${hbFreshness.text}`;
+    hbPill.title = a.last_heartbeat ? new Date(a.last_heartbeat).toLocaleString() : 'No heartbeat recorded';
+    hbRow.appendChild(hbPill);
+    card.appendChild(hbRow);
+
+    // ── Quota Consumption Headroom Gauge ──────────────────
+    const qKey = (a.provider || '').toLowerCase();
+    const quota = f?.provider_quotas?.[qKey] || (qKey === 'claude' ? (f?.provider_quotas?.['claude_personal'] || f?.provider_quotas?.['claude_work']) : null);
     if (quota) {
-      const used = 100 - (quota.five_hour_remaining_pct ?? 100);
-      const qDiv = el('div', 'agent-quota-bar');
-      qDiv.appendChild(el('div', 'agent-quota-label', '5h quota'));
-      const qRow = el('div', 'agent-quota-row');
+      const remaining = quota.five_hour_remaining_pct ?? (100 - (quota.five_hour_used_pct ?? 0));
+      const used = 100 - remaining;
+      const qSection = el('div', 'agent-quota-section');
+
+      const qHdr = el('div', 'agent-quota-header');
+      qHdr.appendChild(el('span', 'agent-quota-label', `${quota.display_name || a.provider} Headroom (5h)`));
+      const headroomText = el('span', 'agent-quota-headroom-text', `${remaining.toFixed(1)}% free`);
+      headroomText.style.color = remaining <= 15 ? 'var(--red)' : remaining <= 35 ? 'var(--amber)' : 'var(--green)';
+      qHdr.appendChild(headroomText);
+      qSection.appendChild(qHdr);
+
       const track = el('div', 'agent-quota-track');
       const fill = el('div', 'agent-quota-fill');
-      fill.style.width = `${Math.min(100, used)}%`;
-      fill.style.background = used >= 95 ? 'var(--red)' : used >= 75 ? 'var(--amber)' : 'var(--green)';
+      fill.style.width = `${Math.min(100, Math.max(0, used))}%`;
+      fill.style.background = used >= 85 ? 'var(--red)' : used >= 65 ? 'var(--amber)' : 'var(--green)';
       track.appendChild(fill);
-      qRow.appendChild(track);
-      qRow.appendChild(el('span', 'muted-text', `${used.toFixed(1)}%`));
-      qDiv.appendChild(qRow);
-      card.appendChild(qDiv);
+      qSection.appendChild(track);
+
+      const qSub = el('div', 'agent-quota-subtext');
+      qSub.appendChild(el('span', '', `${used.toFixed(1)}% consumed`));
+      if (quota.burn_rate_5h) {
+        qSub.appendChild(el('span', '', `Burn: ${quota.burn_rate_5h.toFixed(1)}%/hr`));
+      }
+      qSection.appendChild(qSub);
+      card.appendChild(qSection);
     }
 
     grid.appendChild(card);
@@ -2078,6 +2268,18 @@ document.getElementById('agents-search')?.addEventListener('input', (e) => {
 document.getElementById('agents-provider-filter')?.addEventListener('change', (e) => {
   state.agentsFilter.provider = e.target.value;
   renderAgentsPage();
+});
+document.getElementById('agents-org-filter')?.addEventListener('change', (e) => {
+  state.agentsFilter.org = e.target.value;
+  renderAgentsPage();
+});
+document.querySelectorAll('.agent-filter-pill').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.agent-filter-pill').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.agentsFilter.status = btn.dataset.status || 'all';
+    renderAgentsPage();
+  });
 });
 
 // ── Checklist View ────────────────────────────────────────
