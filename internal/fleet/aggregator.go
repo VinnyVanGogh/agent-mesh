@@ -109,6 +109,34 @@ func (a *Aggregator) gatherProviderQuotas(overview *FleetOverview, now time.Time
 		ProjectionMessage:    "On Track: healthy 5-hour headroom",
 		RunwayTurns:          18,
 	}
+	overview.ProviderQuotas["claude_work"] = &ProviderQuotaGauge{
+		Provider:             "claude_work",
+		DisplayName:          "Claude (Work)",
+		FiveHourRemainingPct: 100.0,
+		FiveHourUsedPct:      0.0,
+		WeeklyRemainingPct:   100.0,
+		WeeklyUsedPct:        0.0,
+		LockoutThresholdPct:  100.0,
+		BurnRate5h:           5.62,
+		BurnRateWeekly:       1.26,
+		ProjectionStatus:     "on_track",
+		ProjectionMessage:    "On Track: healthy 5-hour headroom",
+		RunwayTurns:          18,
+	}
+	overview.ProviderQuotas["claude_personal"] = &ProviderQuotaGauge{
+		Provider:             "claude_personal",
+		DisplayName:          "Claude (Personal)",
+		FiveHourRemainingPct: 100.0,
+		FiveHourUsedPct:      0.0,
+		WeeklyRemainingPct:   100.0,
+		WeeklyUsedPct:        0.0,
+		LockoutThresholdPct:  100.0,
+		BurnRate5h:           5.62,
+		BurnRateWeekly:       1.26,
+		ProjectionStatus:     "on_track",
+		ProjectionMessage:    "On Track: healthy 5-hour headroom",
+		RunwayTurns:          18,
+	}
 	overview.ProviderQuotas["openai"] = &ProviderQuotaGauge{
 		Provider:             "openai",
 		DisplayName:          "OpenAI / Codex",
@@ -155,7 +183,67 @@ func (a *Aggregator) gatherProviderQuotas(overview *FleetOverview, now time.Time
 			g.RunwayTurns = gem.TurnsRunway
 		}
 
-		// Claude pool: prefer personal / 3p
+		// Populate work Claude account separately
+		if workPool := pacerState.Pools[router.PoolWorkClaude]; workPool != nil {
+			cw := overview.ProviderQuotas["claude_work"]
+			if workPool.FiveHour.Known {
+				cw.FiveHourUsedPct = workPool.FiveHour.UsedPct
+				cw.FiveHourRemainingPct = workPool.FiveHour.RemainingPct
+				if !workPool.FiveHour.ResetsAt.IsZero() {
+					t := workPool.FiveHour.ResetsAt
+					cw.FiveHourResetsAt = &t
+				}
+			}
+			if workPool.Weekly.Known {
+				cw.WeeklyUsedPct = workPool.Weekly.UsedPct
+				cw.WeeklyRemainingPct = workPool.Weekly.RemainingPct
+				if !workPool.Weekly.ResetsAt.IsZero() {
+					t := workPool.Weekly.ResetsAt
+					cw.WeeklyResetsAt = &t
+				}
+			}
+			cw.BurnRate5h = workPool.BurnRate5h
+			cw.BurnRateWeekly = workPool.BurnRateW
+			cw.IsLocked = workPool.IsLocked
+			cw.LockoutReason = workPool.LockoutReason
+			if !workPool.LockoutUntil.IsZero() {
+				t := workPool.LockoutUntil
+				cw.LockoutUntil = &t
+			}
+			cw.RunwayTurns = workPool.TurnsRunway
+		}
+
+		// Populate personal Claude account separately
+		if persPool := pacerState.Pools[router.PoolPersonalClaude]; persPool != nil {
+			cp := overview.ProviderQuotas["claude_personal"]
+			if persPool.FiveHour.Known {
+				cp.FiveHourUsedPct = persPool.FiveHour.UsedPct
+				cp.FiveHourRemainingPct = persPool.FiveHour.RemainingPct
+				if !persPool.FiveHour.ResetsAt.IsZero() {
+					t := persPool.FiveHour.ResetsAt
+					cp.FiveHourResetsAt = &t
+				}
+			}
+			if persPool.Weekly.Known {
+				cp.WeeklyUsedPct = persPool.Weekly.UsedPct
+				cp.WeeklyRemainingPct = persPool.Weekly.RemainingPct
+				if !persPool.Weekly.ResetsAt.IsZero() {
+					t := persPool.Weekly.ResetsAt
+					cp.WeeklyResetsAt = &t
+				}
+			}
+			cp.BurnRate5h = persPool.BurnRate5h
+			cp.BurnRateWeekly = persPool.BurnRateW
+			cp.IsLocked = persPool.IsLocked
+			cp.LockoutReason = persPool.LockoutReason
+			if !persPool.LockoutUntil.IsZero() {
+				t := persPool.LockoutUntil
+				cp.LockoutUntil = &t
+			}
+			cp.RunwayTurns = persPool.TurnsRunway
+		}
+
+		// Claude pool: prefer personal / 3p (backward-compat aggregate gauge)
 		claudePool := pacerState.Pools[router.PoolPersonalClaude]
 		if claudePool == nil || (!claudePool.FiveHour.Known && !claudePool.Weekly.Known) {
 			claudePool = pacerState.Pools[router.PoolWorkClaude]
@@ -212,6 +300,10 @@ func (a *Aggregator) gatherProviderQuotas(overview *FleetOverview, now time.Time
 					switch {
 					case strings.Contains(key, "gemini"):
 						gauge = overview.ProviderQuotas["gemini"]
+					case strings.Contains(key, "work") && strings.Contains(key, "claude"):
+						gauge = overview.ProviderQuotas["claude_work"]
+					case (strings.Contains(key, "personal") || strings.Contains(key, "3p")) && strings.Contains(key, "claude"):
+						gauge = overview.ProviderQuotas["claude_personal"]
 					case strings.Contains(key, "claude"):
 						gauge = overview.ProviderQuotas["claude"]
 					case strings.Contains(key, "codex") || strings.Contains(key, "openai"):
@@ -538,7 +630,7 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 						SpentUSD:       spentUSD,
 						SpentTokens:    spentTokens,
 						IsBlocked:      isBlockedInt != 0,
-						BlockReason:    bReason,
+						BlockReason:    normalizeBlockReason(bReason),
 						UpdatedAt:      parsedUp,
 					}
 					orgSummary.Tasks = append(orgSummary.Tasks, item)
@@ -743,6 +835,14 @@ func (a *Aggregator) gatherTokenTelemetry(overview *FleetOverview) {
 			ActiveAgents: org.ActiveAgents,
 		})
 	}
+}
+
+func normalizeBlockReason(reason string) string {
+	lower := strings.ToLower(strings.TrimSpace(reason))
+	if lower == "blocked via tui" || lower == "via tui" || lower == "" {
+		return ""
+	}
+	return reason
 }
 
 func normalizeProvider(s string) string {
