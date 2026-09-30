@@ -19,6 +19,15 @@ const state = {
 const TOKEN = document.querySelector('meta[name="staypoint-token"]')?.content || '';
 
 // ── Utils ────────────────────────────────────────────────
+
+// Map Paperclip/fleet task status → kanban column
+function normalizeFleetStatus(s) {
+  if (s === 'running' || s === 'in_progress') return 'in_progress';
+  if (s === 'blocked') return 'blocked';
+  if (s === 'done' || s === 'completed' || s === 'soft_deleted') return 'done';
+  return 'todo'; // active, pending, queued, etc.
+}
+
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls)  e.className = cls;
@@ -91,6 +100,17 @@ async function loadAll() {
     if (fleetResp) state.fleet = fleetResp;
     for (const t of (tasksResp.tasks || [])) state.tasks[t.id] = t;
     for (const s of (sessionsResp.sessions || [])) state.sessions[s.id] = s;
+
+    // Merge fleet (Paperclip) tasks into state.tasks with normalized status so
+    // the kanban and detail panel can render them without a separate API call.
+    if (fleetResp?.tasks) {
+      for (const t of fleetResp.tasks) {
+        // Don't overwrite a local task that happens to share an ID
+        if (!state.tasks[t.id]) {
+          state.tasks[t.id] = { ...t, status: normalizeFleetStatus(t.status) };
+        }
+      }
+    }
 
     populateOrgFilter();
     renderAll();
@@ -541,7 +561,7 @@ function makeTaskCard(task) {
   const meta  = el('div', 'card-meta');
 
   const dot = el('span', `card-status-dot dot-${task.status}`);
-  const id  = el('span', 'card-id', task.id ? `#${task.id.slice(0, 8)}` : '');
+  const id  = el('span', 'card-id', task.identifier || (task.id ? `#${task.id.slice(0, 8)}` : ''));
 
   meta.appendChild(dot);
   meta.appendChild(id);
@@ -663,6 +683,31 @@ function renderEventStream() {
 }
 
 // ── Detail panel ──────────────────────────────────────────
+function renderDetailContent(content, task) {
+  content.innerHTML = '';
+  content.appendChild(el('h2', null, task.title || '(untitled)'));
+
+  const metaRow = el('div', 'meta-row');
+  metaRow.appendChild(statusPill(task.status || 'unknown'));
+  if (task.identifier) metaRow.appendChild(el('span', 'card-id', task.identifier));
+  if (task.priority)   metaRow.appendChild(statusPill(task.priority));
+  if (task.organization) metaRow.appendChild(el('span', 'pill', task.organization));
+  metaRow.appendChild(el('span', 'muted-text', `id: ${task.id?.slice(0, 12) || '—'}`));
+  content.appendChild(metaRow);
+
+  if (task.description) {
+    const desc = el('p', null, task.description);
+    desc.style.cssText = 'margin-top:12px;color:var(--text);line-height:1.5;font-size:13px;';
+    content.appendChild(desc);
+  }
+
+  if (task.spent_usd || task.spent_tokens) {
+    const spend = el('p', null, `Spend: ${fmtCurrency(task.spent_usd)} · ${fmtCompactNum(task.spent_tokens)} tokens`);
+    spend.style.cssText = 'margin-top:8px;font-size:12px;color:var(--muted);';
+    content.appendChild(spend);
+  }
+}
+
 async function openDetail(taskId) {
   const panel   = document.getElementById('detail-panel');
   const content = document.getElementById('panel-content');
@@ -670,22 +715,11 @@ async function openDetail(taskId) {
   panel.classList.remove('hidden');
   content.innerHTML = '<p style="color:var(--muted)">Loading…</p>';
 
+  // Fleet (Paperclip) tasks are already in state.tasks after merge in loadAll.
+  // Try the local API first for full data; fall back to cached state on 404.
   try {
     const task = await apiFetch(`/api/tasks/${taskId}`);
-    content.innerHTML = '';
-
-    content.appendChild(el('h2', null, task.title || '(untitled)'));
-
-    const metaRow = el('div', 'meta-row');
-    metaRow.appendChild(statusPill(task.status || 'unknown'));
-    metaRow.appendChild(el('span', null, `id: ${task.id?.slice(0, 12) || '—'}`));
-    content.appendChild(metaRow);
-
-    if (task.description) {
-      const desc = el('p', null, task.description);
-      desc.style.cssText = 'margin-top:12px;color:var(--text);line-height:1.5;font-size:13px;';
-      content.appendChild(desc);
-    }
+    renderDetailContent(content, task);
 
     try {
       const commResp = await apiFetch(`/api/tasks/${taskId}/comments`);
@@ -696,19 +730,23 @@ async function openDetail(taskId) {
         content.appendChild(h);
         for (const c of comments) {
           const row = el('div');
-          row.style.cssText = 'margin-top:10px;border-left:2px solid var(--border);padding-left:10px;';
+          row.style.cssText = 'margin-top:10px;border-left:2px solid var(--border);padding-left:10px;font-size:12px;';
           row.appendChild(el('div', null, c.body || ''));
-          row.style.fontSize = '12px';
           content.appendChild(row);
         }
       }
     } catch { /* comments optional */ }
 
   } catch (err) {
-    const p = el('p', null, `Failed to load: ${err.message}`);
-    p.style.color = 'var(--red)';
-    content.innerHTML = '';
-    content.appendChild(p);
+    const cached = state.tasks[taskId];
+    if (cached) {
+      renderDetailContent(content, cached);
+    } else {
+      const p = el('p', null, `Failed to load: ${err.message}`);
+      p.style.color = 'var(--red)';
+      content.innerHTML = '';
+      content.appendChild(p);
+    }
   }
 }
 
