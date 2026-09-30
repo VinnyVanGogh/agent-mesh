@@ -115,10 +115,13 @@ func (w *WorktreeManager) SweepOrphans() error {
 		if w.DB != nil {
 			relPath := filepath.Join(".worktrees", taskID)
 			var n int
-			_ = w.DB.QueryRow(
+			if err := w.DB.QueryRow(
 				`SELECT COUNT(1) FROM agent_working_files wf
 				 JOIN agent_sessions s ON wf.session_id = s.id
-				 WHERE wf.file_path = ? AND s.status = 'active'`, relPath).Scan(&n)
+				 WHERE wf.file_path = ? AND s.status = 'active'`, relPath).Scan(&n); err != nil {
+				fmt.Fprintf(os.Stderr, "warn: sweep orphan check %s: %v; skipping prune\n", taskID, err)
+				continue
+			}
 			active = n > 0
 		}
 		if !active {

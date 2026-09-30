@@ -181,12 +181,13 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	defer cancel()
 
 	var repoPath string
-	_ = h.DB.QueryRowContext(ctx, "SELECT COALESCE(repo_path,'') FROM tasks WHERE id=?", taskID).Scan(&repoPath)
+	if err := h.DB.QueryRowContext(ctx, "SELECT COALESCE(repo_path,'') FROM tasks WHERE id=?", taskID).Scan(&repoPath); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("fetch repo path: %w", err)
+	}
 	if repoPath == "" {
 		repoPath = h.RepoRoot
 	}
 
-	// Create worktree; prune on exit regardless of outcome.
 	wtPath, err := h.WM.CreateContext(ctx, taskID, runID)
 	if err != nil {
 		return nil, fmt.Errorf("create worktree: %w", err)
@@ -197,14 +198,12 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		}
 	}()
 
-	// Pre-run checkpoint.
 	preCP, _ := checkpoint.CreateCheckpoint(ctx, checkpoint.CreateOptions{
 		WorkDir:   wtPath,
 		SessionID: runID,
 		Message:   "pre-run " + taskID,
 	})
 
-	// Sanitized env: safe allowlist + provider credential keys.
 	providerEnv := security.ChildEnv(defaultProviderEnvKeys...)
 	if cfg.SkipPermissions {
 		providerEnv = append(providerEnv, "STAYPOINT_SKIP_PERMISSIONS=1")
@@ -276,39 +275,48 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
-	// Persist disposition to DB.
-	_, _ = h.DB.ExecContext(ctx,
+	// Cleanup writes use a fresh context: the run context may be expired (wallclock cap).
+	cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cleanCancel()
+
+	if _, err := h.DB.ExecContext(cleanCtx,
 		`UPDATE tasks SET execution_stage=?, updated_at=? WHERE id=?`,
 		result.Disposition, now, taskID,
-	)
+	); err != nil {
+		slog.Error("persist disposition failed", slog.String("task", taskID), slog.String("disposition", result.Disposition), slog.Any("error", err))
+	}
 
-	// Inject interceptor diagnostic as task comment.
 	if result.DiagnosticMsg != "" {
-		_, _ = h.DB.ExecContext(ctx,
+		if _, err := h.DB.ExecContext(cleanCtx,
 			`INSERT INTO task_comments (task_id, author, message) VALUES (?, 'harness', ?)`,
 			taskID, result.DiagnosticMsg,
-		)
+		); err != nil {
+			slog.Warn("inject diagnostic comment failed", slog.String("task", taskID), slog.Any("error", err))
+		}
 	}
 
-	// Record cost.
-	_, _ = h.DB.ExecContext(ctx,
+	if _, err := h.DB.ExecContext(cleanCtx,
 		`UPDATE tasks SET spent_turns=spent_turns+?, spent_usd=spent_usd+?, updated_at=? WHERE id=?`,
 		result.Turns, result.SpentUSD, now, taskID,
-	)
-
-	// Register work product when diff is non-empty.
-	if result.DiffStat != "" {
-		_, _ = h.DB.ExecContext(ctx,
-			`INSERT INTO task_work_products (task_id, product_type, reference) VALUES (?, 'workspace_file', ?)`,
-			taskID, ".worktrees/"+taskID,
-		)
+	); err != nil {
+		slog.Warn("persist cost failed", slog.String("task", taskID), slog.Any("error", err))
 	}
 
-	// Activity log.
-	_, _ = h.DB.ExecContext(ctx,
+	if result.DiffStat != "" {
+		if _, err := h.DB.ExecContext(cleanCtx,
+			`INSERT INTO task_work_products (task_id, product_type, reference) VALUES (?, 'workspace_file', ?)`,
+			taskID, ".worktrees/"+taskID,
+		); err != nil {
+			slog.Warn("register work product failed", slog.String("task", taskID), slog.Any("error", err))
+		}
+	}
+
+	if _, err := h.DB.ExecContext(cleanCtx,
 		`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, 'run_complete', ?)`,
 		taskID, fmt.Sprintf("disposition=%s turns=%d", result.Disposition, result.Turns),
-	)
+	); err != nil {
+		slog.Warn("activity log failed", slog.String("task", taskID), slog.Any("error", err))
+	}
 
 	return result, nil
 }
