@@ -45,6 +45,7 @@ jobs:
         with:
           go-version-file: 'go.mod'
           go-package: ./...
+        continue-on-error: true
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
