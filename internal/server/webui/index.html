@@ -221,9 +221,15 @@
     <!-- Agents view (full dedicated page) -->
     <section id="view-agents" class="view">
       <div class="view-header">
-        <h1 class="view-title">Agents</h1>
+        <div class="view-title-group">
+          <h1 class="view-title">Agents</h1>
+          <span class="refresh-indicator">Autonomous fleet workers & session executors</span>
+        </div>
         <div class="table-controls">
-          <input type="text" id="agents-search" placeholder="Filter by name or provider…" class="search-input">
+          <input type="text" id="agents-search" placeholder="Filter by name, role, task, or org…" class="search-input">
+          <select id="agents-org-filter" class="select-filter">
+            <option value="all">All Organizations</option>
+          </select>
           <select id="agents-provider-filter" class="select-filter">
             <option value="all">All Providers</option>
             <option value="claude">Claude</option>
@@ -232,6 +238,33 @@
           </select>
         </div>
       </div>
+
+      <!-- Agents Fleet Status Summary Bar -->
+      <div class="agents-summary-bar">
+        <div class="agents-status-pills">
+          <button class="agent-filter-pill active" data-status="all">
+            <span class="filter-pill-label">All Agents</span>
+            <span class="filter-pill-count" id="count-agents-all">0</span>
+          </button>
+          <button class="agent-filter-pill" data-status="running">
+            <span class="status-indicator-dot running pulse"></span>
+            <span class="filter-pill-label">Active Running</span>
+            <span class="filter-pill-count" id="count-agents-running">0</span>
+          </button>
+          <button class="agent-filter-pill" data-status="idle">
+            <span class="status-indicator-dot idle"></span>
+            <span class="filter-pill-label">Idle / Standby</span>
+            <span class="filter-pill-count" id="count-agents-idle">0</span>
+          </button>
+          <button class="agent-filter-pill" data-status="paused">
+            <span class="status-indicator-dot paused"></span>
+            <span class="filter-pill-label">Paused</span>
+            <span class="filter-pill-count" id="count-agents-paused">0</span>
+          </button>
+        </div>
+        <div class="agents-summary-metrics" id="agents-summary-metrics"></div>
+      </div>
+
       <div id="agents-grid" class="agents-grid"></div>
     </section>
 
