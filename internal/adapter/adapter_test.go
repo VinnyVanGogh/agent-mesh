@@ -3,8 +3,13 @@ package adapter
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -762,3 +767,70 @@ func TestFallbackClearsConversationID(t *testing.T) {
 		}
 	}
 }
+
+func TestCancelProcessGroup_NoOrphans(t *testing.T) {
+	tmpDir := t.TempDir()
+	pidFile := filepath.Join(tmpDir, "child.pid")
+	script := filepath.Join(tmpDir, "spawn.sh")
+
+	scriptContent := fmt.Sprintf(`#!/bin/sh
+sleep 60 &
+echo $! > %s
+wait
+`, pidFile)
+
+	if err := os.WriteFile(script, []byte(scriptContent), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var stdout, stderr bytes.Buffer
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runCommandWithEnv(ctx, tmpDir, script, nil, nil, nil, &stdout, &stderr)
+	}()
+
+	// Wait until grandchild PID is written
+	var childPID int
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(pidFile)
+		if err == nil && len(strings.TrimSpace(string(data))) > 0 {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+				childPID = pid
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if childPID == 0 {
+		cancel()
+		t.Fatal("timed out waiting for child PID")
+	}
+
+	// Verify the grandchild process is currently running
+	if err := syscall.Kill(childPID, 0); err != nil {
+		t.Fatalf("child process %d is not running: %v", childPID, err)
+	}
+
+	// Now cancel the context
+	cancel()
+
+	// Wait for runCommandWithEnv to return
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("expected context.Canceled error, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for runCommandWithEnv to exit")
+	}
+
+	// Verify the grandchild process is dead (no orphan process)
+	time.Sleep(100 * time.Millisecond)
+	if err := syscall.Kill(childPID, 0); err == nil {
+		t.Errorf("child process %d is still alive! orphan process was not killed", childPID)
+	}
+}
+

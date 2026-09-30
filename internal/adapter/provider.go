@@ -82,15 +82,29 @@ type Usage struct {
 // adapterFor returns the adapter for a provider key. Unknown providers route to
 // agy, matching the historical default of the adapter command.
 func adapterFor(provider string) ProviderAdapter {
-	if provider == "claude" {
+	switch provider {
+	case "claude":
 		return ClaudeAdapter{}
+	case "codex":
+		return CodexAdapter{}
+	case "ollama":
+		return OllamaAdapter{}
+	case "local", "openai-compat":
+		return LocalOpenAIAdapter{}
+	default:
+		return AgyAdapter{}
 	}
-	return AgyAdapter{}
 }
 
 // Adapters returns every built-in provider adapter.
 func Adapters() []ProviderAdapter {
-	return []ProviderAdapter{ClaudeAdapter{}, AgyAdapter{}}
+	return []ProviderAdapter{
+		ClaudeAdapter{},
+		AgyAdapter{},
+		CodexAdapter{},
+		OllamaAdapter{},
+		LocalOpenAIAdapter{},
+	}
 }
 
 func isClaudeModel(model string) bool {

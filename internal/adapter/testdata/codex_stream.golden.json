@@ -1,0 +1,41 @@
+[
+  {
+    "kind": "other",
+    "raw": "message:user"
+  },
+  {
+    "kind": "thinking",
+    "session_id": "rs_031f0abf4d4368e0006ab3291031a887d095a41a542461dfc6",
+    "raw": "reasoning"
+  },
+  {
+    "kind": "tool_use",
+    "session_id": "fc_68026609db8081918f623efd37d509290074847219b25f64",
+    "tool_name": "shell",
+    "tool_id": "call_Jkn3kXFFwFABIlHAN83qAQYC",
+    "status": "completed"
+  },
+  {
+    "kind": "tool_result",
+    "text": "{\"output\":\".\\n./README.md\\n./package.json\",\"metadata\":{\"exit_code\":0,\"duration_seconds\":0}}",
+    "tool_id": "call_Jkn3kXFFwFABIlHAN83qAQYC"
+  },
+  {
+    "kind": "text",
+    "session_id": "msg_6802660cc0588191b0e6b0b3d99d3aad0074847219b25f64",
+    "text": "I have inspected the repository and found README.md and package.json."
+  },
+  {
+    "kind": "result",
+    "session_id": "msg_6802660cc0588191b0e6b0b3d99d3aad0074847219b25f64",
+    "text": "I have inspected the repository and found README.md and package.json.",
+    "status": "completed",
+    "usage": {
+      "input_tokens": 120,
+      "output_tokens": 45,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "thinking_tokens": 0
+    }
+  }
+]

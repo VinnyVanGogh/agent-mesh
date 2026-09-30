@@ -96,6 +96,10 @@ func runAdapterProbe() {
 			fmt.Printf("%-7s %-8s unavailable: %v\n", a.Provider(), a.BinaryName(), err)
 			continue
 		}
+		if a.BinaryName() == "" {
+			fmt.Printf("%-7s %-8s loopback HTTP (net/http)\n", a.Provider(), "-")
+			continue
+		}
 		info, err := adapter.ProbeVersion(context.Background(), a, bin)
 		if err != nil {
 			fmt.Printf("%-7s %-8s probe failed: %v\n", a.Provider(), a.BinaryName(), err)

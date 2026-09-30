@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -28,6 +31,7 @@ var goldenCases = []struct {
 	{"claude_stream", ClaudeAdapter{}},
 	{"agy_stream_success", AgyAdapter{}},
 	{"agy_stream_quota_error", AgyAdapter{}},
+	{"codex_stream", CodexAdapter{}},
 }
 
 func parseFixture(t *testing.T, a ProviderAdapter, name string) []StreamDelta {
@@ -145,6 +149,199 @@ func TestAgyStreamSemantics(t *testing.T) {
 	}
 }
 
+func TestCodexStreamSemantics(t *testing.T) {
+	deltas := parseFixture(t, CodexAdapter{}, "codex_stream")
+
+	thinks := findKind(deltas, DeltaThinking)
+	if len(thinks) != 1 || thinks[0].SessionID == "" {
+		t.Errorf("expected 1 thinking delta, got %+v", thinks)
+	}
+
+	tools := findKind(deltas, DeltaToolUse)
+	if len(tools) != 1 || tools[0].ToolName != "shell" || tools[0].ToolID != "call_Jkn3kXFFwFABIlHAN83qAQYC" {
+		t.Fatalf("expected tool_use for shell, got %+v", tools)
+	}
+
+	results := findKind(deltas, DeltaToolResult)
+	if len(results) != 1 || results[0].ToolID != tools[0].ToolID || results[0].IsError || !strings.Contains(results[0].Text, "README.md") {
+		t.Errorf("expected successful tool_result with README.md, got %+v", results)
+	}
+
+	texts := findKind(deltas, DeltaText)
+	if len(texts) != 1 || !strings.Contains(texts[0].Text, "inspected the repository") {
+		t.Errorf("expected assistant text delta, got %+v", texts)
+	}
+
+	final := findKind(deltas, DeltaResult)
+	if len(final) != 1 || final[0].Status != "completed" || final[0].Usage == nil || final[0].Usage.InputTokens != 120 {
+		t.Fatalf("expected completed result with usage, got %+v", final)
+	}
+}
+
+func TestCodexBuildArgs(t *testing.T) {
+	opts := ParsedOptions{
+		Prompt:  "fix bug in main.go",
+		Model:   "o4-mini",
+		AddDirs: []string{"/path/to/dir1", "/path/to/dir2"},
+	}
+	args := (CodexAdapter{}).BuildArgs(opts)
+
+	expected := []string{
+		"-q",
+		"--dangerously-auto-approve-everything",
+		"-m", "o4-mini",
+		"-w", "/path/to/dir1",
+		"-w", "/path/to/dir2",
+		"fix bug in main.go",
+	}
+	if !reflect.DeepEqual(args, expected) {
+		t.Errorf("codex BuildArgs = %v, want %v", args, expected)
+	}
+}
+
+func TestLocalOpenAI_MockSSE(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/v1/chat/completions") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+
+		var req openAIChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if !req.Stream {
+			t.Errorf("expected stream: true")
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("expected http.Flusher")
+		}
+
+		events := []string{
+			`data: {"id":"chatcmpl-test","model":"llama-3","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello "},"finish_reason":null}]}`,
+			`data: {"id":"chatcmpl-test","model":"llama-3","choices":[{"index":0,"delta":{"content":"from local SSE!"},"finish_reason":null}]}`,
+			`data: {"id":"chatcmpl-test","model":"llama-3","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":8}}`,
+			`data: [DONE]`,
+		}
+
+		for _, ev := range events {
+			fmt.Fprintf(w, "%s\n\n", ev)
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	adapter := LocalOpenAIAdapter{BaseURL: server.URL}
+	var stdout bytes.Buffer
+	req := ExecRequest{
+		Opts: ParsedOptions{
+			Prompt: "Say hello",
+			Model:  "llama-3",
+		},
+		Stdout: &stdout,
+	}
+
+	if err := adapter.Execute(context.Background(), req); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	// Parse lines and verify deltas
+	var allDeltas []StreamDelta
+	sc := bufio.NewScanner(&stdout)
+	for sc.Scan() {
+		line := sc.Bytes()
+		deltas, err := adapter.ParseStreamDelta(line)
+		if err != nil {
+			t.Fatalf("ParseStreamDelta(%q): %v", string(line), err)
+		}
+		allDeltas = append(allDeltas, deltas...)
+	}
+
+	texts := findKind(allDeltas, DeltaText)
+	if len(texts) != 2 || texts[0].Text != "Hello " || texts[1].Text != "from local SSE!" {
+		t.Errorf("text deltas = %+v", texts)
+	}
+
+	results := findKind(allDeltas, DeltaResult)
+	if len(results) != 2 || results[0].Status != "stop" || results[1].Status != "completed" {
+		t.Errorf("result deltas = %+v", results)
+	}
+
+	usages := findKind(allDeltas, DeltaUsage)
+	if len(usages) != 1 || usages[0].Usage.InputTokens != 12 || usages[0].Usage.OutputTokens != 8 {
+		t.Errorf("usage deltas = %+v", usages)
+	}
+}
+
+func TestOllama_MockNDJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if !strings.HasSuffix(r.URL.Path, "/api/chat") {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Fatal("expected http.Flusher")
+		}
+
+		lines := []string{
+			`{"model":"llama3","created_at":"2026-09-29T00:00:00Z","message":{"role":"assistant","content":"Hello "},"done":false}`,
+			`{"model":"llama3","created_at":"2026-09-29T00:00:01Z","message":{"role":"assistant","content":"from Ollama!"},"done":false}`,
+			`{"model":"llama3","created_at":"2026-09-29T00:00:02Z","message":{"role":"assistant","content":""},"done":true,"prompt_eval_count":15,"eval_count":9}`,
+		}
+
+		for _, line := range lines {
+			fmt.Fprintf(w, "%s\n", line)
+			flusher.Flush()
+		}
+	}))
+	defer server.Close()
+
+	adapter := OllamaAdapter{BaseURL: server.URL}
+	var stdout bytes.Buffer
+	req := ExecRequest{
+		Opts: ParsedOptions{
+			Prompt: "Say hello",
+			Model:  "llama3",
+		},
+		Stdout: &stdout,
+	}
+
+	if err := adapter.Execute(context.Background(), req); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	var allDeltas []StreamDelta
+	sc := bufio.NewScanner(&stdout)
+	for sc.Scan() {
+		line := sc.Bytes()
+		deltas, err := adapter.ParseStreamDelta(line)
+		if err != nil {
+			t.Fatalf("ParseStreamDelta(%q): %v", string(line), err)
+		}
+		allDeltas = append(allDeltas, deltas...)
+	}
+
+	texts := findKind(allDeltas, DeltaText)
+	if len(texts) != 2 || texts[0].Text != "Hello " || texts[1].Text != "from Ollama!" {
+		t.Errorf("text deltas = %+v", texts)
+	}
+
+	results := findKind(allDeltas, DeltaResult)
+	if len(results) != 1 || results[0].Status != "completed" || results[0].Usage == nil || results[0].Usage.InputTokens != 15 || results[0].Usage.OutputTokens != 9 {
+		t.Errorf("result deltas = %+v", results)
+	}
+}
+
 func TestParseStreamDeltaKeepaliveAndGarbage(t *testing.T) {
 	for _, a := range Adapters() {
 		for _, blank := range []string{"", "   ", "\n"} {
@@ -258,6 +455,8 @@ func TestProbeVersion(t *testing.T) {
 		{"claude-future", "3.0.0 (Claude Code)", ClaudeAdapter{}, 3, false},
 		{"agy-current", "1.2.13", AgyAdapter{}, 1, true},
 		{"agy-garbage", "agy dev build", AgyAdapter{}, 0, false},
+		{"codex-current", "0.1.2504172351", CodexAdapter{}, 0, true},
+		{"codex-future", "1.0.0", CodexAdapter{}, 1, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

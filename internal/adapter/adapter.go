@@ -21,7 +21,7 @@ const testBinKey = "testBin"
 // runCommandWithEnv executes a command with optional extra environment variables,
 // anti-stall keepalive newlines, and unthrottled 32KB chunk streaming.
 func runCommandWithEnv(ctx context.Context, dir string, bin string, args []string, extraEnv []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
-	cmdExec := exec.CommandContext(ctx, bin, args...)
+	cmdExec := exec.Command(bin, args...)
 	cmdExec.Dir = dir
 	if stdin != nil {
 		cmdExec.Stdin = stdin
@@ -30,6 +30,7 @@ func runCommandWithEnv(ctx context.Context, dir string, bin string, args []strin
 	if len(extraEnv) > 0 {
 		cmdExec.Env = append(os.Environ(), extraEnv...)
 	}
+	setProcessGroup(cmdExec)
 
 	cmdStdout, err := cmdExec.StdoutPipe()
 	if err != nil {
@@ -84,9 +85,10 @@ func runCommandWithEnv(ctx context.Context, dir string, bin string, args []strin
 		case err := <-errCh:
 			return err
 		case <-ctx.Done():
-			if cmdExec.Process != nil {
-				_ = cmdExec.Process.Kill()
-			}
+			killProcessGroup(cmdExec, 1500*time.Millisecond)
+			go func() {
+				_ = cmdExec.Wait()
+			}()
 			return ctx.Err()
 		}
 	}

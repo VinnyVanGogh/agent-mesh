@@ -37,6 +37,7 @@ type Resolver struct {
 var envOverrideKeys = map[string]string{
 	"claude": "STAYPOINT_CLAUDE_BIN",
 	"gemini": "STAYPOINT_AGY_BIN",
+	"codex":  "STAYPOINT_CODEX_BIN",
 }
 
 // NewDefaultResolver builds a Resolver from the user's staypoint config and environment.
@@ -47,6 +48,7 @@ func NewDefaultResolver() *Resolver {
 	if cfg, err := config.LoadConfig(); err == nil && cfg != nil {
 		r.Overrides["claude"] = cfg.ClaudeBin
 		r.Overrides["gemini"] = cfg.AgyBin
+		r.Overrides["codex"] = cfg.CodexBin
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		r.ExtraDirs = []string{filepath.Join(home, ".local", "bin")}
@@ -59,6 +61,9 @@ func NewDefaultResolver() *Resolver {
 
 // Resolve returns the absolute path of the CLI binary for the given adapter.
 func (r *Resolver) Resolve(a ProviderAdapter) (string, error) {
+	if a.BinaryName() == "" {
+		return "", nil
+	}
 	provider := a.Provider()
 	getenv := r.Getenv
 	if getenv == nil {
