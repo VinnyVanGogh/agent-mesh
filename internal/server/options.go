@@ -1,0 +1,147 @@
+package server
+
+import (
+	"crypto/rand"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+var (
+	// ErrNonLoopbackBind is returned when an attempt is made to bind to a non-127.0.0.1 address.
+	ErrNonLoopbackBind = errors.New("server only binds to 127.0.0.1 (loopback)")
+	// ErrInvalidAuthToken is returned when an invalid or missing auth token is presented.
+	ErrInvalidAuthToken = errors.New("unauthorized: invalid or missing auth token")
+	// ErrDNSRebindingBlocked is returned when Host header validation fails.
+	ErrDNSRebindingBlocked = errors.New("forbidden: host not allowed (DNS rebinding protection)")
+	// ErrCrossOriginBlocked is returned when Origin header validation fails.
+	ErrCrossOriginBlocked = errors.New("forbidden: cross-origin request rejected")
+)
+
+// Options holds configuration settings for the HTTP and SSE server.
+type Options struct {
+	// BindHost MUST be "127.0.0.1". If empty, defaults to "127.0.0.1".
+	// Any other value will cause New() to return ErrNonLoopbackBind.
+	BindHost string
+
+	// Port to listen on. If 0, an ephemeral port is chosen automatically.
+	Port int
+
+	// AuthToken is the shared secret required for all API calls.
+	// If empty, New() will load from TokenPath or generate a cryptographically random token.
+	AuthToken string
+
+	// TokenPath is the filesystem path to store/read the auth token file.
+	// If empty and AuthToken is empty, a random token is generated in memory.
+	TokenPath string
+
+	// DB is the SQLite database connection backing the orchestrator.
+	DB *sql.DB
+
+	// Hub is an optional pre-existing EventHub. If nil, one will be created.
+	Hub *EventHub
+
+	// ReplayBufferSize is the capacity of the SSE replay buffer (default 1000).
+	ReplayBufferSize int
+
+	// SubscriberBufferSize is the bounded buffer size per SSE client channel (default 128).
+	SubscriberBufferSize int
+}
+
+// GenerateAuthToken generates a 32-byte (64-character hex) cryptographically secure random token.
+func GenerateAuthToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate random token: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// LoadOrCreateAuthToken loads an auth token from disk or generates and saves a new one.
+func LoadOrCreateAuthToken(tokenPath string) (string, error) {
+	if tokenPath != "" {
+		if data, err := os.ReadFile(tokenPath); err == nil {
+			t := strings.TrimSpace(string(data))
+			if len(t) >= 16 {
+				return t, nil
+			}
+		}
+	}
+
+	token, err := GenerateAuthToken()
+	if err != nil {
+		return "", err
+	}
+
+	if tokenPath != "" {
+		dir := filepath.Dir(tokenPath)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return "", fmt.Errorf("failed to create token dir: %w", err)
+		}
+		// Write with 0600 permissions so only owner can read
+		if err := os.WriteFile(tokenPath, []byte(token+"\n"), 0600); err != nil {
+			return "", fmt.Errorf("failed to write auth token: %w", err)
+		}
+	}
+
+	return token, nil
+}
+
+// Validate validates and sets default options.
+func (o *Options) Validate() error {
+	if o.BindHost == "" {
+		o.BindHost = "127.0.0.1"
+	}
+
+	// Strictly enforce 127.0.0.1 binding
+	if o.BindHost != "127.0.0.1" {
+		// Even localhost or 127.0.0.x is constrained: explicitly require 127.0.0.1
+		return fmt.Errorf("%w: attempted to bind to %q", ErrNonLoopbackBind, o.BindHost)
+	}
+
+	if o.AuthToken == "" {
+		if o.TokenPath != "" {
+			tok, err := LoadOrCreateAuthToken(o.TokenPath)
+			if err != nil {
+				return fmt.Errorf("auth token error: %w", err)
+			}
+			o.AuthToken = tok
+		} else {
+			tok, err := GenerateAuthToken()
+			if err != nil {
+				return fmt.Errorf("generate auth token: %w", err)
+			}
+			o.AuthToken = tok
+		}
+	}
+
+	if o.ReplayBufferSize <= 0 {
+		o.ReplayBufferSize = 1000
+	}
+
+	if o.SubscriberBufferSize <= 0 {
+		o.SubscriberBufferSize = 128
+	}
+
+	return nil
+}
+
+// CheckHostIsLoopback returns true if the host string represents 127.0.0.1 or localhost.
+func CheckHostIsLoopback(hostHeader string) bool {
+	h := hostHeader
+	if strings.Contains(hostHeader, ":") {
+		var err error
+		h, _, err = net.SplitHostPort(hostHeader)
+		if err != nil {
+			// Malformed host header with colon
+			return false
+		}
+	}
+	h = strings.ToLower(strings.TrimSpace(h))
+	return h == "127.0.0.1" || h == "localhost"
+}

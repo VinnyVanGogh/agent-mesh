@@ -2,12 +2,19 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
 	"time"
 
+	"github.com/VinnyVanGogh/staypoint/internal/config"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/ipc"
+	"github.com/VinnyVanGogh/staypoint/internal/server"
 	"github.com/spf13/cobra"
 )
 
@@ -134,12 +141,76 @@ var daemonSocketPathCmd = &cobra.Command{
 	},
 }
 
+var daemonServeCmd = &cobra.Command{
+	Use:     "serve",
+	Aliases: []string{"http"},
+	Short:   "Start the local HTTP and SSE daemon server (127.0.0.1 only)",
+	Run: func(cmd *cobra.Command, args []string) {
+		port, _ := cmd.Flags().GetInt("port")
+		token, _ := cmd.Flags().GetString("token")
+
+		if cfg == nil {
+			var err error
+			cfg, err = config.LoadConfig()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		dbStore, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer dbStore.Close()
+
+		tokenPath := filepath.Join(cfg.DataDir, "auth_token")
+		srv, err := server.New(server.Options{
+			BindHost:  "127.0.0.1",
+			Port:      port,
+			AuthToken: token,
+			TokenPath: tokenPath,
+			DB:        dbStore.DB(),
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error creating server: %v\n", err)
+			os.Exit(1)
+		}
+
+		if err := srv.Start(); err != nil {
+			fmt.Fprintf(os.Stderr, "error starting server: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("StayPoint local HTTP and SSE server running\n")
+		fmt.Printf("  URL:        %s\n", srv.URL())
+		fmt.Printf("  Auth Token: %s\n", srv.Token())
+		fmt.Printf("  Token File: %s\n", tokenPath)
+		fmt.Printf("Press Ctrl+C to stop.\n")
+
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		<-sigChan
+
+		fmt.Println("\nShutting down server...")
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+		fmt.Println("Server stopped.")
+	},
+}
+
 func init() {
 	daemonPingCmd.Flags().String("socket", "", "Override IPC socket path")
 	daemonStatusCmd.Flags().String("socket", "", "Override IPC socket path")
+	daemonServeCmd.Flags().Int("port", 41421, "Port for the HTTP and SSE server (127.0.0.1 only)")
+	daemonServeCmd.Flags().String("token", "", "Override auth token (defaults to saved or generated token)")
 
 	daemonCmd.AddCommand(daemonPingCmd)
 	daemonCmd.AddCommand(daemonStatusCmd)
 	daemonCmd.AddCommand(daemonSocketPathCmd)
+	daemonCmd.AddCommand(daemonServeCmd)
 	rootCmd.AddCommand(daemonCmd)
 }
+

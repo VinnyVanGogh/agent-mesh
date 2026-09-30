@@ -1,0 +1,180 @@
+package server
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"net"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+)
+
+// SecurityMiddleware returns a middleware that validates Host and Origin headers,
+// enforces no-wildcard CORS, and verifies the local auth token.
+type SecurityMiddleware struct {
+	token       string
+	port        int // actual bound port, if known (or 0 for any local port)
+}
+
+// NewSecurityMiddleware creates a new SecurityMiddleware.
+func NewSecurityMiddleware(token string, port int) *SecurityMiddleware {
+	return &SecurityMiddleware{
+		token: token,
+		port:  port,
+	}
+}
+
+// SetPort updates the port once the server is listening.
+func (sm *SecurityMiddleware) SetPort(port int) {
+	sm.port = port
+}
+
+// Wrap wraps an http.Handler with full security protections.
+func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 1. DNS Rebinding Protection (Host header check)
+		// Attacker web pages use DNS rebinding to point attacker domain to 127.0.0.1.
+		// The browser sends Host: evil.com. We MUST reject this.
+		host := r.Host
+		if host == "" {
+			host = r.Header.Get("Host")
+		}
+		if !sm.isValidHost(host) {
+			writeError(w, http.StatusForbidden, "forbidden: host not allowed (DNS rebinding protection)")
+			return
+		}
+
+		// 2. Cross-Origin Protection (Origin header check)
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			if !sm.isValidOrigin(origin) {
+				writeError(w, http.StatusForbidden, "forbidden: cross-origin request rejected")
+				return
+			}
+
+			// Valid Origin: reflect exact origin, NEVER wildcard '*'
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, X-StayPoint-Token, Content-Type, Last-Event-ID")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+			// Handle preflight OPTIONS request
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+
+		// 3. Auth Token Verification
+		if !sm.isAuthorized(r) {
+			writeError(w, http.StatusUnauthorized, "unauthorized: invalid or missing auth token")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// isValidHost checks if the Host header is loopback (127.0.0.1 or localhost).
+func (sm *SecurityMiddleware) isValidHost(hostHeader string) bool {
+	if hostHeader == "" {
+		return false
+	}
+
+	h := hostHeader
+	p := 0
+	if strings.Contains(hostHeader, ":") {
+		var portStr string
+		var err error
+		h, portStr, err = net.SplitHostPort(hostHeader)
+		if err != nil {
+			return false
+		}
+		p, _ = strconv.Atoi(portStr)
+	}
+
+	h = strings.ToLower(strings.TrimSpace(h))
+	if h != "127.0.0.1" && h != "localhost" {
+		return false
+	}
+
+	// If a specific server port is known and the request included a port, verify it matches
+	if sm.port > 0 && p > 0 && p != sm.port {
+		return false
+	}
+
+	return true
+}
+
+// isValidOrigin checks if the Origin header is a valid local loopback origin.
+func (sm *SecurityMiddleware) isValidOrigin(originHeader string) bool {
+	if originHeader == "" {
+		return true
+	}
+
+	u, err := url.Parse(originHeader)
+	if err != nil {
+		return false
+	}
+
+	// Must be http:// (or https:// only if local TLS is enabled, but local daemon uses http)
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+
+	hostname := strings.ToLower(u.Hostname())
+	if hostname != "127.0.0.1" && hostname != "localhost" {
+		return false
+	}
+
+	// If port is specified and our port is configured, check port match
+	if sm.port > 0 && u.Port() != "" {
+		p, err := strconv.Atoi(u.Port())
+		if err == nil && p != sm.port {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isAuthorized verifies the auth token from Bearer header, X-StayPoint-Token header, or ?token= query param.
+func (sm *SecurityMiddleware) isAuthorized(r *http.Request) bool {
+	if sm.token == "" {
+		return false
+	}
+
+	// 1. Authorization: Bearer <token>
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(token), []byte(sm.token)) == 1 {
+			return true
+		}
+	}
+
+	// 2. X-StayPoint-Token: <token>
+	if xToken := r.Header.Get("X-StayPoint-Token"); xToken != "" {
+		if subtle.ConstantTimeCompare([]byte(xToken), []byte(sm.token)) == 1 {
+			return true
+		}
+	}
+
+	// 3. Query param ?token=<token> (needed for browser EventSource / SSE)
+	if qToken := r.URL.Query().Get("token"); qToken != "" {
+		if subtle.ConstantTimeCompare([]byte(qToken), []byte(sm.token)) == 1 {
+			return true
+		}
+	}
+
+	return false
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error": msg,
+	})
+}
