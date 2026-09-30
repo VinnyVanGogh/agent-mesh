@@ -195,6 +195,34 @@ CREATE TABLE IF NOT EXISTS agent_circuit_breakers (
 );
 
 CREATE INDEX IF NOT EXISTS idx_circuit_breakers_active ON agent_circuit_breakers (repo_path, is_tripped);
+
+CREATE TABLE IF NOT EXISTS checklist_items (
+    id          TEXT PRIMARY KEY,
+    sprint      TEXT NOT NULL DEFAULT 'STA-168',
+    section     TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    description TEXT,
+    how_to_test TEXT,
+    status      TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending','pass','fail','skip','not_done')),
+    notes       TEXT,
+    version     INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_checklist_sprint_section ON checklist_items (sprint, section);
+
+CREATE TABLE IF NOT EXISTS checklist_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id     TEXT NOT NULL REFERENCES checklist_items(id) ON DELETE CASCADE,
+    status      TEXT NOT NULL,
+    notes       TEXT,
+    changed_by  TEXT NOT NULL DEFAULT 'user',
+    changed_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_checklist_history_item ON checklist_history (item_id, id DESC);
 ` + ChatSchema
 
 const ChatSchema = `
@@ -481,6 +509,31 @@ var Migrations = []Migration{
 	},
 	{
 		Version: 6,
+		Name:    "telemetry_queue",
+		Up: func(conn *sql.DB) error {
+			queries := []string{
+				`CREATE TABLE IF NOT EXISTS telemetry_queue (
+					id          INTEGER PRIMARY KEY AUTOINCREMENT,
+					event_name  TEXT NOT NULL,
+					properties  TEXT NOT NULL,
+					distinct_id TEXT NOT NULL,
+					timestamp   TEXT NOT NULL,
+					retry_count INTEGER NOT NULL DEFAULT 0,
+					status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'failed')),
+					created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				);`,
+				`CREATE INDEX IF NOT EXISTS idx_telemetry_queue_status ON telemetry_queue (status, retry_count, id);`,
+			}
+			for _, q := range queries {
+				if _, err := conn.Exec(q); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
+	{
+		Version: 7,
 		Name:    "checklist",
 		Up: func(conn *sql.DB) error {
 			queries := []string{
@@ -499,7 +552,7 @@ var Migrations = []Migration{
 					updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 				);`,
 				`CREATE INDEX IF NOT EXISTS idx_checklist_sprint_section
-				    ON checklist_items (sprint, section, rowid);`,
+				    ON checklist_items (sprint, section);`,
 				`CREATE TABLE IF NOT EXISTS checklist_history (
 					id          INTEGER PRIMARY KEY AUTOINCREMENT,
 					item_id     TEXT NOT NULL REFERENCES checklist_items(id) ON DELETE CASCADE,
