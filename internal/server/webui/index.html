@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="staypoint-token" content="{{.Token}}">
+<title>StayPoint</title>
+<link rel="stylesheet" href="/ui/style.css">
+</head>
+<body>
+<header id="header">
+  <span class="logo">StayPoint</span>
+  <nav>
+    <button class="tab active" data-view="kanban">Kanban</button>
+    <button class="tab" data-view="fleet">Fleet</button>
+    <button class="tab" data-view="boss">Boss Card</button>
+  </nav>
+  <span id="conn-badge" class="badge badge-connecting">connecting</span>
+</header>
+
+<main>
+  <!-- Kanban view -->
+  <section id="view-kanban" class="view active">
+    <div id="kanban-board" class="kanban-board">
+      <div class="kanban-col" data-status="todo">
+        <h2 class="col-title">Todo</h2>
+        <div class="card-list" id="col-todo"></div>
+      </div>
+      <div class="kanban-col" data-status="in_progress">
+        <h2 class="col-title">In Progress</h2>
+        <div class="card-list" id="col-in_progress"></div>
+      </div>
+      <div class="kanban-col" data-status="blocked">
+        <h2 class="col-title">Blocked</h2>
+        <div class="card-list" id="col-blocked"></div>
+      </div>
+      <div class="kanban-col" data-status="done">
+        <h2 class="col-title">Done</h2>
+        <div class="card-list" id="col-done"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Fleet view -->
+  <section id="view-fleet" class="view">
+    <div id="fleet-grid" class="fleet-grid"></div>
+  </section>
+
+  <!-- Boss Card view -->
+  <section id="view-boss" class="view">
+    <div id="boss-container" class="boss-container"></div>
+  </section>
+</main>
+
+<!-- Task detail panel -->
+<aside id="detail-panel" class="detail-panel hidden">
+  <button id="panel-close" class="panel-close" aria-label="Close">&times;</button>
+  <div id="panel-content"></div>
+</aside>
+
+<script src="/ui/app.js"></script>
+</body>
+</html>
