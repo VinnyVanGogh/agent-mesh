@@ -234,6 +234,13 @@ func (h *ChecklistHandler) Seed(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	if body.Force {
+		if _, err := tx.ExecContext(r.Context(), `DELETE FROM checklist_items WHERE sprint=?`, sprint); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to reset sprint items: "+err.Error())
+			return
+		}
+	}
+
 	for _, it := range items {
 		if it.ID == "" {
 			it.ID = uuid.NewString()
