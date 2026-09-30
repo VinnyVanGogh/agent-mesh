@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/VinnyVanGogh/staypoint/internal/bridge"
+	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
 	"github.com/google/uuid"
 )
 
@@ -130,6 +131,9 @@ func CreateTaskWithOptions(db *sql.DB, opts TaskCreateOptions) (*Task, error) {
 	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns, opts.Organization, opts.Project, parentID); err != nil {
 		return nil, fmt.Errorf("failed to insert task: %w", err)
 	}
+
+	// Waking the agent as the task is ready for assignment/pickup
+	_ = orchestrator.NotifyDaemon(taskID, "assignment", "")
 
 	return GetTask(db, taskID)
 }
@@ -536,6 +540,24 @@ func MarkTaskDone(db *sql.DB, id string) error {
 	if affected == 0 {
 		return fmt.Errorf("task not found: %s", id)
 	}
+
+	// Unblock any tasks that were waiting on this one
+	rows, err := db.Query(`SELECT blocks_id FROM task_relations WHERE task_id = ?`, task.ID)
+	if err == nil {
+		var blockedIDs []string
+		for rows.Next() {
+			var bid string
+			if err := rows.Scan(&bid); err == nil {
+				blockedIDs = append(blockedIDs, bid)
+			}
+		}
+		rows.Close()
+
+		for _, bid := range blockedIDs {
+			_ = UnblockTask(db, bid, task.ID)
+		}
+	}
+
 	return nil
 }
 
@@ -578,6 +600,11 @@ func AddTaskComment(db *sql.DB, taskID, author, message string) error {
 	}
 	query := `INSERT INTO task_comments (task_id, author, message) VALUES (?, ?, ?)`
 	_, err = db.Exec(query, task.ID, author, message)
+
+	if err == nil {
+		_ = orchestrator.NotifyDaemon(task.ID, "comment", "")
+	}
+
 	return err
 }
 
@@ -646,6 +673,7 @@ func UnblockTask(db *sql.DB, taskID string, unblockFromIDs ...string) error {
 		return err
 	}
 
+	var actuallyUnblocked bool
 	if len(unblockFromIDs) > 0 {
 		for _, unblockFromID := range unblockFromIDs {
 			unblockFromTask, err := GetTask(db, unblockFromID)
@@ -670,6 +698,7 @@ func UnblockTask(db *sql.DB, taskID string, unblockFromIDs ...string) error {
 				tx.Rollback()
 				return err
 			}
+			actuallyUnblocked = true
 		}
 	} else {
 		if _, err := tx.Exec(`DELETE FROM task_relations WHERE blocks_id = ?`, task.ID); err != nil {
@@ -680,9 +709,18 @@ func UnblockTask(db *sql.DB, taskID string, unblockFromIDs ...string) error {
 			tx.Rollback()
 			return err
 		}
+		actuallyUnblocked = true
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	if actuallyUnblocked {
+		_ = orchestrator.NotifyDaemon(task.ID, "blocker_cleared", "")
+	}
+
+	return nil
 }
 
 func ArchiveTask(db *sql.DB, taskID string) error {
