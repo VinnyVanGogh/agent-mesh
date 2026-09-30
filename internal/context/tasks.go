@@ -21,6 +21,7 @@ type Task struct {
 	GitBranch       string  `json:"git_branch"`
 	Status          string  `json:"status"`       // active, done, soft_deleted
 	AccountRole     string  `json:"account_role"` // work, personal, other
+	Priority        string  `json:"priority"`     // critical, urgent, high, medium, low
 	MaxBudgetUSD    float64 `json:"max_budget_usd"`
 	MaxTurns        int     `json:"max_turns"`
 	SpentTokens     int64   `json:"spent_tokens"`
@@ -45,6 +46,7 @@ type TaskCreateOptions struct {
 	RepoPath     string
 	GitBranch    string
 	AccountRole  string
+	Priority     string
 	MaxBudgetUSD float64
 	MaxTurns     int
 	Organization string
@@ -111,16 +113,21 @@ func CreateTaskWithOptions(db *sql.DB, opts TaskCreateOptions) (*Task, error) {
 		}
 	}
 
+	priority := strings.ToLower(strings.TrimSpace(opts.Priority))
+	if priority == "" {
+		priority = "medium"
+	}
+
 	taskID := fmt.Sprintf("task-%s", uuid.New().String()[:8])
 
 	query := `
 		INSERT INTO tasks (
-			id, name, repo_path, git_branch, status, account_role,
+			id, name, repo_path, git_branch, status, account_role, priority,
 			max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 			organization, project, parent_id,
 			created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 0, 0.0, 0, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, 0, 0.0, 0, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 	`
 
 	var parentID interface{}
@@ -128,7 +135,7 @@ func CreateTaskWithOptions(db *sql.DB, opts TaskCreateOptions) (*Task, error) {
 		parentID = opts.ParentID
 	}
 
-	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns, opts.Organization, opts.Project, parentID); err != nil {
+	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, priority, opts.MaxBudgetUSD, opts.MaxTurns, opts.Organization, opts.Project, parentID); err != nil {
 		return nil, fmt.Errorf("failed to insert task: %w", err)
 	}
 
@@ -189,6 +196,35 @@ func UpdateTaskBudget(db *sql.DB, taskID string, maxUSD float64, maxTurns int) e
 	return nil
 }
 
+// UpdateTaskPriority updates the priority level for an existing task.
+func UpdateTaskPriority(db *sql.DB, taskID string, priority string) error {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return err
+	}
+
+	norm := strings.ToLower(strings.TrimSpace(priority))
+	if norm == "" {
+		norm = "medium"
+	}
+
+	query := `
+		UPDATE tasks
+		SET priority = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		WHERE id = ?
+	`
+	res, err := db.Exec(query, norm, task.ID)
+	if err != nil {
+		return fmt.Errorf("failed to update task priority: %w", err)
+	}
+
+	affected, _ := res.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("task not found: %s", taskID)
+	}
+	return nil
+}
+
 // BudgetEvaluation encapsulates the status of a task's spending limits.
 type BudgetEvaluation struct {
 	IsBlocked bool
@@ -237,7 +273,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 	var query string
 	if includeAll {
 		query = `
-			SELECT id, name, repo_path, git_branch, status, account_role,
+			SELECT id, name, repo_path, git_branch, status, account_role, COALESCE(priority, 'medium'),
 			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 			       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id,
 			       is_blocked, block_reason, created_at, updated_at, deleted_at
@@ -247,7 +283,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		`
 	} else {
 		query = `
-			SELECT id, name, repo_path, git_branch, status, account_role,
+			SELECT id, name, repo_path, git_branch, status, account_role, COALESCE(priority, 'medium'),
 			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 			       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id,
 			       is_blocked, block_reason, created_at, updated_at, deleted_at
@@ -266,6 +302,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 	var tasks []Task
 	for rows.Next() {
 		var t Task
+		var priority sql.NullString
 		var deletedAt, org, proj, blockReason, parentID, checkoutRunID, checkoutAgentID sql.NullString
 		if err := rows.Scan(
 			&t.ID,
@@ -274,6 +311,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 			&t.GitBranch,
 			&t.Status,
 			&t.AccountRole,
+			&priority,
 			&t.MaxBudgetUSD,
 			&t.MaxTurns,
 			&t.SpentTokens,
@@ -292,6 +330,11 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 			&deletedAt,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan task row: %w", err)
+		}
+		if priority.Valid && priority.String != "" {
+			t.Priority = priority.String
+		} else {
+			t.Priority = "medium"
 		}
 		if blockReason.Valid {
 			t.BlockReason = blockReason.String
@@ -330,7 +373,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 func GetTask(db *sql.DB, id string) (*Task, error) {
 	id = strings.TrimSpace(id)
 	query := `
-		SELECT id, name, repo_path, git_branch, status, account_role,
+		SELECT id, name, repo_path, git_branch, status, account_role, COALESCE(priority, 'medium'),
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
 		FROM tasks
@@ -346,6 +389,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 
 	row := db.QueryRow(query, id, fullID, prefixMatch)
 	var t Task
+	var priority sql.NullString
 	var deletedAt, org, proj, blockReason, parentID, checkoutRunID, checkoutAgentID sql.NullString
 	if err := row.Scan(
 		&t.ID,
@@ -354,6 +398,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 		&t.GitBranch,
 		&t.Status,
 		&t.AccountRole,
+		&priority,
 		&t.MaxBudgetUSD,
 		&t.MaxTurns,
 		&t.SpentTokens,
@@ -375,6 +420,11 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 			return nil, fmt.Errorf("task not found: %s", id)
 		}
 		return nil, fmt.Errorf("failed to get task: %w", err)
+	}
+	if priority.Valid && priority.String != "" {
+		t.Priority = priority.String
+	} else {
+		t.Priority = "medium"
 	}
 	if blockReason.Valid {
 		t.BlockReason = blockReason.String
@@ -400,7 +450,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 
 	// First try exact or prefix match on repo_path
 	query := `
-		SELECT id, name, repo_path, git_branch, status, account_role,
+		SELECT id, name, repo_path, git_branch, status, account_role, COALESCE(priority, 'medium'),
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
 		FROM tasks
@@ -410,6 +460,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	`
 	row := db.QueryRow(query, cleanPath, cleanPath+"/%")
 	var t Task
+	var priority sql.NullString
 	var deletedAt, org, proj, blockReason, parentID, checkoutRunID, checkoutAgentID sql.NullString
 	err := row.Scan(
 		&t.ID,
@@ -418,6 +469,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.GitBranch,
 		&t.Status,
 		&t.AccountRole,
+		&priority,
 		&t.MaxBudgetUSD,
 		&t.MaxTurns,
 		&t.SpentTokens,
@@ -436,17 +488,16 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&deletedAt,
 	)
 	if err == nil {
+		if priority.Valid && priority.String != "" {
+			t.Priority = priority.String
+		} else {
+			t.Priority = "medium"
+		}
 		if blockReason.Valid {
 			t.BlockReason = blockReason.String
 		}
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
-		}
-		if org.Valid {
-			t.Organization = org.String
-		}
-		if proj.Valid {
-			t.Project = proj.String
 		}
 		if org.Valid {
 			t.Organization = org.String
@@ -459,7 +510,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 
 	// Fallback to most recent active task in any repo
 	fallbackQuery := `
-		SELECT id, name, repo_path, git_branch, status, account_role,
+		SELECT id, name, repo_path, git_branch, status, account_role, COALESCE(priority, 'medium'),
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
 		FROM tasks
@@ -468,6 +519,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		LIMIT 1
 	`
 	fbRow := db.QueryRow(fallbackQuery)
+	var fbPriority sql.NullString
 	err = fbRow.Scan(
 		&t.ID,
 		&t.Name,
@@ -475,6 +527,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.GitBranch,
 		&t.Status,
 		&t.AccountRole,
+		&fbPriority,
 		&t.MaxBudgetUSD,
 		&t.MaxTurns,
 		&t.SpentTokens,
@@ -493,17 +546,16 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&deletedAt,
 	)
 	if err == nil {
+		if fbPriority.Valid && fbPriority.String != "" {
+			t.Priority = fbPriority.String
+		} else {
+			t.Priority = "medium"
+		}
 		if blockReason.Valid {
 			t.BlockReason = blockReason.String
 		}
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
-		}
-		if org.Valid {
-			t.Organization = org.String
-		}
-		if proj.Valid {
-			t.Project = proj.String
 		}
 		if org.Valid {
 			t.Organization = org.String

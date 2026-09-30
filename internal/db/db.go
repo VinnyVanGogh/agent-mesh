@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     git_branch     TEXT,
     status         TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'done', 'soft_deleted')),
     account_role   TEXT NOT NULL DEFAULT 'work',
+    priority       TEXT NOT NULL DEFAULT 'medium',
     max_budget_usd REAL NOT NULL DEFAULT 0.0,
     max_turns      INTEGER NOT NULL DEFAULT 0,
     spent_tokens   INTEGER NOT NULL DEFAULT 0,
@@ -308,6 +309,7 @@ func migrateSchemaTasksCols(conn *sql.DB) error {
 		{"project", "TEXT"},
 		{"is_blocked", "INTEGER NOT NULL DEFAULT 0"},
 		{"block_reason", "TEXT"},
+		{"priority", "TEXT NOT NULL DEFAULT 'medium'"},
 	}
 
 	for _, c := range cols {
@@ -399,6 +401,17 @@ var Migrations = []Migration{
 				}
 			}
 			_, err := conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_interactions_idempotency ON task_interactions(task_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';`)
+			return err
+		},
+	},
+	{
+		Version: 6,
+		Name:    "priority_and_pacing",
+		Up: func(conn *sql.DB) error {
+			if _, err := conn.Exec("ALTER TABLE tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'medium';"); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+				return err
+			}
+			_, err := conn.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_queue ON tasks(status, execution_stage, is_blocked, priority, created_at);`)
 			return err
 		},
 	},
