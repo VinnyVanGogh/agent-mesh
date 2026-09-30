@@ -101,6 +101,19 @@ func TestServer_REST_Checklist(t *testing.T) {
 		t.Fatalf("unexpected patch result: %+v", patchedItem)
 	}
 
+	// 4b. Update with partial status (and in_between alias)
+	patchPartialPayload := []byte(`{"status":"in_between","notes":"Partially implemented, needs work"}`)
+	resp, body = doReq("PATCH", fmt.Sprintf("%s/api/checklist/%s", baseURL, firstID), patchPartialPayload)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from partial patch, got %d: %s", resp.StatusCode, string(body))
+	}
+	if err := json.Unmarshal(body, &patchedItem); err != nil {
+		t.Fatalf("unmarshal patch response failed: %v", err)
+	}
+	if patchedItem.Status != "partial" || patchedItem.Notes != "Partially implemented, needs work" || patchedItem.Version != 3 {
+		t.Fatalf("unexpected partial patch result: %+v", patchedItem)
+	}
+
 	// 5. Get history
 	resp, body = doReq("GET", fmt.Sprintf("%s/api/checklist/%s/history", baseURL, firstID), nil)
 	if resp.StatusCode != http.StatusOK {
@@ -116,7 +129,7 @@ func TestServer_REST_Checklist(t *testing.T) {
 	if err := json.Unmarshal(body, &historyResp); err != nil {
 		t.Fatalf("unmarshal history failed: %v", err)
 	}
-	if len(historyResp.History) != 1 || historyResp.History[0].Status != "pass" {
+	if len(historyResp.History) != 2 || historyResp.History[0].Status != "partial" || historyResp.History[1].Status != "pass" {
 		t.Fatalf("unexpected history entries: %+v", historyResp.History)
 	}
 }

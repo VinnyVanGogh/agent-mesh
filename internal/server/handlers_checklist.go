@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,7 +34,7 @@ func ensureChecklistTables(db *sql.DB) error {
 		description TEXT,
 		how_to_test TEXT,
 		status      TEXT NOT NULL DEFAULT 'pending'
-		            CHECK (status IN ('pending','pass','fail','skip','not_done')),
+		            CHECK (status IN ('pending','pass','partial','fail','skip','not_done')),
 		notes       TEXT,
 		version     INTEGER NOT NULL DEFAULT 1,
 		created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -50,8 +51,38 @@ func ensureChecklistTables(db *sql.DB) error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_checklist_history_item ON checklist_history (item_id, id DESC);
 	`
-	_, err := db.Exec(schema)
-	return err
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+
+	// Idempotently check and migrate CHECK constraint if partial is missing
+	var sqlDef string
+	_ = db.QueryRow(`SELECT sql FROM sqlite_master WHERE type='table' AND name='checklist_items'`).Scan(&sqlDef)
+	if sqlDef != "" && !strings.Contains(sqlDef, "'partial'") {
+		_, _ = db.Exec(`
+			PRAGMA foreign_keys = OFF;
+			CREATE TABLE IF NOT EXISTS checklist_items_new (
+				id          TEXT PRIMARY KEY,
+				sprint      TEXT NOT NULL DEFAULT 'STA-168',
+				section     TEXT NOT NULL,
+				title       TEXT NOT NULL,
+				description TEXT,
+				how_to_test TEXT,
+				status      TEXT NOT NULL DEFAULT 'pending'
+				            CHECK (status IN ('pending','pass','partial','fail','skip','not_done')),
+				notes       TEXT,
+				version     INTEGER NOT NULL DEFAULT 1,
+				created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+				updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+			);
+			INSERT INTO checklist_items_new SELECT * FROM checklist_items;
+			DROP TABLE checklist_items;
+			ALTER TABLE checklist_items_new RENAME TO checklist_items;
+			CREATE INDEX IF NOT EXISTS idx_checklist_sprint_section ON checklist_items (sprint, section);
+			PRAGMA foreign_keys = ON;
+		`)
+	}
+	return nil
 }
 
 // ChecklistItem represents one verifiable claim.
@@ -152,7 +183,10 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	validStatuses := map[string]bool{
-		"pending": true, "pass": true, "fail": true, "skip": true, "not_done": true,
+		"pending": true, "pass": true, "partial": true, "fail": true, "skip": true, "not_done": true,
+	}
+	if body.Status == "in_between" || body.Status == "needs_work" {
+		body.Status = "partial"
 	}
 	if body.Status != "" && !validStatuses[body.Status] {
 		writeError(w, http.StatusBadRequest, "invalid status")

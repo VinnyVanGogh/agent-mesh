@@ -683,12 +683,31 @@ html, body {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ── Checklist ───────────────────────────────────────────── */
-.checklist-section { margin-bottom: 28px; }
-.checklist-section-title {
+.checklist-toolbar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+.cl-ctrl-btn {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--muted); cursor: pointer; font-size: 11px; padding: 5px 10px; font-weight: 500;
+  transition: all .15s;
+}
+.cl-ctrl-btn:hover { color: var(--fg); border-color: var(--border-light); background: rgba(255,255,255,.05); }
+
+.checklist-section { margin-bottom: 24px; }
+.checklist-section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 10px; cursor: pointer; border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,.02); border-radius: 4px; user-select: none;
+  transition: background .15s; margin-bottom: 4px;
+}
+.checklist-section-header:hover { background: rgba(255,255,255,.05); }
+.checklist-section-title-left { display: flex; align-items: center; gap: 8px; }
+.checklist-section-chevron { font-size: 10px; color: var(--muted); width: 14px; text-align: center; }
+.checklist-section-name {
   font-size: 11px; font-weight: 700; letter-spacing: .08em;
   text-transform: uppercase; color: var(--muted);
-  padding: 6px 0 8px; border-bottom: 1px solid var(--border); margin-bottom: 4px;
 }
+.checklist-section-badges { font-size: 11px; color: var(--muted); font-weight: 500; }
+.checklist-section-body { margin-top: 4px; }
+
 .checklist-item {
   display: grid; grid-template-columns: 28px 1fr auto;
   align-items: start; gap: 8px;
@@ -703,15 +722,17 @@ html, body {
   color: var(--muted);
 }
 .cl-btn:hover { border-color: var(--border-light); color: var(--fg); }
-.cl-btn.active-pass  { background: rgba(80,200,120,.18); border-color: var(--green); color: var(--green); }
-.cl-btn.active-fail  { background: rgba(248, 81, 73,.18); border-color: var(--red); color: var(--red); }
-.cl-btn.active-skip  { background: rgba(139,148,158,.18); border-color: var(--muted); color: var(--muted); }
+.cl-btn.active-pass    { background: rgba(80,200,120,.18); border-color: var(--green); color: var(--green); }
+.cl-btn.active-partial { background: rgba(245,158,11,.18); border-color: #f59e0b; color: #f59e0b; }
+.cl-btn.active-fail    { background: rgba(248, 81, 73,.18); border-color: var(--red); color: var(--red); }
+.cl-btn.active-skip    { background: rgba(139,148,158,.18); border-color: var(--muted); color: var(--muted); }
 .cl-btn.active-not_done { background: rgba(248,166,0,.18); border-color: var(--amber); color: var(--amber); }
 .checklist-body { flex: 1; min-width: 0; }
 .checklist-title { font-size: 13px; font-weight: 500; line-height: 1.4; }
-.checklist-title.status-pass  { color: var(--green); text-decoration: line-through; }
-.checklist-title.status-fail  { color: var(--red); }
-.checklist-title.status-skip  { color: var(--muted); text-decoration: line-through; }
+.checklist-title.status-pass    { color: var(--green); text-decoration: line-through; }
+.checklist-title.status-partial { color: #f59e0b; font-weight: 600; }
+.checklist-title.status-fail    { color: var(--red); }
+.checklist-title.status-skip    { color: var(--muted); text-decoration: line-through; }
 .checklist-title.status-not_done { color: var(--amber); }
 .checklist-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .checklist-howto { font-size: 11px; color: var(--cyan); font-family: monospace; margin-top: 3px; }

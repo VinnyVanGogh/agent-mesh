@@ -2128,6 +2128,17 @@ async function loadChecklistSprints() {
   } catch { /* sprints endpoint optional */ }
 }
 
+function getSectionCollapsed(sectionName, isFinished) {
+  const stored = localStorage.getItem('staypoint_cl_col_' + sectionName);
+  if (stored !== null) return stored === 'true';
+  // Default: start collapsed if all items in section are reviewed
+  return isFinished;
+}
+
+function setSectionCollapsed(sectionName, collapsed) {
+  localStorage.setItem('staypoint_cl_col_' + sectionName, collapsed ? 'true' : 'false');
+}
+
 function renderChecklist() {
   const container = document.getElementById('checklist-container');
   if (!container) return;
@@ -2149,7 +2160,7 @@ function renderChecklist() {
 
   // Progress bar
   const total = checklistItems.length;
-  const done  = checklistItems.filter(i => i.status === 'pass' || i.status === 'fail' || i.status === 'skip').length;
+  const done  = checklistItems.filter(i => i.status !== 'pending').length;
   const pct   = total ? Math.round(done / total * 100) : 0;
 
   const progBar = el('div', 'checklist-progress-bar');
@@ -2161,21 +2172,90 @@ function renderChecklist() {
   const progEl = document.getElementById('checklist-progress');
   if (progEl) progEl.textContent = `${done}/${total} reviewed (${pct}%)`;
 
+  // Section Collapse toolbar
+  const toolbar = el('div', 'checklist-toolbar');
+
+  const colCompBtn = el('button', 'cl-ctrl-btn', 'Collapse Finished');
+  colCompBtn.title = 'Collapse all sections where 100% of items are reviewed';
+  colCompBtn.addEventListener('click', () => {
+    for (const [secName, secItems] of Object.entries(sections)) {
+      const isFin = secItems.every(i => i.status !== 'pending');
+      setSectionCollapsed(secName, isFin);
+    }
+    renderChecklist();
+  });
+
+  const expAllBtn = el('button', 'cl-ctrl-btn', 'Expand All');
+  expAllBtn.addEventListener('click', () => {
+    for (const secName of Object.keys(sections)) {
+      setSectionCollapsed(secName, false);
+    }
+    renderChecklist();
+  });
+
+  const colAllBtn = el('button', 'cl-ctrl-btn', 'Collapse All');
+  colAllBtn.addEventListener('click', () => {
+    for (const secName of Object.keys(sections)) {
+      setSectionCollapsed(secName, true);
+    }
+    renderChecklist();
+  });
+
+  toolbar.appendChild(colCompBtn);
+  toolbar.appendChild(expAllBtn);
+  toolbar.appendChild(colAllBtn);
+  container.appendChild(toolbar);
+
   for (const [sectionName, items] of Object.entries(sections)) {
     const sec = el('div', 'checklist-section dashboard-section');
+    const isFinished = items.every(i => i.status !== 'pending');
+    const isCollapsed = getSectionCollapsed(sectionName, isFinished);
 
-    const titleEl = el('div', 'checklist-section-title', sectionName);
+    const header = el('div', 'checklist-section-header');
+
+    const titleLeft = el('div', 'checklist-section-title-left');
+    const chevron = el('span', 'checklist-section-chevron', isCollapsed ? '▶' : '▼');
+    const titleText = el('span', 'checklist-section-name', sectionName);
+    titleLeft.appendChild(chevron);
+    titleLeft.appendChild(titleText);
+
     const passCount = items.filter(i => i.status === 'pass').length;
+    const partialCount = items.filter(i => i.status === 'partial').length;
     const failCount = items.filter(i => i.status === 'fail').length;
     const notDoneCount = items.filter(i => i.status === 'not_done').length;
-    if (passCount || failCount || notDoneCount) {
-      titleEl.textContent += ` — ✅ ${passCount} ❌ ${failCount}${notDoneCount ? ` ⚠️ ${notDoneCount}` : ''}`;
+
+    const badges = el('div', 'checklist-section-badges');
+    if (passCount || partialCount || failCount || notDoneCount) {
+      badges.innerHTML = `✅ ${passCount}${partialCount ? ` ◐ ${partialCount}` : ''} ❌ ${failCount}${notDoneCount ? ` ⚠️ ${notDoneCount}` : ''}`;
     }
-    sec.appendChild(titleEl);
+
+    header.appendChild(titleLeft);
+    header.appendChild(badges);
+    sec.appendChild(header);
+
+    const secBody = el('div', 'checklist-section-body');
+    if (isCollapsed) {
+      secBody.style.display = 'none';
+    }
 
     for (const item of items) {
-      sec.appendChild(buildChecklistItem(item));
+      secBody.appendChild(buildChecklistItem(item));
     }
+    sec.appendChild(secBody);
+
+    header.addEventListener('click', () => {
+      const currentlyCollapsed = secBody.style.display === 'none';
+      if (currentlyCollapsed) {
+        secBody.style.display = 'block';
+        chevron.textContent = '▼';
+        setSectionCollapsed(sectionName, false);
+      } else {
+        secBody.style.display = 'none';
+        chevron.textContent = '▶';
+        setSectionCollapsed(sectionName, true);
+      }
+    });
+
     container.appendChild(sec);
   }
 }
@@ -2188,6 +2268,7 @@ function buildChecklistItem(item) {
   const btnCol = el('div', 'checklist-status-btns');
   for (const [status, icon, label] of [
     ['pass',     '✓', 'Pass'],
+    ['partial',  '◐', 'In-Between / Needs Work'],
     ['fail',     '✗', 'Fail'],
     ['skip',     '–', 'Skip'],
     ['not_done', '!', 'Not Done'],
@@ -2301,7 +2382,7 @@ async function updateChecklistNotes(id, notes) {
 
 function updateChecklistProgress() {
   const total = checklistItems.length;
-  const done  = checklistItems.filter(i => i.status === 'pass' || i.status === 'fail' || i.status === 'skip').length;
+  const done  = checklistItems.filter(i => i.status !== 'pending').length;
   const pct   = total ? Math.round(done / total * 100) : 0;
   const progEl = document.getElementById('checklist-progress');
   if (progEl) progEl.textContent = total ? `${done}/${total} reviewed (${pct}%)` : '';
