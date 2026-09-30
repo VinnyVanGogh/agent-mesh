@@ -577,8 +577,13 @@ func AddTaskComment(db *sql.DB, taskID, author, message string) error {
 		return err
 	}
 	query := `INSERT INTO task_comments (task_id, author, message) VALUES (?, ?, ?)`
-	_, err = db.Exec(query, task.ID, author, message)
-	return err
+	if _, err := db.Exec(query, task.ID, author, message); err != nil {
+		return err
+	}
+
+	// Any pending interactions configured to supersede on comment are superseded
+	_, _ = SupersedeInteractionsOnComment(db, task.ID)
+	return nil
 }
 
 func GetTaskComments(db *sql.DB, taskID string) ([]TaskComment, error) {
@@ -758,4 +763,61 @@ func AddWorkProduct(db *sql.DB, taskID, productType, reference string) error {
 func LogActivity(db *sql.DB, taskID, eventType, details string) error {
 	_, err := db.Exec(`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, ?, ?)`, taskID, eventType, details)
 	return err
+}
+
+func GetLatestTaskDocument(db *sql.DB, taskID, docKey string) (*TaskDocument, error) {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return nil, err
+	}
+	var doc TaskDocument
+	query := `SELECT id, task_id, doc_key, version, content, created_at FROM task_documents WHERE task_id = ? AND doc_key = ? ORDER BY version DESC LIMIT 1`
+	err = db.QueryRow(query, task.ID, docKey).Scan(&doc.ID, &doc.TaskID, &doc.DocKey, &doc.Version, &doc.Content, &doc.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, ErrDocumentNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &doc, nil
+}
+
+func GetTaskDocumentRevision(db *sql.DB, taskID, docKey string, version int) (*TaskDocument, error) {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return nil, err
+	}
+	var doc TaskDocument
+	query := `SELECT id, task_id, doc_key, version, content, created_at FROM task_documents WHERE task_id = ? AND doc_key = ? AND version = ?`
+	err = db.QueryRow(query, task.ID, docKey, version).Scan(&doc.ID, &doc.TaskID, &doc.DocKey, &doc.Version, &doc.Content, &doc.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, ErrDocumentNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &doc, nil
+}
+
+func ListTaskDocuments(db *sql.DB, taskID string) ([]TaskDocument, error) {
+	task, err := GetTask(db, taskID)
+	if err != nil {
+		return nil, err
+	}
+	query := `SELECT id, task_id, doc_key, version, content, created_at FROM task_documents WHERE task_id = ? ORDER BY doc_key ASC, version DESC`
+	rows, err := db.Query(query, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var docs []TaskDocument
+	for rows.Next() {
+		var doc TaskDocument
+		if err := rows.Scan(&doc.ID, &doc.TaskID, &doc.DocKey, &doc.Version, &doc.Content, &doc.CreatedAt); err != nil {
+			return nil, err
+		}
+		docs = append(docs, doc)
+	}
+	return docs, rows.Err()
 }

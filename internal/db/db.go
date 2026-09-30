@@ -105,9 +105,14 @@ CREATE TABLE IF NOT EXISTS task_interactions (
     interaction_kind TEXT NOT NULL,
     payload       TEXT NOT NULL,
     status        TEXT NOT NULL DEFAULT 'pending',
+    idempotency_key TEXT,
+    supersede_on_comment INTEGER NOT NULL DEFAULT 1,
+    response      TEXT,
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     resolved_at   TEXT
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_interactions_idempotency ON task_interactions(task_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';
 
 CREATE TABLE IF NOT EXISTS task_work_products (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -374,6 +379,27 @@ var Migrations = []Migration{
 				}
 			}
 			return nil
+		},
+	},
+	{
+		Version: 4,
+		Name:    "interaction_cards_and_locking",
+		Up: func(conn *sql.DB) error {
+			cols := []struct {
+				name string
+				def  string
+			}{
+				{"idempotency_key", "TEXT"},
+				{"supersede_on_comment", "INTEGER NOT NULL DEFAULT 1"},
+				{"response", "TEXT"},
+			}
+			for _, c := range cols {
+				if _, err := conn.Exec(fmt.Sprintf("ALTER TABLE task_interactions ADD COLUMN %s %s;", c.name, c.def)); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+					return err
+				}
+			}
+			_, err := conn.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_interactions_idempotency ON task_interactions(task_id, idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';`)
+			return err
 		},
 	},
 }
