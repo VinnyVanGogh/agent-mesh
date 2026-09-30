@@ -271,11 +271,11 @@ func FallbackPairingMatrix(claudeModel, effort string) (geminiModel, geminiEffor
 }
 
 // Route executes the dynamic waterfall routing engine:
-// 1. Check if cwd is an enterprise work repo.
-// 2. If work repo: check if Claude Work is locked (falls back to Gemini 3.1 Pro per STA-12);
-//    otherwise check SSH connectivity to remote node -> route to remote Claude, or fallback to local Claude work seat.
-// 3. If personal repo: balanced peer pacing between Claude Code and Antigravity,
-//    with dynamic quota-aware fallback to Gemini 3.1 Pro (Opus) / Gemini 3.8 Flash (Sonnet) when Claude is locked out.
+//  1. Check if cwd is an enterprise work repo.
+//  2. If work repo: check if Claude Work is locked (falls back to Gemini 3.1 Pro per STA-12);
+//     otherwise check SSH connectivity to remote node -> route to remote Claude, or fallback to local Claude work seat.
+//  3. If personal repo: balanced peer pacing between Claude Code and Antigravity,
+//     with dynamic quota-aware fallback to Gemini 3.1 Pro (Opus) / Gemini 3.8 Flash (Sonnet) when Claude is locked out.
 func Route(ctx context.Context, cwd string, pacerState *PacerState, opts RouteOptions) (*RouteDecision, error) {
 	if cwd == "" || cwd == "." {
 		if cur, err := os.Getwd(); err == nil {
