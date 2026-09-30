@@ -582,7 +582,7 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 						}
 						aItem := AgentItem{
 							ID:            id,
-							Name:          fmt.Sprintf("%s Session (%s)", strings.Title(agType), shortID(id)),
+							Name:          fmt.Sprintf("%s Session (%s)", titleCase(agType), shortID(id)),
 							Role:          "Local Agent",
 							Organization:  org,
 							Provider:      provider,
@@ -775,6 +775,13 @@ func shortID(id string) string {
 		return id[:6]
 	}
 	return id
+}
+
+func titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func formatDuration(d time.Duration) string {

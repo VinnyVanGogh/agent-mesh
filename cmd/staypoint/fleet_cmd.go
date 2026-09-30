@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -46,14 +47,9 @@ var fleetCmd = &cobra.Command{
 			telemPath = cfg.TelemetryDBPath
 		}
 
-		var sqlDB = (*db.Store)(nil)
-		var dbConn = (*db.Store)(nil)
-		_ = sqlDB
-		_ = dbConn
-
-		var database = store.DB()
-		if store == nil {
-			database = nil
+		var database *sql.DB
+		if store != nil {
+			database = store.DB()
 		}
 
 		agg := fleet.NewAggregator(database, telemPath, pclipClient)
