@@ -13,6 +13,8 @@ import (
 
 	"github.com/VinnyVanGogh/staypoint/internal/config"
 	"github.com/VinnyVanGogh/staypoint/internal/ipc"
+	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/workspace"
 	"github.com/VinnyVanGogh/staypoint/internal/logging"
 	"github.com/VinnyVanGogh/staypoint/internal/mcp"
 	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
@@ -142,6 +144,17 @@ func runDaemon(ctx context.Context) error {
 		}
 	}()
 	slog.Info("IPC listener active", slog.String("path", socketPath))
+
+	// 2.5 Sweep orphan worktrees
+	if repoPath, err := os.Getwd(); err == nil {
+		if store, dbErr := db.Open(cfg.DBPath); dbErr == nil {
+			wm := workspace.NewWorktreeManager(repoPath, store.DB())
+			if sweepErr := wm.SweepOrphans(); sweepErr != nil {
+				slog.Warn("Failed to sweep orphan worktrees", slog.Any("error", sweepErr))
+			}
+			store.Close()
+		}
+	}
 
 	// 3. Start File Watcher and Ingestion Engine
 	watcher, err := telemetry.NewWatcher(cfg)
