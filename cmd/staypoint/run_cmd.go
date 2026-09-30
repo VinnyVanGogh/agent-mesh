@@ -71,8 +71,12 @@ The harness:
 			// via ctx so it takes precedence. A thin override context key is cleaner than
 			// patching os.Environ which is process-global.
 			//
-			// Pass extraEnv (already sanitized by security.ChildEnv) through to the adapter.
-			return adapter.RunAdapter(ctx, cwd, extraEnv, prov, rawArgs, nil, stdout, stderr)
+			// Inject sanitized extraEnv via context so RunAdapter forwards it to the child
+			// without changing its public signature.
+			if len(extraEnv) > 0 {
+				ctx = adapter.WithExtraEnv(ctx, extraEnv)
+			}
+			return adapter.RunAdapter(ctx, cwd, nil, prov, rawArgs, nil, stdout, stderr)
 		}
 
 		runCfg := orchestrator.RunConfig{

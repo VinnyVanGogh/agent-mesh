@@ -18,6 +18,15 @@ import (
 // binary for every provider. The plain string type is kept for compatibility.
 const testBinKey = "testBin"
 
+// ctxExtraEnvKey is the context key for harness-supplied extra env vars.
+type ctxExtraEnvKey struct{}
+
+// WithExtraEnv attaches harness-sanitized extra environment variables to ctx
+// so RunAdapter can forward them to the child process without changing its signature.
+func WithExtraEnv(ctx context.Context, env []string) context.Context {
+	return context.WithValue(ctx, ctxExtraEnvKey{}, env)
+}
+
 // runCommandWithEnv executes a command with optional extra environment variables,
 // anti-stall keepalive newlines, and unthrottled 32KB chunk streaming.
 func runCommandWithEnv(ctx context.Context, dir string, bin string, args []string, extraEnv []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
@@ -345,6 +354,12 @@ func runWithFailover(ctx context.Context, cwd string, pacerState *router.PacerSt
 		}
 	}
 
+	// Merge harness-supplied extra env (sanitized upstream) with per-candidate env.
+	var ctxEnv []string
+	if v, ok := ctx.Value(ctxExtraEnvKey{}).([]string); ok {
+		ctxEnv = v
+	}
+
 	var lastErr error
 	firstAttempt := true
 	for _, candidate := range chain {
@@ -372,11 +387,12 @@ func runWithFailover(ctx context.Context, cwd string, pacerState *router.PacerSt
 			continue
 		}
 
+		extraEnv := append(ctxEnv, candidate.ExtraEnv...)
 		err = candidate.Adapter.Execute(ctx, ExecRequest{
 			Bin:      bin,
 			Dir:      cwd,
 			Opts:     candidateOpts,
-			ExtraEnv: candidate.ExtraEnv,
+			ExtraEnv: extraEnv,
 			Stdin:    bytes.NewReader(stdinBytes),
 			Stdout:   &buf,
 			Stderr:   stderr,
