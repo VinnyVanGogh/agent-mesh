@@ -1,0 +1,368 @@
+package orchestrator
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/VinnyVanGogh/staypoint/internal/checkpoint"
+	"github.com/VinnyVanGogh/staypoint/internal/security"
+	"github.com/VinnyVanGogh/staypoint/internal/workspace"
+	"github.com/google/uuid"
+)
+
+// Sentinel errors.
+var (
+	ErrAlreadyClaimed = errors.New("task already claimed by another run")
+	ErrTaskNotFound   = errors.New("task not found")
+	ErrConcurrencyCap = errors.New("concurrent agent cap reached (max 1)")
+)
+
+// Hard cap: at most one agent may hold a task claim inside this process.
+var activeClaims atomic.Int32
+
+// taskCompleteMarker is the canonical signal an adapter emits on completion.
+const taskCompleteMarker = "[[TASK_COMPLETE]]"
+
+// defaultProviderEnvKeys are provider credential variables that must pass through
+// the sanitized env.
+var defaultProviderEnvKeys = []string{
+	"ANTHROPIC_API_KEY",
+	"OPENAI_API_KEY",
+	"GEMINI_API_KEY",
+	"GOOGLE_API_KEY",
+	"AGY_API_KEY",
+}
+
+// AdapterRunFunc is the injectable adapter turn runner.
+// The harness calls it once per turn. Signature matches adapter.RunAdapter
+// with extraEnv pre-built by the harness so the adapter package isn't imported here
+// (it would create an import cycle via context → orchestrator → adapter → router → context).
+type AdapterRunFunc func(ctx context.Context, cwd, provider string, rawArgs, extraEnv []string, stdout, stderr io.Writer) error
+
+// RunConfig holds per-task execution parameters.
+type RunConfig struct {
+	// MaxTurns is the per-run turn budget; 0 defaults to 50.
+	MaxTurns int
+	// MaxBudgetUSD caps cumulative spend; 0 = unlimited.
+	MaxBudgetUSD float64
+	// MaxWallclock caps wall-clock duration; 0 defaults to 30 min.
+	MaxWallclock time.Duration
+	// SkipPermissions forwards --dangerously-skip-permissions to the adapter.
+	// Opt-in only; never set by default.
+	SkipPermissions bool
+	// AgentID tags the checkout for audit.
+	AgentID string
+	// Provider selects the adapter chain entry point. Empty = auto-resolve.
+	Provider string
+	// RunAdapter is the injected turn runner. Nil = skip adapter (dry-run).
+	RunAdapter AdapterRunFunc
+}
+
+// RunResult summarises a completed autonomous run.
+type RunResult struct {
+	TaskID        string
+	RunID         string
+	Turns         int
+	SpentUSD      float64
+	Disposition   string // "in_review" | "done" | "capped" | "in_progress"
+	DiffStat      string
+	DiagnosticMsg string // non-empty when interceptor blocked the transition
+}
+
+// WorktreeManagerIface abstracts worktree operations for testability.
+type WorktreeManagerIface interface {
+	CreateContext(ctx context.Context, taskID, sessionID string) (string, error)
+	PruneContext(ctx context.Context, taskID string) error
+}
+
+// Harness orchestrates an autonomous single-task agent run.
+type Harness struct {
+	DB          *sql.DB
+	RepoRoot    string
+	WM          WorktreeManagerIface
+	Interceptor *Interceptor
+}
+
+// NewHarness creates a Harness backed by the given SQLite DB and repo root.
+func NewHarness(db *sql.DB, repoRoot string) *Harness {
+	return &Harness{
+		DB:          db,
+		RepoRoot:    repoRoot,
+		WM:          workspace.NewWorktreeManager(repoRoot, db),
+		Interceptor: NewInterceptor(db),
+	}
+}
+
+// Claim atomically checks out a task for the given runID.
+//
+// The hard concurrency cap of 1 is enforced via an atomic counter within the
+// process. Across restarts, RecoveryScan resets stale claims so the DB check
+// (execution_stage = 'todo') prevents double-claiming.
+func (h *Harness) Claim(ctx context.Context, taskID, runID, agentID string) error {
+	if activeClaims.Add(1) > 1 {
+		activeClaims.Add(-1)
+		return ErrConcurrencyCap
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := h.DB.ExecContext(ctx,
+		`UPDATE tasks
+		    SET execution_stage='in_progress', checkout_run_id=?, checkout_agent_id=?, updated_at=?
+		  WHERE id=? AND execution_stage='todo'`,
+		runID, agentID, now, taskID,
+	)
+	if err != nil {
+		activeClaims.Add(-1)
+		return fmt.Errorf("claim db update: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		activeClaims.Add(-1)
+		var stage string
+		_ = h.DB.QueryRowContext(ctx, "SELECT execution_stage FROM tasks WHERE id=?", taskID).Scan(&stage)
+		if stage == "" {
+			return ErrTaskNotFound
+		}
+		return ErrAlreadyClaimed
+	}
+
+	slog.Info("task claimed", slog.String("task", taskID), slog.String("run", runID))
+	return nil
+}
+
+// Release decrements the concurrency counter and clears the task checkout.
+// Always called via defer; uses a fresh context to survive parent cancellation.
+func (h *Harness) Release(taskID, runID string) {
+	activeClaims.Add(-1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = h.DB.ExecContext(ctx,
+		`UPDATE tasks SET checkout_run_id=NULL, checkout_agent_id=NULL, updated_at=?
+		  WHERE id=? AND checkout_run_id=?`,
+		time.Now().UTC().Format(time.RFC3339Nano), taskID, runID,
+	)
+}
+
+// Run claims and executes a task to completion.
+//
+// Lifecycle:
+//  1. Claim task atomically (cap enforced).
+//  2. Create isolated git worktree.
+//  3. Pre-run checkpoint.
+//  4. Drive adapter turns; checkpoint before each; scan stdout for [[TASK_COMPLETE]].
+//  5. Run Mechanical Completion Interceptor on completion signal.
+//  6. Set disposition, record work product and cost.
+//  7. Prune worktree on exit (deferred).
+func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunResult, error) {
+	runID := buildRunID(cfg.AgentID)
+	if err := h.Claim(ctx, taskID, runID, cfg.AgentID); err != nil {
+		return nil, err
+	}
+	defer h.Release(taskID, runID)
+
+	maxTurns := cfg.MaxTurns
+	if maxTurns <= 0 {
+		maxTurns = 50
+	}
+	maxWall := cfg.MaxWallclock
+	if maxWall <= 0 {
+		maxWall = 30 * time.Minute
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, maxWall)
+	defer cancel()
+
+	var repoPath string
+	if err := h.DB.QueryRowContext(ctx, "SELECT COALESCE(repo_path,'') FROM tasks WHERE id=?", taskID).Scan(&repoPath); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("fetch repo path: %w", err)
+	}
+	if repoPath == "" {
+		repoPath = h.RepoRoot
+	}
+
+	wtPath, err := h.WM.CreateContext(ctx, taskID, runID)
+	if err != nil {
+		return nil, fmt.Errorf("create worktree: %w", err)
+	}
+	defer func() {
+		if pruneErr := h.WM.PruneContext(context.Background(), taskID); pruneErr != nil {
+			slog.Warn("worktree prune failed", slog.String("task", taskID), slog.Any("error", pruneErr))
+		}
+	}()
+
+	preCP, _ := checkpoint.CreateCheckpoint(ctx, checkpoint.CreateOptions{
+		WorkDir:   wtPath,
+		SessionID: runID,
+		Message:   "pre-run " + taskID,
+	})
+
+	providerEnv := security.ChildEnv(defaultProviderEnvKeys...)
+	if cfg.SkipPermissions {
+		providerEnv = append(providerEnv, "STAYPOINT_SKIP_PERMISSIONS=1")
+	}
+
+	result := &RunResult{TaskID: taskID, RunID: runID}
+
+	for turn := 0; turn < maxTurns; turn++ {
+		if ctx.Err() != nil {
+			result.Disposition = "capped"
+			break
+		}
+
+		if turn > 0 {
+			_, _ = checkpoint.CreateCheckpoint(ctx, checkpoint.CreateOptions{
+				WorkDir:   wtPath,
+				SessionID: runID,
+				Message:   fmt.Sprintf("turn %d %s", turn, taskID),
+			})
+		}
+
+		// Drive one adapter turn.
+		var outBuf bytes.Buffer
+		tw := &completionWriter{dst: &outBuf}
+		rawArgs := buildRawArgs(taskID, turn, cfg)
+
+		if cfg.RunAdapter != nil {
+			turnErr := cfg.RunAdapter(ctx, wtPath, cfg.Provider, rawArgs, providerEnv, tw, io.Discard)
+			if turnErr != nil {
+				slog.Warn("adapter turn error", slog.Int("turn", turn), slog.Any("error", turnErr))
+				_, _ = h.DB.ExecContext(ctx,
+					`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, 'adapter_failure', ?)`,
+					taskID, turnErr.Error(),
+				)
+			}
+		}
+
+		result.Turns++
+
+		if tw.detected || strings.Contains(outBuf.String(), taskCompleteMarker) {
+			break
+		}
+
+		if cfg.MaxBudgetUSD > 0 && result.SpentUSD >= cfg.MaxBudgetUSD {
+			result.Disposition = "capped"
+			break
+		}
+	}
+
+	// Diff against pre-run checkpoint.
+	if preCP != nil {
+		if ds, err := checkpoint.DiffCheckpoint(ctx, wtPath, preCP.ID); err == nil {
+			result.DiffStat = ds
+		}
+	}
+
+	// Mechanical Completion Interceptor.
+	if result.Disposition == "" {
+		approved, diag, _ := h.Interceptor.InterceptCompletion(ctx, taskID, wtPath, repoPath)
+		if approved {
+			result.Disposition = "in_review"
+		} else {
+			result.Disposition = "in_progress"
+			if diag != nil {
+				result.DiagnosticMsg = diag.Message
+			}
+		}
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	// Cleanup writes use a fresh context: the run context may be expired (wallclock cap).
+	cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cleanCancel()
+
+	if _, err := h.DB.ExecContext(cleanCtx,
+		`UPDATE tasks SET execution_stage=?, updated_at=? WHERE id=?`,
+		result.Disposition, now, taskID,
+	); err != nil {
+		slog.Error("persist disposition failed", slog.String("task", taskID), slog.String("disposition", result.Disposition), slog.Any("error", err))
+	}
+
+	if result.DiagnosticMsg != "" {
+		if _, err := h.DB.ExecContext(cleanCtx,
+			`INSERT INTO task_comments (task_id, author, message) VALUES (?, 'harness', ?)`,
+			taskID, result.DiagnosticMsg,
+		); err != nil {
+			slog.Warn("inject diagnostic comment failed", slog.String("task", taskID), slog.Any("error", err))
+		}
+	}
+
+	if _, err := h.DB.ExecContext(cleanCtx,
+		`UPDATE tasks SET spent_turns=spent_turns+?, spent_usd=spent_usd+?, updated_at=? WHERE id=?`,
+		result.Turns, result.SpentUSD, now, taskID,
+	); err != nil {
+		slog.Warn("persist cost failed", slog.String("task", taskID), slog.Any("error", err))
+	}
+
+	if result.DiffStat != "" {
+		if _, err := h.DB.ExecContext(cleanCtx,
+			`INSERT INTO task_work_products (task_id, product_type, reference) VALUES (?, 'workspace_file', ?)`,
+			taskID, ".worktrees/"+taskID,
+		); err != nil {
+			slog.Warn("register work product failed", slog.String("task", taskID), slog.Any("error", err))
+		}
+	}
+
+	if _, err := h.DB.ExecContext(cleanCtx,
+		`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, 'run_complete', ?)`,
+		taskID, fmt.Sprintf("disposition=%s turns=%d", result.Disposition, result.Turns),
+	); err != nil {
+		slog.Warn("activity log failed", slog.String("task", taskID), slog.Any("error", err))
+	}
+
+	return result, nil
+}
+
+// buildRawArgs constructs CLI arguments for the adapter on the given turn.
+// These are parsed by adapter.parseRawArgs into ParsedOptions.
+func buildRawArgs(taskID string, turn int, cfg RunConfig) []string {
+	prompt := fmt.Sprintf(
+		"Continue work on task %s (turn %d). When you are finished, emit %s on its own line.",
+		taskID, turn+1, taskCompleteMarker,
+	)
+	if cfg.SkipPermissions {
+		prompt += " Pre-approved permissions: proceed without confirmation prompts."
+	}
+	args := []string{"--print", prompt, "--output-format", "stream-json"}
+	return args
+}
+
+func buildRunID(agentID string) string {
+	id := agentID
+	if id == "" {
+		id = "harness"
+	}
+	return id + "-" + uuid.New().String()[:8]
+}
+
+// completionWriter wraps a Writer and sets detected=true on [[TASK_COMPLETE]].
+type completionWriter struct {
+	dst      io.Writer
+	detected bool
+	tail     []byte // sliding window to catch markers split across writes
+}
+
+func (w *completionWriter) Write(p []byte) (int, error) {
+	n, err := w.dst.Write(p)
+	// Maintain a small sliding window across write boundaries.
+	window := append(w.tail, p[:n]...)
+	if strings.Contains(string(window), taskCompleteMarker) {
+		w.detected = true
+	}
+	// Keep only the last len(marker)-1 bytes for the next boundary check.
+	keep := len(taskCompleteMarker) - 1
+	if len(window) > keep {
+		w.tail = window[len(window)-keep:]
+	} else {
+		w.tail = window
+	}
+	return n, err
+}
