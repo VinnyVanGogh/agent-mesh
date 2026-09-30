@@ -149,7 +149,11 @@ func buildAgyArgs(opts ParsedOptions) []string {
 	if effort != "" && model != "" {
 		args = append(args, "--effort", effort)
 	}
-	// Do NOT pass ConversationID: Claude session IDs are invalid for agy.
+	// Do NOT pass ConversationID for cross-provider fallback (Claude session IDs are invalid for agy).
+	// When running native Gemini sessions, pass --conversation.
+	if opts.ConversationID != "" && !isClaudeModel {
+		args = append(args, "--conversation", opts.ConversationID)
+	}
 	for _, dir := range opts.AddDirs {
 		args = append(args, "--add-dir", dir)
 	}
