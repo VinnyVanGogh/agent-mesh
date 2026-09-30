@@ -438,7 +438,8 @@ var Migrations = []Migration{
 					approver_id TEXT NOT NULL,
 					vote        TEXT NOT NULL CHECK (vote IN ('approved', 'rejected', 'abstain')),
 					reason      TEXT,
-					voted_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+					voted_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+					UNIQUE(task_id, approver_id)
 				);`,
 				`CREATE TABLE IF NOT EXISTS task_review_decisions (
 					id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -446,7 +447,8 @@ var Migrations = []Migration{
 					reviewer_id TEXT NOT NULL,
 					decision    TEXT NOT NULL CHECK (decision IN ('approved', 'rejected', 'changes_requested')),
 					notes       TEXT,
-					decided_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+					decided_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+					UNIQUE(task_id, reviewer_id)
 				);`,
 				`CREATE TABLE IF NOT EXISTS task_watchdog_evals (
 					id            INTEGER PRIMARY KEY AUTOINCREMENT,
