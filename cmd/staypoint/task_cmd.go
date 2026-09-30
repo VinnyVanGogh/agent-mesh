@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
 	"github.com/VinnyVanGogh/staypoint/internal/paperclip"
 	"github.com/spf13/cobra"
 )
@@ -92,12 +94,16 @@ var taskListCmd = &cobra.Command{
 				}
 				budgetInfo = fmt.Sprintf(" [budget: $%.2f/$%.2f (%.0f%%), %d/%d turns]", t.SpentUSD, t.MaxBudgetUSD, pct, t.SpentTurns, t.MaxTurns)
 			}
+			priorityBadge := ""
+			if t.Priority != "" {
+				priorityBadge = fmt.Sprintf(" [%s]", strings.ToUpper(t.Priority))
+			}
 			orgProjInfo := ""
 			if t.Organization != "" || t.Project != "" {
 				orgProjInfo = fmt.Sprintf(" (Org: %s | Proj: %s)", t.Organization, t.Project)
 			}
-			fmt.Printf("  • %s[%s]\033[0m \033[1m%s\033[0m%s (branch: %s, role: %s)%s\n",
-				statusColor, t.Status, t.Name, orgProjInfo, t.GitBranch, t.AccountRole, budgetInfo)
+			fmt.Printf("  • %s[%s]\033[0m \033[1m%s\033[0m%s%s (branch: %s, role: %s)%s\n",
+				statusColor, t.Status, t.Name, priorityBadge, orgProjInfo, t.GitBranch, t.AccountRole, budgetInfo)
 		}
 	},
 }
@@ -171,6 +177,7 @@ var taskShowCmd = &cobra.Command{
 		fmt.Printf("Task ID: %s\n", task.ID)
 		fmt.Printf("Name: %s\n", task.Name)
 		fmt.Printf("Status: %s\n", task.Status)
+		fmt.Printf("Priority: %s\n", strings.ToUpper(task.Priority))
 		if task.IsBlocked {
 			fmt.Printf("Blocked: YES (Reason: %s)\n", task.BlockReason)
 		}
@@ -348,6 +355,27 @@ var taskCancelCmd = &cobra.Command{
 	},
 }
 
+var taskPriorityCmd = &cobra.Command{
+	Use:   "priority [id|name] [critical|urgent|high|medium|low]",
+	Short: "Set or update the priority level for a task",
+	Args:  cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		store, err := db.Open(cfg.DBPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening db: %v\n", err)
+			os.Exit(1)
+		}
+		defer store.Close()
+		taskID := args[0]
+		priority := orchestrator.NormalizePriority(args[1])
+		if err := meshContext.UpdateTaskPriority(store.DB(), taskID, priority); err != nil {
+			fmt.Fprintf(os.Stderr, "Error updating priority: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\033[1;32m✔ Task %q priority updated to %s\033[0m\n", taskID, strings.ToUpper(priority))
+	},
+}
+
 func init() {
 
 	rootCmd.AddCommand(taskCmd)
@@ -355,6 +383,7 @@ func init() {
 	taskCmd.AddCommand(taskAddCmd)
 	taskCmd.AddCommand(taskDoneCmd)
 	taskCmd.AddCommand(taskBudgetCmd)
+	taskCmd.AddCommand(taskPriorityCmd)
 	taskCmd.AddCommand(taskShowCmd)
 	taskCmd.AddCommand(taskCheckoutCmd)
 	taskCmd.AddCommand(taskBlockCmd)

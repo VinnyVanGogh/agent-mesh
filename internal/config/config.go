@@ -37,6 +37,16 @@ type Config struct {
 	ClaudeBin string `json:"claude_bin" toml:"claude_bin"`
 	AgyBin    string `json:"agy_bin" toml:"agy_bin"`
 	CodexBin  string `json:"codex_bin" toml:"codex_bin"`
+
+	// Anti-overuse safeguards and provider ceilings
+	ProviderCeilings map[string]ProviderCeilingConfig `json:"provider_ceilings,omitempty" toml:"provider_ceilings,omitempty"`
+}
+
+// ProviderCeilingConfig defines anti-overuse rate, spend, and utilization ceilings for a provider.
+type ProviderCeilingConfig struct {
+	MaxUtilizationPct float64 `json:"max_utilization_pct" toml:"max_utilization_pct"` // e.g. 95.0%
+	MaxSpendPerHour   float64 `json:"max_spend_per_hour" toml:"max_spend_per_hour"`   // e.g. 25.0 USD
+	MaxTurnsPerHour   int     `json:"max_turns_per_hour" toml:"max_turns_per_hour"`   // e.g. 200
 }
 
 // DefaultConfig returns the default configuration.
@@ -64,6 +74,23 @@ func DefaultConfig() *Config {
 		ClaudePlanTier:        "Pro",
 		MaxHandoffsPerRepo:    3,
 		PreferredPersonalTool: "auto",
+		ProviderCeilings: map[string]ProviderCeilingConfig{
+			"claude": {
+				MaxUtilizationPct: 95.0,
+				MaxSpendPerHour:   25.0,
+				MaxTurnsPerHour:   200,
+			},
+			"gemini": {
+				MaxUtilizationPct: 95.0,
+				MaxSpendPerHour:   25.0,
+				MaxTurnsPerHour:   300,
+			},
+			"codex": {
+				MaxUtilizationPct: 95.0,
+				MaxSpendPerHour:   20.0,
+				MaxTurnsPerHour:   150,
+			},
+		},
 	}
 }
 
