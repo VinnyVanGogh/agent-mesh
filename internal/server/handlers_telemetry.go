@@ -248,6 +248,34 @@ func (h *TelemetryHandler) GetReport(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(pdfData)
 }
 
+// PostFleetTaskComment proxies POST /api/fleet/tasks/{id}/comments to Paperclip.
+func (h *TelemetryHandler) PostFleetTaskComment(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"missing task id"}`, http.StatusBadRequest)
+		return
+	}
+	target := paperclipAPIBase() + "/api/issues/" + id + "/comments"
+	req, err := http.NewRequestWithContext(r.Context(), "POST", target, r.Body)
+	if err != nil {
+		http.Error(w, `{"error":"proxy request build failed"}`, http.StatusInternalServerError)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if key := os.Getenv("PAPERCLIP_API_KEY"); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, `{"error":"paperclip unreachable"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
 // GetFleetTaskComments proxies GET /api/fleet/tasks/{id}/comments to Paperclip.
 func (h *TelemetryHandler) GetFleetTaskComments(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
