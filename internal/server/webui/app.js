@@ -11,9 +11,11 @@ const state = {
   taskFilter: {
     search: '',
     org: 'all',
+    project: 'all',
+    priority: 'all',
     status: 'all',
   },
-  tsFilter: { search: '', org: 'all', status: 'all' },
+  tsFilter: { search: '', org: 'all', project: 'all', priority: 'all', status: 'all' },
   agentsFilter: { search: '', org: 'all', project: 'all', provider: 'all', status: 'all' },
   projectsFilter: {
     orgs: [],       // selected org names, empty = all
@@ -21,13 +23,13 @@ const state = {
     cardStatus: {}, // `${org}:${proj}` -> status filter on that card
   },
   recentTasksFilter: {
-    project: 'all',
     org: 'all',
+    project: 'all',
     priority: 'all',
   },
   expandedRecentSubtasks: new Set(),
   overviewSort: { column: 'updated', direction: 'desc' },
-  tsSort: { column: 'status', direction: 'asc' },
+  tsSort: { column: 'updated', direction: 'desc' },
   orgSort: { column: 'task', direction: 'asc' },
   taskComments: {},     // taskId -> array of comments
   taskDescriptions: {}, // taskId -> description string
@@ -494,6 +496,8 @@ window.addEventListener('popstate', () => {
 document.getElementById('filter-running')?.addEventListener('click', () => {
   state.taskFilter.status = 'running';
   state.taskFilter.org = 'all';
+  state.taskFilter.project = 'all';
+  state.taskFilter.priority = 'all';
   showView('overview');
   document.querySelectorAll('.sidebar-item').forEach(b => {
     b.classList.toggle('active', b.dataset.view === 'overview');
@@ -501,11 +505,20 @@ document.getElementById('filter-running')?.addEventListener('click', () => {
   renderGlobalTaskTable();
   const sel = document.getElementById('task-status-filter');
   if (sel) sel.value = 'running';
+  const os = document.getElementById('task-org-filter');
+  if (os) os.value = 'all';
+  populateOverviewProjectFilter();
+  const ps = document.getElementById('task-project-filter');
+  if (ps) ps.value = 'all';
+  const pris = document.getElementById('task-priority-filter');
+  if (pris) pris.value = 'all';
 });
 
 document.getElementById('filter-blocked')?.addEventListener('click', () => {
   state.taskFilter.status = 'blocked';
   state.taskFilter.org = 'all';
+  state.taskFilter.project = 'all';
+  state.taskFilter.priority = 'all';
   showView('overview');
   document.querySelectorAll('.sidebar-item').forEach(b => {
     b.classList.toggle('active', b.dataset.view === 'overview');
@@ -513,14 +526,26 @@ document.getElementById('filter-blocked')?.addEventListener('click', () => {
   renderGlobalTaskTable();
   const sel = document.getElementById('task-status-filter');
   if (sel) sel.value = 'blocked';
+  const os = document.getElementById('task-org-filter');
+  if (os) os.value = 'all';
+  populateOverviewProjectFilter();
+  const ps = document.getElementById('task-project-filter');
+  if (ps) ps.value = 'all';
+  const pris = document.getElementById('task-priority-filter');
+  if (pris) pris.value = 'all';
 });
 
 document.getElementById('filter-clear')?.addEventListener('click', () => {
-  state.taskFilter = { search: '', org: 'all', status: 'all' };
+  state.taskFilter = { search: '', org: 'all', project: 'all', priority: 'all', status: 'all' };
   const si = document.getElementById('task-search-input');
   if (si) si.value = '';
   const os = document.getElementById('task-org-filter');
   if (os) os.value = 'all';
+  populateOverviewProjectFilter();
+  const ps = document.getElementById('task-project-filter');
+  if (ps) ps.value = 'all';
+  const pris = document.getElementById('task-priority-filter');
+  if (pris) pris.value = 'all';
   const ss = document.getElementById('task-status-filter');
   if (ss) ss.value = 'all';
   renderGlobalTaskTable();
@@ -528,26 +553,40 @@ document.getElementById('filter-clear')?.addEventListener('click', () => {
 
 // ── Universal KPI Drill-down Navigation Helpers ───────────
 function drillDownToTasks(status, org = 'all') {
-  state.tsFilter = state.tsFilter || { search: '', org: 'all', status: 'all' };
+  state.tsFilter = state.tsFilter || { search: '', org: 'all', project: 'all', priority: 'all', status: 'all' };
   state.tsFilter.status = status;
   state.tsFilter.org = org;
+  state.tsFilter.project = 'all';
+  state.tsFilter.priority = 'all';
   state.tsFilter.search = '';
 
   const tsStatusSel = document.getElementById('ts-status-filter');
   if (tsStatusSel) tsStatusSel.value = status;
   const tsOrgSel = document.getElementById('ts-org-filter');
   if (tsOrgSel) tsOrgSel.value = org;
+  populateTSProjectFilter();
+  const tsProjSel = document.getElementById('ts-project-filter');
+  if (tsProjSel) tsProjSel.value = 'all';
+  const tsPriSel = document.getElementById('ts-priority-filter');
+  if (tsPriSel) tsPriSel.value = 'all';
   const tsSearch = document.getElementById('ts-search-input');
   if (tsSearch) tsSearch.value = '';
 
   // Also synchronize Overview table filters so returning retains filter context
-  state.taskFilter = state.taskFilter || { search: '', org: 'all', status: 'all' };
+  state.taskFilter = state.taskFilter || { search: '', org: 'all', project: 'all', priority: 'all', status: 'all' };
   state.taskFilter.status = status;
   state.taskFilter.org = org;
+  state.taskFilter.project = 'all';
+  state.taskFilter.priority = 'all';
   const ovStatusSel = document.getElementById('task-status-filter');
   if (ovStatusSel) ovStatusSel.value = status;
   const ovOrgSel = document.getElementById('task-org-filter');
   if (ovOrgSel) ovOrgSel.value = org;
+  populateOverviewProjectFilter();
+  const ovProjSel = document.getElementById('task-project-filter');
+  if (ovProjSel) ovProjSel.value = 'all';
+  const ovPriSel = document.getElementById('task-priority-filter');
+  if (ovPriSel) ovPriSel.value = 'all';
 
   showView('task-status');
   renderTaskStatusPage();
@@ -923,6 +962,31 @@ function populateOrgFilter() {
     select.appendChild(opt);
   }
   select.value = current || 'all';
+  populateOverviewProjectFilter();
+}
+
+function populateOverviewProjectFilter() {
+  const select = document.getElementById('task-project-filter');
+  if (!select) return;
+  const currentOrg = state.taskFilter?.org || 'all';
+  const currentProj = state.taskFilter?.project || 'all';
+  const projects = getProjectsForOrg(currentOrg);
+
+  select.innerHTML = '<option value="all">All Projects</option>';
+  for (const p of projects) {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p;
+    select.appendChild(opt);
+  }
+
+  if (projects.includes(currentProj) || currentProj === 'all') {
+    select.value = currentProj;
+    state.taskFilter.project = currentProj;
+  } else {
+    select.value = 'all';
+    state.taskFilter.project = 'all';
+  }
 }
 
 function populateTSOrgFilter() {
@@ -937,6 +1001,31 @@ function populateTSOrgFilter() {
     select.appendChild(opt);
   }
   select.value = current || 'all';
+  populateTSProjectFilter();
+}
+
+function populateTSProjectFilter() {
+  const select = document.getElementById('ts-project-filter');
+  if (!select) return;
+  const currentOrg = state.tsFilter?.org || 'all';
+  const currentProj = state.tsFilter?.project || 'all';
+  const projects = getProjectsForOrg(currentOrg);
+
+  select.innerHTML = '<option value="all">All Projects</option>';
+  for (const p of projects) {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p;
+    select.appendChild(opt);
+  }
+
+  if (projects.includes(currentProj) || currentProj === 'all') {
+    select.value = currentProj;
+    state.tsFilter.project = currentProj;
+  } else {
+    select.value = 'all';
+    state.tsFilter.project = 'all';
+  }
 }
 
 // ── Table Sorting & Deep Content Search Helpers ───────────
@@ -960,6 +1049,7 @@ function getPrioritySeverity(p) {
 }
 
 function sortTasks(tasks, col, dir) {
+  if (!col || !dir) return [...tasks];
   const mult = dir === 'desc' ? -1 : 1;
   return [...tasks].sort((a, b) => {
     switch (col) {
@@ -1023,10 +1113,41 @@ function sortTasks(tasks, col, dir) {
   });
 }
 
-function renderTableSortHeaders(tableEl, currentSort, onSort) {
+function getNextSort(currentSort, targetCol, defaultSort) {
+  const curCol = currentSort?.column || null;
+  const curDir = currentSort?.direction || null;
+  const defCol = defaultSort?.column || null;
+  const defDir = defaultSort?.direction || null;
+
+  if (curCol !== targetCol) {
+    return { column: targetCol, direction: 'asc' };
+  }
+
+  if (curDir === 'asc') {
+    return { column: targetCol, direction: 'desc' };
+  }
+
+  if (curDir === 'desc') {
+    if (defCol === targetCol && defDir === 'desc') {
+      return { column: targetCol, direction: 'asc' };
+    }
+    if (defCol && defDir) {
+      return { column: defCol, direction: defDir };
+    }
+    return { column: null, direction: null };
+  }
+
+  return { column: targetCol, direction: 'asc' };
+}
+
+function renderTableSortHeaders(tableEl, currentSort, onSort, defaultSort) {
   if (!tableEl) return;
   const thead = tableEl.querySelector('thead');
   if (!thead) return;
+
+  tableEl._currentSort = currentSort;
+  tableEl._defaultSort = defaultSort;
+  tableEl._onSort = onSort;
 
   const ths = thead.querySelectorAll('th[data-col]');
   ths.forEach(th => {
@@ -1035,11 +1156,11 @@ function renderTableSortHeaders(tableEl, currentSort, onSort) {
       th.dataset.label = th.textContent.trim();
     }
     const label = th.dataset.label;
-    const isActive = currentSort.column === col;
+    const isActive = currentSort && currentSort.column === col && currentSort.direction;
     const dir = isActive ? currentSort.direction : null;
 
     th.classList.add('sortable-th');
-    th.classList.toggle('sort-active', isActive);
+    th.classList.toggle('sort-active', !!isActive);
     th.setAttribute('role', 'columnheader');
     th.setAttribute('tabindex', '0');
     th.setAttribute('aria-sort', isActive ? (dir === 'asc' ? 'ascending' : 'descending') : 'none');
@@ -1050,13 +1171,10 @@ function renderTableSortHeaders(tableEl, currentSort, onSort) {
     if (!th._hasSortListener) {
       th._hasSortListener = true;
       const trigger = () => {
-        let newDir;
-        if (currentSort.column === col) {
-          newDir = currentSort.direction === 'asc' ? 'desc' : 'asc';
-        } else {
-          newDir = (col === 'priority' || col === 'cost' || col === 'updated') ? 'desc' : 'asc';
+        const next = getNextSort(tableEl._currentSort, th.dataset.col, tableEl._defaultSort);
+        if (tableEl._onSort) {
+          tableEl._onSort(next.column, next.direction, next);
         }
-        onSort(col, newDir);
       };
       th.addEventListener('click', trigger);
       th.addEventListener('keydown', (e) => {
@@ -1193,10 +1311,11 @@ function renderGlobalTaskTable() {
   const tbody = document.getElementById('global-task-tbody');
   if (!tbody) return;
 
-  renderTableSortHeaders(table, state.overviewSort, (col, dir) => {
-    state.overviewSort = { column: col, direction: dir };
+  const DEFAULT_OVERVIEW_SORT = { column: 'updated', direction: 'desc' };
+  renderTableSortHeaders(table, state.overviewSort, (col, dir, nextSort) => {
+    state.overviewSort = nextSort || { column: col, direction: dir };
     renderGlobalTaskTable();
-  });
+  }, DEFAULT_OVERVIEW_SORT);
 
   tbody.innerHTML = '';
 
@@ -1205,9 +1324,11 @@ function renderGlobalTaskTable() {
 
   const sTerm = (state.taskFilter.search || '').toLowerCase().trim();
   const orgFilter = state.taskFilter.org || 'all';
+  const projectFilter = state.taskFilter.project || 'all';
+  const priorityFilter = state.taskFilter.priority || 'all';
   const statusFilter = state.taskFilter.status || 'all';
 
-  const filtered = filterTasks(tasks, sTerm, orgFilter, statusFilter);
+  const filtered = filterTasks(tasks, sTerm, orgFilter, statusFilter, projectFilter, priorityFilter);
   const sorted = sortTasks(filtered, state.overviewSort.column, state.overviewSort.direction);
 
   if (!sorted.length) {
@@ -1227,10 +1348,18 @@ function renderGlobalTaskTable() {
   }
 }
 
-function filterTasks(tasks, sTerm, orgFilter, statusFilter) {
+function filterTasks(tasks, sTerm, orgFilter, statusFilter, projectFilter = 'all', priorityFilter = 'all') {
   return tasks.filter(t => {
-    if (orgFilter !== 'all' && t.organization !== orgFilter) return false;
-    if (statusFilter !== 'all') {
+    if (orgFilter && orgFilter !== 'all' && t.organization !== orgFilter) return false;
+    if (projectFilter && projectFilter !== 'all') {
+      const p = (t.project || '').toLowerCase();
+      if (p !== projectFilter.toLowerCase()) return false;
+    }
+    if (priorityFilter && priorityFilter !== 'all') {
+      const pri = (t.priority || 'medium').toLowerCase();
+      if (pri !== priorityFilter.toLowerCase()) return false;
+    }
+    if (statusFilter && statusFilter !== 'all') {
       const st = (t.status || 'active').toLowerCase();
       if (statusFilter === 'running' && st !== 'running' && st !== 'in_progress') return false;
       if (statusFilter === 'active'  && st !== 'active'  && st !== 'todo')        return false;
@@ -2796,10 +2925,11 @@ function renderTaskStatusPage() {
   const tbody = document.getElementById('ts-task-tbody');
   if (!tbody) return;
 
-  renderTableSortHeaders(table, state.tsSort, (col, dir) => {
-    state.tsSort = { column: col, direction: dir };
+  const DEFAULT_TS_SORT = { column: 'updated', direction: 'desc' };
+  renderTableSortHeaders(table, state.tsSort, (col, dir, nextSort) => {
+    state.tsSort = nextSort || { column: col, direction: dir };
     renderTaskStatusPage();
-  });
+  }, DEFAULT_TS_SORT);
 
   tbody.innerHTML = '';
 
@@ -2810,11 +2940,13 @@ function renderTaskStatusPage() {
     if (!seenIds.has(t.id)) { seenIds.add(t.id); dedupTasks.push(t); }
   }
 
-  const sTerm     = (state.tsFilter.search || '').toLowerCase().trim();
-  const orgFilter = state.tsFilter.org || 'all';
-  const stFilter  = state.tsFilter.status || 'all';
+  const sTerm          = (state.tsFilter.search || '').toLowerCase().trim();
+  const orgFilter      = state.tsFilter.org || 'all';
+  const projectFilter  = state.tsFilter.project || 'all';
+  const priorityFilter = state.tsFilter.priority || 'all';
+  const stFilter       = state.tsFilter.status || 'all';
 
-  const filtered = filterTasks(dedupTasks, sTerm, orgFilter, stFilter);
+  const filtered = filterTasks(dedupTasks, sTerm, orgFilter, stFilter, projectFilter, priorityFilter);
   const sorted = sortTasks(filtered, state.tsSort.column, state.tsSort.direction);
 
   if (!sorted.length) {
@@ -4690,11 +4822,12 @@ function renderOrgDetailView(org) {
     tbl.appendChild(thead);
     const tbody = document.createElement('tbody');
 
+    const DEFAULT_ORG_SORT = { column: 'task', direction: 'asc' };
     const renderOrgRows = () => {
-      renderTableSortHeaders(tbl, state.orgSort, (col, dir) => {
-        state.orgSort = { column: col, direction: dir };
+      renderTableSortHeaders(tbl, state.orgSort, (col, dir, nextSort) => {
+        state.orgSort = nextSort || { column: col, direction: dir };
         renderOrgRows();
-      });
+      }, DEFAULT_ORG_SORT);
       tbody.innerHTML = '';
       const sorted = sortTasks(orgTasks, state.orgSort.column, state.orgSort.direction);
       for (const t of sorted) {
@@ -6004,6 +6137,15 @@ document.getElementById('task-search-input')?.addEventListener('input', (e) => {
 });
 document.getElementById('task-org-filter')?.addEventListener('change', (e) => {
   state.taskFilter.org = e.target.value;
+  populateOverviewProjectFilter();
+  renderGlobalTaskTable();
+});
+document.getElementById('task-project-filter')?.addEventListener('change', (e) => {
+  state.taskFilter.project = e.target.value;
+  renderGlobalTaskTable();
+});
+document.getElementById('task-priority-filter')?.addEventListener('change', (e) => {
+  state.taskFilter.priority = e.target.value;
   renderGlobalTaskTable();
 });
 document.getElementById('task-status-filter')?.addEventListener('change', (e) => {
@@ -6018,6 +6160,15 @@ document.getElementById('ts-search-input')?.addEventListener('input', (e) => {
 });
 document.getElementById('ts-org-filter')?.addEventListener('change', (e) => {
   state.tsFilter.org = e.target.value;
+  populateTSProjectFilter();
+  renderTaskStatusPage();
+});
+document.getElementById('ts-project-filter')?.addEventListener('change', (e) => {
+  state.tsFilter.project = e.target.value;
+  renderTaskStatusPage();
+});
+document.getElementById('ts-priority-filter')?.addEventListener('change', (e) => {
+  state.tsFilter.priority = e.target.value;
   renderTaskStatusPage();
 });
 document.getElementById('ts-status-filter')?.addEventListener('change', (e) => {
@@ -6065,6 +6216,7 @@ document.querySelectorAll('.agent-filter-pill').forEach(btn => {
     renderAgentsPage();
   });
 });
+
 // ── Checklist View ────────────────────────────────────────
 
 let checklistItems = [];   // local cache
