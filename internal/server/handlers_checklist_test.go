@@ -358,3 +358,100 @@ func TestServer_REST_Checklist_Evaluate(t *testing.T) {
 		t.Fatalf("expected latest history entry by divergence-detector with fail, got %+v", histResp.History)
 	}
 }
+
+func TestServer_Checklist_CommitVerificationGate(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	baseURL := srv.URL()
+	client := &http.Client{}
+
+	doReq := func(method, urlStr string, body []byte) (*http.Response, []byte) {
+		t.Helper()
+		var bodyReader io.Reader
+		if body != nil {
+			bodyReader = bytes.NewReader(body)
+		}
+		req, err := http.NewRequest(method, urlStr, bodyReader)
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		defer resp.Body.Close()
+		respBytes, _ := io.ReadAll(resp.Body)
+		return resp, respBytes
+	}
+
+	// 1. Verify /api/health returns git_commit
+	resp, body := doReq("GET", baseURL+"/api/health", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from health, got %d", resp.StatusCode)
+	}
+	var healthData map[string]any
+	if err := json.Unmarshal(body, &healthData); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := healthData["git_commit"]; !ok {
+		t.Fatalf("expected git_commit in health response, got: %s", string(body))
+	}
+
+	// 2. Seed sprint STA-168-2
+	resp, _ = doReq("POST", baseURL+"/api/checklist/seed", []byte(`{"sprint":"STA-168-2","force":true}`))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("seed failed: %d", resp.StatusCode)
+	}
+
+	// 3. GET /api/checklist includes commit_verification
+	resp, body = doReq("GET", baseURL+"/api/checklist?sprint=STA-168-2", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from list, got %d", resp.StatusCode)
+	}
+	var listResp struct {
+		Items              []struct{ ID, Title, CommitHash string } `json:"items"`
+		CommitVerification *struct {
+			RunningCommit  string   `json:"running_commit"`
+			MainCommit     string   `json:"main_commit"`
+			Verified       bool     `json:"verified"`
+			BlockedItemIDs []string `json:"blocked_item_ids"`
+		} `json:"commit_verification"`
+	}
+	if err := json.Unmarshal(body, &listResp); err != nil {
+		t.Fatal(err)
+	}
+	if listResp.CommitVerification == nil {
+		t.Fatalf("expected commit_verification in checklist response")
+	}
+	if len(listResp.Items) == 0 {
+		t.Fatal("expected seeded items")
+	}
+
+	testItem := listResp.Items[0]
+
+	// 4. Set status to pending and commit_hash to a fake/unmerged commit
+	patchBody := []byte(`{"status":"pending","commit_hash":"deadbeef123"}`)
+	resp, body = doReq("PATCH", fmt.Sprintf("%s/api/checklist/%s", baseURL, testItem.ID), patchBody)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 when updating commit_hash, got %d: %s", resp.StatusCode, string(body))
+	}
+
+	// 5. Attempt to mark 'pass' while commit is missing -> Must return 409 Conflict
+	resp, body = doReq("PATCH", fmt.Sprintf("%s/api/checklist/%s", baseURL, testItem.ID), []byte(`{"status":"pass"}`))
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 Conflict when marking unverified commit item as pass, got %d: %s", resp.StatusCode, string(body))
+	}
+	if !strings.Contains(string(body), "cannot mark checklist item as pass") {
+		t.Fatalf("expected error message to explain gate block, got: %s", string(body))
+	}
+
+	// 6. Non-pass statuses like 'partial' or 'fail' are allowed
+	resp, body = doReq("PATCH", fmt.Sprintf("%s/api/checklist/%s", baseURL, testItem.ID), []byte(`{"status":"partial"}`))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for partial status, got %d: %s", resp.StatusCode, string(body))
+	}
+}

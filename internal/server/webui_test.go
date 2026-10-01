@@ -789,3 +789,52 @@ func TestRegisterUIRoutes_STA213_BossCardCachingAndFullPageTaskView(t *testing.T
 		}
 	}
 }
+
+func TestWebUI_ChecklistCommitHashGate(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterUIRoutes(mux, "test-tok")
+
+	// 1. Verify style.css includes commit gate banner, table, and blocked button styles
+	reqCSS := httptest.NewRequest("GET", "/ui/style.css", nil)
+	wCSS := httptest.NewRecorder()
+	mux.ServeHTTP(wCSS, reqCSS)
+	if wCSS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for style.css, got %d", wCSS.Code)
+	}
+	css := wCSS.Body.String()
+	for _, selector := range []string{
+		".checklist-commit-gate-banner",
+		".cl-gate-header",
+		".cl-gate-title",
+		".cl-gate-log-table",
+		".badge-commit-blocked",
+		".cl-btn.cl-btn-blocked",
+	} {
+		if !strings.Contains(css, selector) {
+			t.Errorf("style.css missing expected selector %q", selector)
+		}
+	}
+
+	// 2. Verify app.js includes commit verification state, gate banner rendering, and blocked controls
+	reqJS := httptest.NewRequest("GET", "/ui/app.js", nil)
+	wJS := httptest.NewRecorder()
+	mux.ServeHTTP(wJS, reqJS)
+	if wJS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for app.js, got %d", wJS.Code)
+	}
+	js := wJS.Body.String()
+	for _, expected := range []string{
+		"checklistCommitVerification",
+		"isItemCommitBlocked",
+		"getItemCommitBlockReason",
+		"checklist-commit-gate-banner",
+		"cl-gate-log-table",
+		"badge-commit-blocked",
+		"cl-btn-blocked",
+		"Checklist Commit-Hash Gate: Missing or Unmerged Commits Detected",
+	} {
+		if !strings.Contains(js, expected) {
+			t.Errorf("app.js missing expected symbol/pattern %q", expected)
+		}
+	}
+}

@@ -23,10 +23,19 @@ import (
 )
 
 var (
-	version = "0.3.0"
-	commit  = "none"
-	date    = "unknown"
+	version   = "0.3.0"
+	commit    = "none"
+	GitCommit = "none"
+	date      = "unknown"
 )
+
+func init() {
+	if GitCommit != "none" && commit == "none" {
+		commit = GitCommit
+	} else if commit != "none" && GitCommit == "none" {
+		GitCommit = commit
+	}
+}
 
 func main() {
 	var (
@@ -172,6 +181,7 @@ func runDaemon(ctx context.Context) error {
 			Port:      41421,
 			TokenPath: tokenPath,
 			DB:        dbStore.DB(),
+			GitCommit: GitCommit,
 		})
 		if err != nil {
 			slog.Warn("Failed to initialize HTTP server", slog.Any("error", err))

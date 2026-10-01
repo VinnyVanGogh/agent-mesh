@@ -65,7 +65,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Health check (within security wrapper)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","version":"1.0"}`)
+		fmt.Fprintf(w, `{"status":"ok","version":"1.0","git_commit":%q,"commit":%q}`, s.opts.GitCommit, s.opts.GitCommit)
 	})
 
 	// Tasks REST API
@@ -124,7 +124,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/report", telemetryH.GetReport)
 
 		// Checklist REST API
-		checklistH := NewChecklistHandler(s.opts.DB, s.hub)
+		checklistH := NewChecklistHandler(s.opts.DB, s.hub, s.opts.GitCommit)
 		mux.HandleFunc("GET /api/checklist", checklistH.ListItems)
 		mux.HandleFunc("GET /api/checklist/sprints", checklistH.ListSprints)
 		mux.HandleFunc("PATCH /api/checklist/{id}", checklistH.UpdateItem)

@@ -8,8 +8,9 @@ BINARY="$HOME/.local/bin/staypointd"
 PLIST="$HOME/Library/LaunchAgents/com.staypoint.daemon.plist"
 LABEL="com.staypoint.daemon"
 
-echo "→ Building staypointd from $REPO ..."
-go build -o "$BINARY" "$REPO/cmd/staypointd"
+COMMIT="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'none')"
+echo "→ Building staypointd from $REPO (commit: $COMMIT) ..."
+go build -ldflags "-X main.GitCommit=$COMMIT -X main.commit=$COMMIT" -o "$BINARY" "$REPO/cmd/staypointd"
 codesign -s - -f -i com.staypoint.daemon "$BINARY"
 echo "  Built: $BINARY ($(staypointd -version 2>/dev/null || echo 'ok'))"
 

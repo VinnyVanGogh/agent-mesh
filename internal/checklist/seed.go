@@ -502,6 +502,7 @@ func defaultChecklistSTA168_2(sprint string) []Item {
 			Description: r.desc,
 			HowToTest:   r.howTo,
 			Contract:    r.contract,
+			CommitHash:  ResolveSectionCommit(r.section),
 			Status:      st,
 			Notes:       r.notes,
 			Version:     1,
@@ -673,6 +674,7 @@ func defaultChecklistSTA168(sprint string) []Item {
 			Description: r.desc,
 			HowToTest:   r.howTo,
 			Contract:    r.contract,
+			CommitHash:  ResolveSectionCommit(r.section),
 			Status:      "pending",
 			Version:     1,
 		})
@@ -686,23 +688,28 @@ func Seed(ctx context.Context, dbConn *sql.DB, sprint string, force bool) (int, 
 		sprint = "STA-168-2"
 	}
 
-	// Ensure table has contract column
+	// Ensure table has contract & commit_hash columns
 	var contractCount int
 	_ = dbConn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('checklist_items') WHERE name='contract'").Scan(&contractCount)
 	if contractCount == 0 {
 		_, _ = dbConn.ExecContext(ctx, "ALTER TABLE checklist_items ADD COLUMN contract TEXT;")
 	}
+	var commitCount int
+	_ = dbConn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('checklist_items') WHERE name='commit_hash'").Scan(&commitCount)
+	if commitCount == 0 {
+		_, _ = dbConn.ExecContext(ctx, "ALTER TABLE checklist_items ADD COLUMN commit_hash TEXT;")
+	}
 
 	var count int
 	_ = dbConn.QueryRowContext(ctx, `SELECT COUNT(*) FROM checklist_items WHERE sprint=?`, sprint).Scan(&count)
 	if count > 0 && !force {
-		// Update contracts on existing items without touching statuses or user notes
+		// Update contracts and commit hashes on existing items without touching statuses or user notes
 		items := DefaultChecklist(sprint)
 		for _, it := range items {
-			if it.Contract != "" {
+			if it.Contract != "" || it.CommitHash != "" {
 				_, _ = dbConn.ExecContext(ctx,
-					`UPDATE checklist_items SET contract=? WHERE sprint=? AND section=? AND title=?`,
-					it.Contract, sprint, it.Section, it.Title)
+					`UPDATE checklist_items SET contract=?, commit_hash=? WHERE sprint=? AND section=? AND title=?`,
+					it.Contract, it.CommitHash, sprint, it.Section, it.Title)
 			}
 		}
 		return 0, count, nil
@@ -729,10 +736,14 @@ func Seed(ctx context.Context, dbConn *sql.DB, sprint string, force bool) (int, 
 		if status == "" {
 			status = "pending"
 		}
+		commitHash := it.CommitHash
+		if commitHash == "" {
+			commitHash = ResolveSectionCommit(it.Section)
+		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO checklist_items (id, sprint, section, title, description, how_to_test, contract, status, notes, version) VALUES (?,?,?,?,?,?,?,?,?,?)
-			ON CONFLICT(id) DO UPDATE SET contract=excluded.contract`,
-			it.ID, sprint, it.Section, it.Title, it.Description, it.HowToTest, it.Contract, status, it.Notes, 1,
+			`INSERT INTO checklist_items (id, sprint, section, title, description, how_to_test, contract, commit_hash, status, notes, version) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(id) DO UPDATE SET contract=excluded.contract, commit_hash=excluded.commit_hash`,
+			it.ID, sprint, it.Section, it.Title, it.Description, it.HowToTest, it.Contract, commitHash, status, it.Notes, 1,
 		); err != nil {
 			return 0, 0, fmt.Errorf("seed failed: %w", err)
 		}

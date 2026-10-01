@@ -54,6 +54,9 @@ type Options struct {
 
 	// TelemetryDBPath is the path to telemetry.db (default ~/.config/token-telemetry/telemetry.db).
 	TelemetryDBPath string
+
+	// GitCommit is the injected git commit hash of the running binary.
+	GitCommit string
 }
 
 // GenerateAuthToken generates a 32-byte (64-character hex) cryptographically secure random token.
