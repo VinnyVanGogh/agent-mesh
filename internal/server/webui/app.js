@@ -2943,37 +2943,54 @@ function renderDetailContent(content, task) {
   const title = task.title || task.name || '(untitled)';
   content.appendChild(el('h2', 'panel-title', title));
 
-  // Meta row: status pill, identifier, priority, org with explicit labels
+  // Meta row: explicitly labeled fields for Status, Identifier, Priority, Org, Stage
   const metaRow = el('div', 'panel-meta-row');
-  metaRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;';
-  if (task.identifier) {
+
+  const ident = task.identifier || (task.id ? `#${task.id.slice(0, 8)}` : null);
+  if (ident) {
     const idWrap = el('div', 'panel-meta-item');
-    idWrap.innerHTML = `<span class="panel-meta-tag-label" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-right:4px;">ID</span><span class="card-id" style="font-weight:600;">${escapeHtml(task.identifier)}</span>`;
+    idWrap.innerHTML = `<span class="panel-meta-tag-label">Identifier</span><span class="card-id panel-meta-value">${escapeHtml(ident)}</span>`;
     metaRow.appendChild(idWrap);
   }
+
   const statusWrap = el('div', 'panel-meta-item');
-  statusWrap.innerHTML = `<span class="panel-meta-tag-label" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-right:4px;">Status</span>`;
+  statusWrap.innerHTML = `<span class="panel-meta-tag-label">Status</span>`;
   statusWrap.appendChild(statusPill(task.status || 'unknown'));
   metaRow.appendChild(statusWrap);
 
   if (task.priority) {
     const prioWrap = el('div', 'panel-meta-item');
-    prioWrap.innerHTML = `<span class="panel-meta-tag-label" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-right:4px;">Priority</span>`;
+    prioWrap.innerHTML = `<span class="panel-meta-tag-label">Priority</span>`;
     prioWrap.appendChild(statusPill(task.priority));
     metaRow.appendChild(prioWrap);
   }
+
   if (task.organization) {
     const orgWrap = el('div', 'panel-meta-item');
-    orgWrap.innerHTML = `<span class="panel-meta-tag-label" style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:var(--muted);margin-right:4px;">Org</span>`;
+    orgWrap.innerHTML = `<span class="panel-meta-tag-label">Org</span>`;
     orgWrap.appendChild(el('span', 'pill', task.organization));
     metaRow.appendChild(orgWrap);
   }
+
+  const stage = task.execution_stage || task.status;
+  if (stage) {
+    const stageWrap = el('div', 'panel-meta-item');
+    stageWrap.innerHTML = `<span class="panel-meta-tag-label">Stage</span><span class="pill stage-pill">${escapeHtml(stage)}</span>`;
+    metaRow.appendChild(stageWrap);
+  }
+
   content.appendChild(metaRow);
 
   // Description (with fallback to first comment)
-  let desc = task.description || '';
+  let desc = (task.description || '').trim();
   if (!desc && task.comments && task.comments.length) {
-    desc = task.comments[0].body || task.comments[0].message || '';
+    for (const c of task.comments) {
+      const commentBody = (c.body || c.message || c.content || '').trim();
+      if (commentBody) {
+        desc = commentBody;
+        break;
+      }
+    }
   }
   const descField = el('div', 'panel-field');
   descField.appendChild(el('div', 'panel-field-label', 'Description'));
@@ -2984,7 +3001,10 @@ function renderDetailContent(content, task) {
   }
   content.appendChild(descField);
 
-  // Properties grid
+  // Properties grid with explicit typography labels
+  if (ident)                         addPanelField(content, 'Identifier', ident);
+  if (task.priority)                 addPanelField(content, 'Priority',   task.priority);
+  if (task.organization)             addPanelField(content, 'Org',        task.organization);
   addPanelField(content, 'Stage',    task.execution_stage || task.status);
   addPanelField(content, 'Assignee', task.assignee_name || task.checkout_agent_id || null);
   addPanelField(content, 'Project',  task.project || null);
@@ -3344,12 +3364,15 @@ function isFleetTaskId(id) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
 }
 
+let lastDetailOpenTime = 0;
+
 async function openDetail(taskId, pushHistory = true) {
   const panel   = document.getElementById('detail-panel');
   const content = document.getElementById('panel-content');
 
   stopChatPoll();
   state.openDetailTaskId = taskId;
+  lastDetailOpenTime = Date.now();
   panel.classList.remove('hidden');
   content.innerHTML = '<p style="color:var(--muted)">Loading…</p>';
 
@@ -3361,12 +3384,18 @@ async function openDetail(taskId, pushHistory = true) {
   const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
 
   try {
-    const resp = await apiFetch(`${apiBase}/${taskId}`);
-    const task = resp.task || resp;
-    if (resp.dependencies) {
-      task.dependencies = resp.dependencies;
+    const [taskResp, commentsResp] = await Promise.all([
+      apiFetch(`${apiBase}/${taskId}`),
+      apiFetch(`${apiBase}/${taskId}/comments`).catch(() => ({ comments: [] }))
+    ]);
+    const task = taskResp.task || taskResp;
+    if (taskResp.dependencies) {
+      task.dependencies = taskResp.dependencies;
     }
-    const inlineComments = resp.comments || [];
+    const comments = (taskResp.comments && taskResp.comments.length)
+      ? taskResp.comments
+      : (commentsResp?.comments || (Array.isArray(commentsResp) ? commentsResp : []));
+    task.comments = comments;
 
     // Also fetch native StayPoint governance snapshot if available
     try {
@@ -3377,22 +3406,13 @@ async function openDetail(taskId, pushHistory = true) {
     } catch { /* governance optional */ }
 
     renderDetailContent(content, task);
-
-    // Chat section is rendered for ALL tasks (native and fleet, todo/in_progress/etc.)
-    let comments = inlineComments;
-    if (!comments.length) {
-      try {
-        const cr = await apiFetch(`${apiBase}/${taskId}/comments`);
-        comments = cr.comments || (Array.isArray(cr) ? cr : []);
-      } catch { /* comments optional */ }
-    }
     buildChatSection(content, taskId, comments);
     startChatPoll(taskId);
   } catch {
     const cached = state.tasks[taskId];
     if (cached) {
       renderDetailContent(content, cached);
-      buildChatSection(content, taskId, []);
+      buildChatSection(content, taskId, cached.comments || []);
       startChatPoll(taskId);
     } else {
       const p = el('p', null, 'Task not found or failed to load.');
@@ -3436,10 +3456,12 @@ document.getElementById('panel-close').addEventListener('click', closeDetailPane
 document.addEventListener('click', (e) => {
   const panel = document.getElementById('detail-panel');
   if (!panel || panel.classList.contains('hidden')) return;
+  // If detail was just opened/switched in this click event, do not close
+  if (Date.now() - lastDetailOpenTime < 150) return;
+  // If clicked inside the detail panel, do not close
   if (panel.contains(e.target)) return;
+  // If clicked on the close button, it has its own handler
   if (e.target.closest('#panel-close')) return;
-  // If clicked on an element intended to open/switch detail, ignore so it doesn't immediately close
-  if (e.target.closest('.task-row, .task-card, .timeline-task, .clickable-task, [data-task-id]')) return;
   closeDetailPanel();
 });
 

@@ -101,3 +101,53 @@ func TestRegisterUIRoutes_SPARoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestWebUI_DetailPanelPolishAndDismiss(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterUIRoutes(mux, "test-tok")
+
+	// Verify app.js serves required detail panel behavior
+	reqJS := httptest.NewRequest("GET", "/ui/app.js", nil)
+	wJS := httptest.NewRecorder()
+	mux.ServeHTTP(wJS, reqJS)
+	if wJS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for app.js, got %d", wJS.Code)
+	}
+	appJS := wJS.Body.String()
+
+	// 1. Click-outside-to-dismiss behavior
+	if !strings.Contains(appJS, "closeDetailPanel") {
+		t.Error("app.js missing closeDetailPanel function")
+	}
+	if !strings.Contains(appJS, "lastDetailOpenTime") {
+		t.Error("app.js missing lastDetailOpenTime guard against bubbling click dismissal")
+	}
+
+	// 2. Field label polish: Priority, Org, Stage, Identifier
+	for _, label := range []string{"Priority", "Org", "Stage", "Identifier"} {
+		if !strings.Contains(appJS, label) {
+			t.Errorf("app.js missing explicit field label %q", label)
+		}
+	}
+
+	// 3. Fallback to rendering first comment when description is blank
+	if !strings.Contains(appJS, "task.comments") {
+		t.Error("app.js missing comment inspection for description fallback")
+	}
+
+	// Verify style.css serves required typography classes
+	reqCSS := httptest.NewRequest("GET", "/ui/style.css", nil)
+	wCSS := httptest.NewRecorder()
+	mux.ServeHTTP(wCSS, reqCSS)
+	if wCSS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for style.css, got %d", wCSS.Code)
+	}
+	styleCSS := wCSS.Body.String()
+
+	if !strings.Contains(styleCSS, ".panel-meta-tag-label") {
+		t.Error("style.css missing .panel-meta-tag-label typography rule")
+	}
+	if !strings.Contains(styleCSS, ".panel-meta-item") {
+		t.Error("style.css missing .panel-meta-item rule")
+	}
+}
