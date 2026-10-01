@@ -171,7 +171,7 @@
             <p class="section-desc">Consolidated task status tracking across every organization.</p>
           </div>
           <div class="table-controls">
-            <input type="text" id="task-search-input" placeholder="Filter by name, id, or org…" class="search-input">
+            <input type="text" id="task-search-input" placeholder="Search tasks, descriptions, comments, orgs…" class="search-input">
             <select id="task-org-filter" class="select-filter">
               <option value="all">All Organizations</option>
             </select>
@@ -187,16 +187,16 @@
           </div>
         </div>
         <div class="task-table-wrapper">
-          <table class="global-task-table">
+          <table class="global-task-table" id="overview-task-table">
             <thead>
               <tr>
-                <th>Identifier</th>
-                <th>Task</th>
-                <th>Organization</th>
-                <th>Status</th>
-                <th>Priority</th>
-                <th>Cost &amp; Tokens</th>
-                <th>Updated</th>
+                <th data-col="identifier" class="sortable-th" tabindex="0" role="columnheader">Identifier</th>
+                <th data-col="task" class="sortable-th" tabindex="0" role="columnheader">Task</th>
+                <th data-col="organization" class="sortable-th" tabindex="0" role="columnheader">Organization</th>
+                <th data-col="status" class="sortable-th" tabindex="0" role="columnheader">Status</th>
+                <th data-col="priority" class="sortable-th" tabindex="0" role="columnheader">Priority</th>
+                <th data-col="cost" class="sortable-th" tabindex="0" role="columnheader">Cost &amp; Tokens</th>
+                <th data-col="updated" class="sortable-th" tabindex="0" role="columnheader">Updated</th>
               </tr>
             </thead>
             <tbody id="global-task-tbody"></tbody>
@@ -312,7 +312,7 @@
       <div class="view-header">
         <h1 class="view-title">Global Task Status</h1>
         <div class="table-controls">
-          <input type="text" id="ts-search-input" placeholder="Filter by name, id, or org…" class="search-input">
+          <input type="text" id="ts-search-input" placeholder="Search tasks, descriptions, comments, orgs…" class="search-input">
           <select id="ts-org-filter" class="select-filter">
             <option value="all">All Organizations</option>
           </select>
@@ -329,18 +329,18 @@
       </div>
       <div class="dashboard-section" style="padding:0">
         <div class="task-table-wrapper" style="border:none;border-radius:0">
-          <table class="global-task-table">
+          <table class="global-task-table" id="ts-task-table">
             <thead>
               <tr>
-                <th>Identifier</th>
-                <th>Task</th>
-                <th>Organization</th>
-                <th>Project</th>
-                <th>Assignee</th>
-                <th>Status</th>
-                <th>Priority</th>
-                <th>Cost</th>
-                <th>Updated</th>
+                <th data-col="identifier" class="sortable-th" tabindex="0" role="columnheader">Identifier</th>
+                <th data-col="task" class="sortable-th" tabindex="0" role="columnheader">Task</th>
+                <th data-col="organization" class="sortable-th" tabindex="0" role="columnheader">Organization</th>
+                <th data-col="project" class="sortable-th" tabindex="0" role="columnheader">Project</th>
+                <th data-col="assignee" class="sortable-th" tabindex="0" role="columnheader">Assignee</th>
+                <th data-col="status" class="sortable-th" tabindex="0" role="columnheader">Status</th>
+                <th data-col="priority" class="sortable-th" tabindex="0" role="columnheader">Priority</th>
+                <th data-col="cost" class="sortable-th" tabindex="0" role="columnheader">Cost</th>
+                <th data-col="updated" class="sortable-th" tabindex="0" role="columnheader">Updated</th>
               </tr>
             </thead>
             <tbody id="ts-task-tbody"></tbody>

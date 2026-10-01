@@ -485,6 +485,7 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 							ID:           iss.ID,
 							Identifier:   iss.Identifier,
 							Title:        iss.Title,
+							Description:  iss.Description,
 							Organization: c.Name,
 							Priority:     iss.Priority,
 							UpdatedAt:    now,
@@ -579,6 +580,30 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 
 	// 2b. Query StayPoint local database tasks
 	if a.DB != nil {
+		localComments := make(map[string][]string)
+		if cRows, err := a.DB.Query(`SELECT task_id, message FROM task_comments ORDER BY created_at ASC;`); err == nil {
+			defer cRows.Close()
+			for cRows.Next() {
+				var tid, msg string
+				if err := cRows.Scan(&tid, &msg); err == nil && msg != "" {
+					localComments[tid] = append(localComments[tid], msg)
+				}
+			}
+		}
+
+		localDocs := make(map[string]string)
+		if dRows, err := a.DB.Query(`SELECT task_id, content FROM task_documents WHERE doc_key = 'description' ORDER BY version DESC;`); err == nil {
+			defer dRows.Close()
+			for dRows.Next() {
+				var tid, content string
+				if err := dRows.Scan(&tid, &content); err == nil && content != "" {
+					if _, exists := localDocs[tid]; !exists {
+						localDocs[tid] = content
+					}
+				}
+			}
+		}
+
 		tRows, err := a.DB.Query(`
 			SELECT id, name, COALESCE(organization, ''), COALESCE(project, ''),
 			       status, execution_stage, is_blocked, COALESCE(block_reason, ''),
@@ -651,10 +676,18 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 					orgSummary.SpentUSD += spentUSD
 					orgSummary.SpentTokens += spentTokens
 
+					desc := localDocs[id]
+					cmts := localComments[id]
+					if desc == "" && len(cmts) > 0 {
+						desc = cmts[0]
+					}
+
 					item := TaskItem{
 						ID:             id,
 						Identifier:     fmt.Sprintf("%s-%s", orgSummary.IssuePrefix, shortID(id)),
 						Title:          name,
+						Description:    desc,
+						Comments:       cmts,
 						Organization:   org,
 						Project:        proj,
 						Status:         taskStatus,
