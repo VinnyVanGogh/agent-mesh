@@ -32,15 +32,26 @@ func applyLiveQuotas(state *PacerState, now time.Time) {
 	defer conn.Close()
 	store := quota.Store{DB: conn}
 	pools := map[string]PoolID{
-		"claude": resolveClaudeLivePool(),
-		"gemini": PoolGeminiNative,
+		"claude":          resolveClaudeLivePool(),
+		"claude_personal": PoolPersonalClaude,
+		"claude_work":     PoolWorkClaude,
+		"gemini":          PoolGeminiNative,
 	}
 	for provider, id := range pools {
 		rows, err := store.Load(provider)
-		if err != nil {
+		if err != nil || len(rows) == 0 {
 			continue
 		}
-		applyQuotaRows(state.Pools[id], rows, now)
+		if p, ok := state.Pools[id]; ok && p != nil {
+			applyQuotaRows(p, rows, now)
+		}
+	}
+	// In StayPoint, local Keychain credentials under "claude" default to the personal seat.
+	// If the personal pool has not been populated yet, overlay the "claude" rows onto it.
+	if persPool := state.Pools[PoolPersonalClaude]; persPool != nil && !persPool.FiveHour.Known && !persPool.Weekly.Known {
+		if rows, err := store.Load("claude"); err == nil && len(rows) > 0 {
+			applyQuotaRows(persPool, rows, now)
+		}
 	}
 }
 

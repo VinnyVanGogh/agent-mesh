@@ -299,20 +299,25 @@ func (a *Aggregator) gatherProviderQuotas(overview *FleetOverview, now time.Time
 				var resetsAt sql.NullString
 				if err := rows.Scan(&poolKey, &winType, &usedPct, &remPct, &isLockedInt, &resetsAt); err == nil {
 					key := strings.ToLower(poolKey)
-					var gauge *ProviderQuotaGauge
+					var gauges []*ProviderQuotaGauge
 					switch {
 					case strings.Contains(key, "gemini"):
-						gauge = overview.ProviderQuotas["gemini"]
+						gauges = append(gauges, overview.ProviderQuotas["gemini"])
 					case strings.Contains(key, "work") && strings.Contains(key, "claude"):
-						gauge = overview.ProviderQuotas["claude_work"]
+						gauges = append(gauges, overview.ProviderQuotas["claude_work"])
 					case (strings.Contains(key, "personal") || strings.Contains(key, "3p")) && strings.Contains(key, "claude"):
-						gauge = overview.ProviderQuotas["claude_personal"]
+						gauges = append(gauges, overview.ProviderQuotas["claude_personal"])
 					case strings.Contains(key, "claude"):
-						gauge = overview.ProviderQuotas["claude"]
+						gauges = append(gauges, overview.ProviderQuotas["claude"])
+						// Local Keychain credentials under "claude" default to the personal seat in StayPoint
+						gauges = append(gauges, overview.ProviderQuotas["claude_personal"])
 					case strings.Contains(key, "codex") || strings.Contains(key, "openai"):
-						gauge = overview.ProviderQuotas["openai"]
+						gauges = append(gauges, overview.ProviderQuotas["openai"])
 					}
-					if gauge != nil {
+					for _, gauge := range gauges {
+						if gauge == nil {
+							continue
+						}
 						var rTime *time.Time
 						if resetsAt.Valid && resetsAt.String != "" {
 							if t, err := time.Parse(time.RFC3339Nano, resetsAt.String); err == nil {
@@ -363,17 +368,26 @@ func (a *Aggregator) gatherProviderQuotas(overview *FleetOverview, now time.Time
 			}
 			if json.Unmarshal(data, &stateData) == nil {
 				for qName, qVal := range stateData.Quotas {
-					var g *ProviderQuotaGauge
+					var gauges []*ProviderQuotaGauge
 					lower := strings.ToLower(qName)
 					switch {
 					case strings.Contains(lower, "gemini"):
-						g = overview.ProviderQuotas["gemini"]
+						gauges = append(gauges, overview.ProviderQuotas["gemini"])
+					case strings.Contains(lower, "work") && strings.Contains(lower, "claude"):
+						gauges = append(gauges, overview.ProviderQuotas["claude_work"])
+					case (strings.Contains(lower, "personal") || strings.Contains(lower, "3p")) && strings.Contains(lower, "claude"):
+						gauges = append(gauges, overview.ProviderQuotas["claude_personal"])
+						gauges = append(gauges, overview.ProviderQuotas["claude"])
 					case strings.Contains(lower, "claude"):
-						g = overview.ProviderQuotas["claude"]
+						gauges = append(gauges, overview.ProviderQuotas["claude"])
+						gauges = append(gauges, overview.ProviderQuotas["claude_personal"])
 					case strings.Contains(lower, "openai") || strings.Contains(lower, "codex"):
-						g = overview.ProviderQuotas["openai"]
+						gauges = append(gauges, overview.ProviderQuotas["openai"])
 					}
-					if g != nil {
+					for _, g := range gauges {
+						if g == nil {
+							continue
+						}
 						g.FiveHourUsedPct = qVal.FiveHourUsed
 						g.FiveHourRemainingPct = qVal.FiveHourRemaining
 						if qVal.FiveHourResetsAt > 0 {
@@ -389,22 +403,30 @@ func (a *Aggregator) gatherProviderQuotas(overview *FleetOverview, now time.Time
 					}
 				}
 				for lName, lVal := range stateData.Lockouts {
-					var g *ProviderQuotaGauge
+					var gauges []*ProviderQuotaGauge
 					lower := strings.ToLower(lName)
 					switch {
 					case strings.Contains(lower, "gemini"):
-						g = overview.ProviderQuotas["gemini"]
+						gauges = append(gauges, overview.ProviderQuotas["gemini"])
+					case strings.Contains(lower, "work") && strings.Contains(lower, "claude"):
+						gauges = append(gauges, overview.ProviderQuotas["claude_work"])
+					case (strings.Contains(lower, "personal") || strings.Contains(lower, "3p")) && strings.Contains(lower, "claude"):
+						gauges = append(gauges, overview.ProviderQuotas["claude_personal"])
+						gauges = append(gauges, overview.ProviderQuotas["claude"])
 					case strings.Contains(lower, "claude"):
-						g = overview.ProviderQuotas["claude"]
+						gauges = append(gauges, overview.ProviderQuotas["claude"])
+						gauges = append(gauges, overview.ProviderQuotas["claude_personal"])
 					case strings.Contains(lower, "openai") || strings.Contains(lower, "codex"):
-						g = overview.ProviderQuotas["openai"]
+						gauges = append(gauges, overview.ProviderQuotas["openai"])
 					}
-					if g != nil && lVal.Locked {
-						g.IsLocked = true
-						g.LockoutReason = "Rate limit lockout triggered"
-						if lVal.ResetsAt > 0 {
-							t := time.Unix(lVal.ResetsAt, 0).UTC()
-							g.LockoutUntil = &t
+					for _, g := range gauges {
+						if g != nil && lVal.Locked {
+							g.IsLocked = true
+							g.LockoutReason = "Rate limit lockout triggered"
+							if lVal.ResetsAt > 0 {
+								t := time.Unix(lVal.ResetsAt, 0).UTC()
+								g.LockoutUntil = &t
+							}
 						}
 					}
 				}
@@ -552,7 +574,7 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 							}
 						}
 
-						quota := getProviderQuotaGauge(overview.ProviderQuotas, provider)
+						quota := getProviderQuotaGauge(overview.ProviderQuotas, provider, c.Name)
 
 						aItem := AgentItem{
 							ID:            ag.ID,
@@ -739,7 +761,7 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 						} else {
 							hb = now
 						}
-						quota := getProviderQuotaGauge(overview.ProviderQuotas, provider)
+						quota := getProviderQuotaGauge(overview.ProviderQuotas, provider, org)
 						aItem := AgentItem{
 							ID:            id,
 							Name:          fmt.Sprintf("%s Session (%s)", titleCase(provider), shortID(id)),
@@ -1013,24 +1035,52 @@ func ResolveAgentProvider(adapterType string, adapterConfig, runtimeConfig map[s
 	return "gemini"
 }
 
-func getProviderQuotaGauge(quotas map[string]*ProviderQuotaGauge, provider string) *ProviderQuotaGauge {
+func getProviderQuotaGauge(quotas map[string]*ProviderQuotaGauge, provider string, orgName ...string) *ProviderQuotaGauge {
 	if quotas == nil || provider == "" {
 		return nil
 	}
 	p := strings.ToLower(provider)
+	org := ""
+	if len(orgName) > 0 {
+		org = strings.ToLower(orgName[0])
+	}
+	isWorkOrg := strings.Contains(org, "managed") || strings.Contains(org, "mansol")
+
+	if strings.Contains(p, "claude") || strings.Contains(p, "anthropic") || strings.Contains(p, "fable") {
+		if p == "claude_personal" {
+			if q, ok := quotas["claude_personal"]; ok && q != nil {
+				return q
+			}
+		}
+		if p == "claude_work" {
+			if q, ok := quotas["claude_work"]; ok && q != nil {
+				return q
+			}
+		}
+		if isWorkOrg {
+			if q, ok := quotas["claude_work"]; ok && q != nil {
+				return q
+			}
+			if q, ok := quotas["claude"]; ok && q != nil {
+				return q
+			}
+			if q, ok := quotas["claude_personal"]; ok && q != nil {
+				return q
+			}
+		} else {
+			if q, ok := quotas["claude_personal"]; ok && q != nil {
+				return q
+			}
+			if q, ok := quotas["claude"]; ok && q != nil {
+				return q
+			}
+			if q, ok := quotas["claude_work"]; ok && q != nil {
+				return q
+			}
+		}
+	}
 	if q, ok := quotas[p]; ok && q != nil {
 		return q
-	}
-	if strings.Contains(p, "claude") || strings.Contains(p, "anthropic") || strings.Contains(p, "fable") {
-		if q, ok := quotas["claude"]; ok && q != nil {
-			return q
-		}
-		if q, ok := quotas["claude_personal"]; ok && q != nil {
-			return q
-		}
-		if q, ok := quotas["claude_work"]; ok && q != nil {
-			return q
-		}
 	}
 	if strings.Contains(p, "gemini") || strings.Contains(p, "google") {
 		if q, ok := quotas["gemini"]; ok && q != nil {
@@ -1105,41 +1155,65 @@ func (a *Aggregator) populateOrgQuotas(overview *FleetOverview, now time.Time) {
 	for i := range overview.Organizations {
 		org := &overview.Organizations[i]
 		org.ProviderQuotas = make(map[string]*ProviderQuotaGauge)
-
-		// Calculate total org weight relative to fleet
-		var orgWeight float64 = 0.5
-		if org.Name == "StayPoint" {
-			orgWeight = 0.55
-		} else if org.Name == "Managed Solution" {
-			orgWeight = 0.35
-		} else {
-			orgWeight = 0.10
-		}
+		isManagedSol := strings.Contains(strings.ToLower(org.Name), "managed")
 
 		for key, fleetGauge := range overview.ProviderQuotas {
 			if fleetGauge == nil {
 				continue
 			}
 
-			// Specific agent ratio if available
-			provKey := key
-			if strings.HasPrefix(key, "claude") {
-				provKey = "claude"
-			}
-			activeForProv := org.ActiveAgentsByProvider[provKey]
-			totalForProv := overview.GlobalAgents.ByProvider[provKey]
-			ratio := orgWeight
-			if totalForProv > 0 {
-				ratio = float64(activeForProv) / float64(totalForProv)
-				if ratio <= 0 && activeForProv == 0 {
-					ratio = orgWeight * 0.5
+			org5hUsed := fleetGauge.FiveHourUsedPct
+			org5hRemaining := fleetGauge.FiveHourRemainingPct
+			orgWeeklyUsed := fleetGauge.WeeklyUsedPct
+			orgWeeklyRemaining := fleetGauge.WeeklyRemainingPct
+			burn5h := fleetGauge.BurnRate5h
+			burnWeekly := fleetGauge.BurnRateWeekly
+			isLocked := fleetGauge.IsLocked
+
+			// Organization-specific quota pool prioritization:
+			// Managed Solution prioritizes claude_work and does not burn personal quota.
+			// Personal orgs (StayPoint, etc.) prioritize claude_personal and do not burn work quota.
+			if isManagedSol {
+				if key == "claude_personal" {
+					org5hUsed = 0.0
+					org5hRemaining = 100.0
+					orgWeeklyUsed = 0.0
+					orgWeeklyRemaining = 100.0
+					burn5h = 0.0
+					burnWeekly = 0.0
+					isLocked = false
+				} else if key == "claude" {
+					if workGauge, ok := overview.ProviderQuotas["claude_work"]; ok && workGauge != nil {
+						org5hUsed = workGauge.FiveHourUsedPct
+						org5hRemaining = workGauge.FiveHourRemainingPct
+						orgWeeklyUsed = workGauge.WeeklyUsedPct
+						orgWeeklyRemaining = workGauge.WeeklyRemainingPct
+						burn5h = workGauge.BurnRate5h
+						burnWeekly = workGauge.BurnRateWeekly
+						isLocked = workGauge.IsLocked
+					}
+				}
+			} else {
+				if key == "claude_work" {
+					org5hUsed = 0.0
+					org5hRemaining = 100.0
+					orgWeeklyUsed = 0.0
+					orgWeeklyRemaining = 100.0
+					burn5h = 0.0
+					burnWeekly = 0.0
+					isLocked = false
+				} else if key == "claude" {
+					if persGauge, ok := overview.ProviderQuotas["claude_personal"]; ok && persGauge != nil {
+						org5hUsed = persGauge.FiveHourUsedPct
+						org5hRemaining = persGauge.FiveHourRemainingPct
+						orgWeeklyUsed = persGauge.WeeklyUsedPct
+						orgWeeklyRemaining = persGauge.WeeklyRemainingPct
+						burn5h = persGauge.BurnRate5h
+						burnWeekly = persGauge.BurnRateWeekly
+						isLocked = persGauge.IsLocked
+					}
 				}
 			}
-
-			org5hUsed := math.Round(fleetGauge.FiveHourUsedPct*ratio*10) / 10
-			org5hRemaining := math.Max(0, math.Round((100.0-org5hUsed)*10)/10)
-			orgWeeklyUsed := math.Round(fleetGauge.WeeklyUsedPct*ratio*10) / 10
-			orgWeeklyRemaining := math.Max(0, math.Round((100.0-orgWeeklyUsed)*10)/10)
 
 			orgGauge := &ProviderQuotaGauge{
 				Provider:             fleetGauge.Provider,
@@ -1150,24 +1224,36 @@ func (a *Aggregator) populateOrgQuotas(overview *FleetOverview, now time.Time) {
 				WeeklyUsedPct:        orgWeeklyUsed,
 				WeeklyRemainingPct:   orgWeeklyRemaining,
 				WeeklyResetsAt:       fleetGauge.WeeklyResetsAt,
-				BurnRate5h:           math.Round(fleetGauge.BurnRate5h*ratio*100) / 100,
-				BurnRateWeekly:       math.Round(fleetGauge.BurnRateWeekly*ratio*100) / 100,
+				BurnRate5h:           burn5h,
+				BurnRateWeekly:       burnWeekly,
 				LockoutThresholdPct:  fleetGauge.LockoutThresholdPct,
-				IsLocked:             fleetGauge.IsLocked,
+				IsLocked:             isLocked,
 				LockoutReason:        fleetGauge.LockoutReason,
 				LockoutUntil:         fleetGauge.LockoutUntil,
 				RunwayTurns:          fleetGauge.RunwayTurns,
 			}
 
-			if fleetGauge.IsLocked {
+			if orgGauge.IsLocked {
 				// Managed Solution is an enterprise work org: check claude_work first before locking claude/personal
-				if (org.Name == "Managed Solution" || strings.Contains(strings.ToLower(org.Name), "managed")) && (key == "claude_personal" || key == "claude") {
+				if isManagedSol && (key == "claude_personal" || key == "claude") {
 					workGauge := overview.ProviderQuotas["claude_work"]
 					if workGauge != nil && !workGauge.IsLocked {
 						// Work quota has headroom; do not lock org out on Claude
 						orgGauge.IsLocked = false
 						orgGauge.ProjectionStatus = "on_track"
 						orgGauge.ProjectionMessage = "Claude Work prioritized (healthy headroom)"
+						org.ProviderQuotas[key] = orgGauge
+						continue
+					}
+				}
+				// Personal org (StayPoint, etc.): check claude_personal before locking on claude_work/claude
+				if !isManagedSol && (key == "claude_work" || key == "claude") {
+					persGauge := overview.ProviderQuotas["claude_personal"]
+					if persGauge != nil && !persGauge.IsLocked {
+						// Personal quota has headroom; do not lock org out on Claude
+						orgGauge.IsLocked = false
+						orgGauge.ProjectionStatus = "on_track"
+						orgGauge.ProjectionMessage = "Claude Personal prioritized (healthy headroom)"
 						org.ProviderQuotas[key] = orgGauge
 						continue
 					}
@@ -1180,10 +1266,20 @@ func (a *Aggregator) populateOrgQuotas(overview *FleetOverview, now time.Time) {
 				}
 			} else if org5hRemaining < 20.0 {
 				orgGauge.ProjectionStatus = "overpaced"
-				orgGauge.ProjectionMessage = fmt.Sprintf("High usage: %.1f%% used by %s", org5hUsed, org.Name)
+				orgGauge.ProjectionMessage = fmt.Sprintf("High usage: %.1f%% used", org5hUsed)
 			} else {
 				orgGauge.ProjectionStatus = "on_track"
-				orgGauge.ProjectionMessage = fmt.Sprintf("Healthy headroom: %.1f%% remaining", org5hRemaining)
+				if isManagedSol && (key == "claude_work" || key == "claude") {
+					orgGauge.ProjectionMessage = "Claude Work prioritized (healthy headroom)"
+				} else if !isManagedSol && (key == "claude_personal" || key == "claude") {
+					orgGauge.ProjectionMessage = "Claude Personal prioritized (healthy headroom)"
+				} else if isManagedSol && key == "claude_personal" {
+					orgGauge.ProjectionMessage = "Personal quota retained"
+				} else if !isManagedSol && key == "claude_work" {
+					orgGauge.ProjectionMessage = "Enterprise seat available"
+				} else {
+					orgGauge.ProjectionMessage = fmt.Sprintf("Healthy headroom: %.1f%% remaining", org5hRemaining)
+				}
 			}
 
 			org.ProviderQuotas[key] = orgGauge
