@@ -170,6 +170,15 @@ if [[ "$(uname)" == "Darwin" && -x "$DAEMON_BIN" ]]; then
     else
         echo -e "  ${GREEN}✓ PASS${RESET}: staypointd has a stable code signature"
     fi
+    CERT_MSG="$("$SCRIPT_DIR/check-signing-cert.sh" 2>&1 | grep -v '^[A-Z_]*=')"
+    CERT_STATUS=$("$SCRIPT_DIR/check-signing-cert.sh" --quiet >/dev/null 2>&1; echo $?)
+    if [[ "$CERT_STATUS" -ne 0 ]]; then
+        echo -e "  ${RED}✗ FAIL${RESET}: ${CERT_MSG}"
+        OVERALL_PASS=0
+        FAILURES+=("Signing certificate missing, expired, or expiring within 30 days")
+    else
+        echo -e "  ${GREEN}✓ PASS${RESET}: ${CERT_MSG#✓ }"
+    fi
 fi
 
 # ------------------------------------------------------------------------------
