@@ -158,6 +158,20 @@ else
     fi
 fi
 
+# Ad-hoc signatures change identity on every rebuild, so macOS re-prompts for
+# Documents access each time. The installed daemon must carry a real signature.
+DAEMON_BIN="$HOME/.local/bin/staypointd"
+if [[ "$(uname)" == "Darwin" && -x "$DAEMON_BIN" ]]; then
+    if codesign -dv "$DAEMON_BIN" 2>&1 | grep -q "Signature=adhoc"; then
+        echo -e "  ${RED}✗ FAIL${RESET}: ${DAEMON_BIN} is ad-hoc signed (macOS will re-prompt for permissions after every rebuild)"
+        echo -e "    ${YELLOW}Action required: rebuild via${RESET} ${CYAN}scripts/reinstall-daemon.sh${RESET}"
+        OVERALL_PASS=0
+        FAILURES+=("staypointd is ad-hoc signed")
+    else
+        echo -e "  ${GREEN}✓ PASS${RESET}: staypointd has a stable code signature"
+    fi
+fi
+
 # ------------------------------------------------------------------------------
 # 3. Checklist Commit-Hash Gate & Section Verification
 # ------------------------------------------------------------------------------
