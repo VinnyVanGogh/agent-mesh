@@ -39,6 +39,42 @@ func TestEstimateModelCost(t *testing.T) {
 			expectedMin: 0.49,
 			expectedMax: 0.51, // 0.10 + 0.40 = 0.50
 		},
+		{
+			model:       "gemini-3.8-flash",
+			in:          1_000_000,
+			out:         1_000_000,
+			cRead:       0,
+			cWrite:      0,
+			expectedMin: 4.49,
+			expectedMax: 4.51, // 0.75 + 3.75 = 4.50
+		},
+		{
+			model:       "gemini-3.1-pro",
+			in:          1_000_000,
+			out:         1_000_000,
+			cRead:       0,
+			cWrite:      0,
+			expectedMin: 13.99,
+			expectedMax: 14.01, // 2.00 + 12.00 = 14.00
+		},
+		{
+			model:       "gemini-3.1-flash-lite",
+			in:          1_000_000,
+			out:         1_000_000,
+			cRead:       0,
+			cWrite:      0,
+			expectedMin: 1.74,
+			expectedMax: 1.76, // 0.25 + 1.50 = 1.75
+		},
+		{
+			model:       "claude-opus-5-5",
+			in:          1_000_000,
+			out:         1_000_000,
+			cRead:       0,
+			cWrite:      0,
+			expectedMin: 23.99,
+			expectedMax: 24.01, // 4.00 + 20.00 = 24.00
+		},
 	}
 
 	for _, tt := range tests {

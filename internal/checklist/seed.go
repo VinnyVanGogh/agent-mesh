@@ -481,7 +481,7 @@ func defaultChecklistSTA168_2(sprint string) []Item {
 			section: "11. Checklist Tooling & Divergence Engine (STA-168, STA-170)",
 			title:   "⚡ Verify Contracts runs machine assertions and detects regression divergence (STA-170)",
 			desc:    "Clicking Verify Contracts evaluates command, file_pattern, and http contracts and flags broken claims.",
-			howTo:   "On /checklist, click '⚡ Verify Contracts'. Verify evaluation runs and summary modal/alert appears.",
+			howTo:   "On /checklist, click '⚡ Verify Contracts'. Verify loading state, summary banner, and informative toast appear with pass/fail/regression counts.",
 			contract: `{"type":"file_pattern","file_path":"internal/checklist/divergence.go","must_contain":["EvaluateSprint"]}`,
 			status:  "pending",
 			notes:   "",

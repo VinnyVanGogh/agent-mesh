@@ -12,6 +12,18 @@ func EstimateModelCost(model string, inputTokens, outputTokens, cacheRead, cache
 	var inPerM, outPerM, cacheReadPerM, cacheCreatePerM float64
 
 	switch {
+	case strings.Contains(lower, "opus-5-5") || strings.Contains(lower, "opus-5.5"):
+		inPerM = 4.00
+		outPerM = 20.00
+		cacheReadPerM = 0.20
+		cacheCreatePerM = 5.00
+
+	case strings.Contains(lower, "opus-5"):
+		inPerM = 5.00
+		outPerM = 25.00
+		cacheReadPerM = 0.50
+		cacheCreatePerM = 6.25
+
 	case strings.Contains(lower, "opus"):
 		inPerM = 15.00
 		outPerM = 75.00
@@ -29,6 +41,24 @@ func EstimateModelCost(model string, inputTokens, outputTokens, cacheRead, cache
 		outPerM = 15.00
 		cacheReadPerM = 0.30
 		cacheCreatePerM = 3.75
+
+	case strings.Contains(lower, "gemini-3.1-flash-lite") || strings.Contains(lower, "gemini-3.5-flash-lite") || strings.Contains(lower, "flash-lite"):
+		inPerM = 0.25
+		outPerM = 1.50
+		cacheReadPerM = 0.025
+		cacheCreatePerM = 0.25
+
+	case strings.Contains(lower, "gemini-3.8-flash") || strings.Contains(lower, "gemini-3.7-flash") || strings.Contains(lower, "gemini-3.6-flash") || strings.Contains(lower, "gemini-3.5-flash") || strings.Contains(lower, "gemini-3-flash"):
+		inPerM = 0.75
+		outPerM = 3.75
+		cacheReadPerM = 0.075
+		cacheCreatePerM = 0.75
+
+	case strings.Contains(lower, "gemini-3.1-pro") || strings.Contains(lower, "gemini-3-pro"):
+		inPerM = 2.00
+		outPerM = 12.00
+		cacheReadPerM = 0.20
+		cacheCreatePerM = 2.00
 
 	case strings.Contains(lower, "flash"):
 		inPerM = 0.10

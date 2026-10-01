@@ -115,23 +115,92 @@ func TestServer_REST_Checklist(t *testing.T) {
 		t.Fatalf("unexpected partial patch result: %+v", patchedItem)
 	}
 
-	// 5. Get history
+	// 4c. Update with note-only payload (status should remain "partial")
+	patchNoteOnlyPayload := []byte(`{"notes":"Refined note without status change"}`)
+	resp, body = doReq("PATCH", fmt.Sprintf("%s/api/checklist/%s", baseURL, firstID), patchNoteOnlyPayload)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from note-only patch, got %d: %s", resp.StatusCode, string(body))
+	}
+	if err := json.Unmarshal(body, &patchedItem); err != nil {
+		t.Fatalf("unmarshal note-only patch response failed: %v", err)
+	}
+	if patchedItem.Status != "partial" || patchedItem.Notes != "Refined note without status change" || patchedItem.Version != 4 {
+		t.Fatalf("unexpected note-only patch result: %+v", patchedItem)
+	}
+
+	// 4d. Update with status-only payload (note should be preserved)
+	patchStatusOnlyPayload := []byte(`{"status":"pass"}`)
+	resp, body = doReq("PATCH", fmt.Sprintf("%s/api/checklist/%s", baseURL, firstID), patchStatusOnlyPayload)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 from status-only patch, got %d: %s", resp.StatusCode, string(body))
+	}
+	if err := json.Unmarshal(body, &patchedItem); err != nil {
+		t.Fatalf("unmarshal status-only patch response failed: %v", err)
+	}
+	if patchedItem.Status != "pass" || patchedItem.Notes != "Refined note without status change" || patchedItem.Version != 5 {
+		t.Fatalf("unexpected status-only patch result: %+v", patchedItem)
+	}
+
+	// 5. Get history via REST API
 	resp, body = doReq("GET", fmt.Sprintf("%s/api/checklist/%s/history", baseURL, firstID), nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200 from history, got %d: %s", resp.StatusCode, string(body))
 	}
 	var historyResp struct {
 		History []struct {
-			ItemID string `json:"item_id"`
-			Status string `json:"status"`
-			Notes  string `json:"notes"`
+			ID        int    `json:"id"`
+			ItemID    string `json:"item_id"`
+			Status    string `json:"status"`
+			Notes     string `json:"notes"`
+			ChangedBy string `json:"changed_by"`
+			ChangedAt string `json:"changed_at"`
 		} `json:"history"`
 	}
 	if err := json.Unmarshal(body, &historyResp); err != nil {
 		t.Fatalf("unmarshal history failed: %v", err)
 	}
-	if len(historyResp.History) != 2 || historyResp.History[0].Status != "partial" || historyResp.History[1].Status != "pass" {
-		t.Fatalf("unexpected history entries: %+v", historyResp.History)
+	if len(historyResp.History) != 4 {
+		t.Fatalf("expected 4 history entries, got %d: %+v", len(historyResp.History), historyResp.History)
+	}
+	if historyResp.History[0].Status != "pass" || historyResp.History[0].Notes != "Refined note without status change" {
+		t.Errorf("entry 0 mismatch: %+v", historyResp.History[0])
+	}
+	if historyResp.History[1].Status != "partial" || historyResp.History[1].Notes != "Refined note without status change" {
+		t.Errorf("entry 1 mismatch: %+v", historyResp.History[1])
+	}
+	if historyResp.History[2].Status != "partial" || historyResp.History[2].Notes != "Partially implemented, needs work" {
+		t.Errorf("entry 2 mismatch: %+v", historyResp.History[2])
+	}
+	if historyResp.History[3].Status != "pass" || historyResp.History[3].Notes != "Verified working flawlessly" {
+		t.Errorf("entry 3 mismatch: %+v", historyResp.History[3])
+	}
+
+	// 6. Direct SQLite audit trail verification
+	dbRows, err := database.Query(`
+		SELECT id, item_id, status, notes, changed_by, changed_at
+		FROM checklist_history
+		WHERE item_id = ?
+		ORDER BY id ASC
+	`, firstID)
+	if err != nil {
+		t.Fatalf("failed to query checklist_history from SQLite: %v", err)
+	}
+	defer dbRows.Close()
+
+	var sqlCount int
+	for dbRows.Next() {
+		sqlCount++
+		var hID int
+		var itemID, status, notes, changedBy, changedAt string
+		if err := dbRows.Scan(&hID, &itemID, &status, &notes, &changedBy, &changedAt); err != nil {
+			t.Fatalf("failed to scan checklist_history row %d: %v", sqlCount, err)
+		}
+		if hID <= 0 || itemID != firstID || changedBy != "user" || changedAt == "" {
+			t.Fatalf("invalid checklist_history row values: id=%d item=%s by=%s at=%s", hID, itemID, changedBy, changedAt)
+		}
+	}
+	if sqlCount != 4 {
+		t.Fatalf("expected 4 checklist_history SQLite rows, got %d", sqlCount)
 	}
 }
 
