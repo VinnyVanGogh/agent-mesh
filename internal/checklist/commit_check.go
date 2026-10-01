@@ -16,26 +16,26 @@ var (
 	// DefaultSectionCommits maps known checklist section prefixes to their required delivery commits.
 	DefaultSectionCommits = map[string]string{
 		"01. Automated & System Verifications (CTO Pre-Verified)":        "461d1fe",
-		"02. Table Sorting & Deep Content Search (STA-191)":             "4697e36",
+		"02. Table Sorting & Deep Content Search (STA-191)":              "4697e36",
 		"03. Projects Page Filters & Grouping (STA-192)":                 "883f3fe",
 		"04. Recent Tasks Hierarchy & Filters (STA-193)":                 "b670115",
 		"05. Executive Overview & Boss Card Carousel (STA-194)":          "88c1394",
 		"06. Settings Quota Telemetry & Fleet Modal (STA-195)":           "d8fe427",
 		"07. Detail Panel & Chat Experience (STA-190, STA-186, STA-187)": "8f5951f",
-		"08. Agents Page Modernization (STA-178, STA-179, STA-180)":        "2da10ec",
+		"08. Agents Page Modernization (STA-178, STA-179, STA-180)":      "2da10ec",
 		"09. Cost & Accounting Visualizations (STA-175, STA-177)":        "cbd60ef",
 		"10. Organization Rolling Quota & Lockout (STA-171, STA-185)":    "cbd60ef",
 		"11. Checklist Tooling & Divergence Engine (STA-168, STA-170)":   "bcd122b",
 
 		// STA-236 Sprint sections
-		"01. Table Sorting & Multi-Dimension Filters (STA-208, STA-191)":              "f64df3e",
-		"02. Recent Tasks Hierarchy & Subtask Tree (STA-209, STA-193)":                "461d1fe",
-		"03. Claude Personal Quota & Multi-Seat Telemetry (STA-210, STA-185)":         "20fc95b",
-		"04. Hierarchical URL Routing & Deep Linking (STA-211, STA-187)":              "ba6fb81",
-		"05. Cascading Project Filter & Agents Modernization (STA-212, STA-179)":      "aa1c1ff",
-		"06. Full-Page Task View Mode & Boss Card Cache (STA-213, STA-194)":           "a4d3bc9",
+		"01. Table Sorting & Multi-Dimension Filters (STA-208, STA-191)":                      "f64df3e",
+		"02. Recent Tasks Hierarchy & Subtask Tree (STA-209, STA-193)":                        "461d1fe",
+		"03. Claude Personal Quota & Multi-Seat Telemetry (STA-210, STA-185)":                 "20fc95b",
+		"04. Hierarchical URL Routing & Deep Linking (STA-211, STA-187)":                      "ba6fb81",
+		"05. Cascading Project Filter & Agents Modernization (STA-212, STA-179)":              "aa1c1ff",
+		"06. Full-Page Task View Mode & Boss Card Cache (STA-213, STA-194)":                   "a4d3bc9",
 		"07. Verify Contracts Visual Feedback & Gemini Telemetry (STA-214, STA-170, STA-175)": "fd25533",
-		"08. Checklist Commit-Hash Gate & DoD Enforcement (STA-236)":                 "7254abb",
+		"08. Checklist Commit-Hash Gate & DoD Enforcement (STA-236)":                          "7254abb",
 	}
 
 	commitHashRegex = regexp.MustCompile(`\b([0-9a-f]{7,40})\b`)
@@ -167,7 +167,18 @@ func GetMainCommitSHA(repoRoot string) string {
 func VerifyCommits(ctx context.Context, repoRoot string, binaryCommit string, items []Item) (*CommitVerificationSummary, error) {
 	repoRoot = resolveRepoRoot(repoRoot)
 	binaryCommit = strings.TrimSpace(binaryCommit)
-	mainSHA := GetMainCommitSHA(repoRoot)
+
+	// Prefer build-time data: it needs no repo access and answers instantly.
+	manifest := manifestFor(binaryCommit)
+	repoErr := error(nil)
+	mainSHA := "unknown"
+	if manifest != nil {
+		if manifest.MainSHA != "" {
+			mainSHA = manifest.MainSHA
+		}
+	} else if repoErr = probeRepo(ctx, repoRoot); repoErr == nil {
+		mainSHA = GetMainCommitSHA(repoRoot)
+	}
 
 	summary := &CommitVerificationSummary{
 		RunningCommit:   binaryCommit,
@@ -191,7 +202,17 @@ func VerifyCommits(ctx context.Context, repoRoot string, binaryCommit string, it
 
 		status, cached := commitCache[targetCommit]
 		if !cached {
-			status = checkCommit(ctx, repoRoot, targetCommit, binaryCommit)
+			switch {
+			case manifest != nil:
+				status = checkCommitAgainstManifest(manifest, targetCommit)
+			case repoErr != nil:
+				status = CommitStatus{
+					Commit: targetCommit,
+					Reason: fmt.Sprintf("cannot verify %s: %v. Run scripts/reinstall-daemon.sh to write the build manifest", targetCommit, repoErr),
+				}
+			default:
+				status = checkCommit(ctx, repoRoot, targetCommit, binaryCommit)
+			}
 			commitCache[targetCommit] = status
 		}
 
@@ -234,6 +255,23 @@ func VerifyCommits(ctx context.Context, repoRoot string, binaryCommit string, it
 	}
 
 	return summary, nil
+}
+
+// probeRepo checks, once and quickly, that git can read repoRoot. Without
+// this, a daemon blocked from ~/Documents spends the full timeout on every
+// commit and reports each one as nonexistent.
+func probeRepo(ctx context.Context, repoRoot string) error {
+	probeCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(probeCtx, "git", "rev-parse", "--git-dir")
+	cmd.Dir = repoRoot
+	if err := cmd.Run(); err != nil {
+		if probeCtx.Err() != nil {
+			return fmt.Errorf("staypointd could not read the git repo at %s (git timed out; macOS blocks background daemons from ~/Documents until staypointd is granted Documents access)", repoRoot)
+		}
+		return fmt.Errorf("staypointd could not read the git repo at %s: %v", repoRoot, err)
+	}
+	return nil
 }
 
 func checkCommit(ctx context.Context, repoRoot, commitSHA, binaryCommit string) CommitStatus {

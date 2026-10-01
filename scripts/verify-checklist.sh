@@ -125,6 +125,11 @@ elif [[ "$DAEMON_COMMIT" == "none" || "$DAEMON_COMMIT" == "unknown" || -z "$DAEM
     echo -e "    ${CYAN}cd \"$REPO_DIR\" && scripts/reinstall-daemon.sh${RESET}"
     OVERALL_PASS=0
     FAILURES+=("Running daemon commit is 'none' / unrebuilt")
+elif [[ "$DAEMON_COMMIT" == *-dirty ]]; then
+    echo -e "  ${RED}✗ FAIL${RESET}: Running staypointd was built from ${DAEMON_COMMIT%-dirty} plus uncommitted changes"
+    echo -e "    ${YELLOW}Action required: commit or discard them, then rebuild via${RESET} ${CYAN}scripts/reinstall-daemon.sh${RESET}"
+    OVERALL_PASS=0
+    FAILURES+=("Running daemon was built from a dirty working tree")
 else
     # Check if DAEMON_COMMIT exists in repository
     if ! git -C "$REPO_DIR" rev-parse --verify "${DAEMON_COMMIT}^{commit}" >/dev/null 2>&1; then
