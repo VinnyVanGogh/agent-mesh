@@ -233,7 +233,7 @@ EOF
     if [[ "$IS_VERIFIED" == "1" && "$BLOCKED_COUNT" == "0" ]]; then
         echo -e "  ${GREEN}✓ PASS${RESET}: All referenced commit hashes exist in main and running daemon binary"
     else
-        echo -e "  ${RED}✗ FAIL${RESET}: Commit gate active! ${BLOCKED_COUNT} items blocked across ${BLOCKEDSECTIONS} sections."
+        echo -e "  ${RED}✗ FAIL${RESET}: Commit gate active! ${BLOCKED_COUNT} items blocked across ${BLOCKED_SECTIONS} sections."
         echo -e "  ${YELLOW}Missing / Unmerged Commit Log:${RESET}"
         while IFS= read -r line; do
             if [[ "$line" =~ ^WARN\| ]]; then

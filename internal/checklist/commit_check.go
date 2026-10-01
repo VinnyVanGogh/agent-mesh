@@ -248,11 +248,11 @@ func checkCommit(ctx context.Context, repoRoot, commitSHA, binaryCommit string) 
 	// 1. Resolve commit object in git
 	cmdRev := exec.CommandContext(gitCtx, "git", "rev-parse", "--verify", commitSHA+"^{commit}")
 	cmdRev.Dir = repoRoot
-	outRev, err := cmdRev.Output()
+	outRev, err := cmdRev.CombinedOutput()
 	if err != nil {
 		status.MissingFromMain = true
 		status.MissingFromBinary = true
-		status.Reason = fmt.Sprintf("commit %s does not exist in git repository", commitSHA)
+		status.Reason = fmt.Sprintf("commit %s does not exist in git repository (repoRoot=%s, err=%v, out=%s)", commitSHA, repoRoot, err, strings.TrimSpace(string(outRev)))
 		return status
 	}
 	status.FullSHA = strings.TrimSpace(string(outRev))
