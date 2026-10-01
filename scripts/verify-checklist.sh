@@ -165,9 +165,9 @@ echo ""
 echo -e "${BOLD}3. Checking Checklist Commit-Hash Gate for Sprint ${SPRINT}...${RESET}"
 CHECKLIST_JSON=""
 if [[ -n "$AUTH_HEADER" ]]; then
-    CHECKLIST_JSON="$(curl -s -f -m 10 -H "$AUTH_HEADER" "${DAEMON_URL}/api/checklist?sprint=${SPRINT}&repo_root=${REPO_DIR}" 2>/dev/null || true)"
+    CHECKLIST_JSON="$(curl -s -f -m 30 -H "$AUTH_HEADER" "${DAEMON_URL}/api/checklist?sprint=${SPRINT}&repo_root=${REPO_DIR}" 2>/dev/null || true)"
 else
-    CHECKLIST_JSON="$(curl -s -f -m 10 "${DAEMON_URL}/api/checklist?sprint=${SPRINT}&repo_root=${REPO_DIR}" 2>/dev/null || true)"
+    CHECKLIST_JSON="$(curl -s -f -m 30 "${DAEMON_URL}/api/checklist?sprint=${SPRINT}&repo_root=${REPO_DIR}" 2>/dev/null || true)"
 fi
 
 if [[ -z "$CHECKLIST_JSON" ]]; then
