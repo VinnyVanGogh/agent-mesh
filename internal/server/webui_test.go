@@ -151,3 +151,78 @@ func TestWebUI_DetailPanelPolishAndDismiss(t *testing.T) {
 		t.Error("style.css missing .panel-meta-item rule")
 	}
 }
+
+func TestWebUI_SettingsQuotaAndFleetModal(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterUIRoutes(mux, "test-token")
+
+	// 1. Verify index.html contains the modal markup
+	reqRoot := httptest.NewRequest("GET", "/", nil)
+	wRoot := httptest.NewRecorder()
+	mux.ServeHTTP(wRoot, reqRoot)
+	if wRoot.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", wRoot.Code)
+	}
+	html := wRoot.Body.String()
+	for _, expected := range []string{
+		`id="fleet-modal"`,
+		`id="fleet-modal-title"`,
+		`id="modal-tab-orgs"`,
+		`id="modal-tab-tasks"`,
+		`id="modal-tab-agents"`,
+		`id="fleet-modal-body"`,
+	} {
+		if !strings.Contains(html, expected) {
+			t.Errorf("index.html missing expected element %q", expected)
+		}
+	}
+
+	// 2. Verify app.js contains quota telemetry breakdown & fleet modal functions
+	reqJS := httptest.NewRequest("GET", "/ui/app.js", nil)
+	wJS := httptest.NewRecorder()
+	mux.ServeHTTP(wJS, reqJS)
+	if wJS.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", wJS.Code)
+	}
+	js := wJS.Body.String()
+	for _, expected := range []string{
+		"openFleetInfoModal",
+		"closeFleetInfoModal",
+		"switchFleetModalTab",
+		"renderFleetModalOrganizations",
+		"renderFleetModalTasks",
+		"renderFleetModalAgents",
+		"settings-provider-card",
+		"settings-pool-box",
+		"headroom-badge",
+		"settings-row-clickable",
+	} {
+		if !strings.Contains(js, expected) {
+			t.Errorf("app.js missing expected symbol/class %q", expected)
+		}
+	}
+
+	// 3. Verify style.css contains modal and settings quota classes
+	reqCSS := httptest.NewRequest("GET", "/ui/style.css", nil)
+	wCSS := httptest.NewRecorder()
+	mux.ServeHTTP(wCSS, reqCSS)
+	if wCSS.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", wCSS.Code)
+	}
+	css := wCSS.Body.String()
+	for _, expected := range []string{
+		".modal-overlay",
+		".modal-container",
+		".modal-tabs",
+		".modal-tab-btn",
+		".settings-provider-card",
+		".settings-pool-box",
+		".headroom-badge",
+		".settings-row-clickable",
+		".settings-val-interactive",
+	} {
+		if !strings.Contains(css, expected) {
+			t.Errorf("style.css missing expected CSS class %q", expected)
+		}
+	}
+}
