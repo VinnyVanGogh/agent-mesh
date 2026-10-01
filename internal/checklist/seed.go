@@ -13,10 +13,305 @@ func DefaultChecklist(sprint string) []Item {
 	if sprint == "STA-168" {
 		return defaultChecklistSTA168(sprint)
 	}
-	if sprint == "" {
-		sprint = "STA-168-2"
+	if sprint == "STA-168-2" {
+		return defaultChecklistSTA168_2(sprint)
 	}
-	return defaultChecklistSTA168_2(sprint)
+	if sprint == "" || sprint == "STA-236" {
+		return defaultChecklistSTA236(sprint)
+	}
+	return defaultChecklistSTA236(sprint)
+}
+
+func defaultChecklistSTA236(sprint string) []Item {
+	if sprint == "" {
+		sprint = "STA-236"
+	}
+	type row struct {
+		section, title, desc, howTo, contract, status, notes string
+	}
+	rows := []row{
+		// 01. Table Sorting & Multi-Dimension Filters (STA-208, STA-191)
+		{
+			section: "01. Table Sorting & Multi-Dimension Filters (STA-208, STA-191)",
+			title:   "Priority column sorts by operational severity rank (Critical > High > Medium > Low)",
+			desc:    "Priority sorting orders by operational severity rather than alphabetical string, toggling bi-directionally.",
+			howTo:   "Navigate to /task-status. Click the 'Priority' header. Verify tasks sort Critical -> High -> Medium -> Low, then Low -> Medium -> High -> Critical on second click.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["PRIORITY_RANKS","sortTasks"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "01. Table Sorting & Multi-Dimension Filters (STA-208, STA-191)",
+			title:   "Standardized 4-dimension filter order across Overview and Task Status",
+			desc:    "Filters follow the consistent operational hierarchy: Organization -> Project -> Priority -> Status.",
+			howTo:   "Navigate to / and /task-status. Inspect the filter control bar. Verify order is Organization, Project, Priority, then Status.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/index.html","must_contain":["task-org-filter","task-project-filter","task-priority-filter","task-status-filter"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "01. Table Sorting & Multi-Dimension Filters (STA-208, STA-191)",
+			title:   "Task Status project filter populates dynamically based on selected organization",
+			desc:    "Selecting an organization filters the Project dropdown options to only projects belonging to that organization.",
+			howTo:   "On /task-status, select an organization (e.g. StayPoint). Verify the Project filter only lists projects for StayPoint.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["populateTSProjectFilter"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "01. Table Sorting & Multi-Dimension Filters (STA-208, STA-191)",
+			title:   "Bi-directional column sorting on all table headers with arrow indicators",
+			desc:    "Clicking any sortable table header toggles ascending and descending sort, updating visual indicator arrows (▲ / ▼).",
+			howTo:   "On /task-status, click 'Identifier', 'Task', 'Org', 'Cost', 'Updated'. Verify rows sort and arrows toggle.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["sortable-th","getNextSort"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+
+		// 02. Recent Tasks Hierarchy & Subtask Tree (STA-209, STA-193)
+		{
+			section: "02. Recent Tasks Hierarchy & Subtask Tree (STA-209, STA-193)",
+			title:   "Standardized 3-dimension filter order on Recent Tasks",
+			desc:    "Recent Tasks filter bar follows standardized hierarchy: Organization -> Project -> Priority.",
+			howTo:   "Navigate to /recent-tasks. Verify filter controls appear in order: Organization, Project, Priority.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/index.html","must_contain":["recent-tasks-org-filter","recent-tasks-project-filter","recent-tasks-priority-filter"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "02. Recent Tasks Hierarchy & Subtask Tree (STA-209, STA-193)",
+			title:   "Expandable subtask tree hierarchy for parent tasks",
+			desc:    "Parent tasks with child subtasks display an expandable toggle ([+] / [-]) that expands inline.",
+			howTo:   "On /recent-tasks, locate a parent task (e.g. STA-168). Click [+] to expand its child hierarchy.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["activity-subtasks-tree","activity-subtask-toggle","renderSubtaskTree"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "02. Recent Tasks Hierarchy & Subtask Tree (STA-209, STA-193)",
+			title:   "Subtask tree visual connectors (├──, └──) and status dots",
+			desc:    "Expanded subtasks render with clean branch connectors and status-colored indicators without layout shifts.",
+			howTo:   "Expand a subtask tree on /recent-tasks. Inspect branch connectors (├──, └──) and colored status dots.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["activity-subtask-branch","activity-subtask-dot"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "02. Recent Tasks Hierarchy & Subtask Tree (STA-209, STA-193)",
+			title:   "Subtasks in tree are interactive and open detail panel",
+			desc:    "Clicking a child task title in the expanded subtask tree opens its detail panel on the right.",
+			howTo:   "In an expanded subtask tree, click any child task title. Verify detail panel opens with child task details.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["openDetail(item.id)"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+
+		// 03. Claude Personal Quota & Multi-Seat Telemetry (STA-210, STA-185)
+		{
+			section: "03. Claude Personal Quota & Multi-Seat Telemetry (STA-210, STA-185)",
+			title:   "Claude Personal quota pool isolated cleanly from Claude Work",
+			desc:    "Claude Personal seat usage and limits are tracked independently, preventing cross-contamination with Work accounts.",
+			howTo:   "Navigate to /settings. In Provider Accounts, verify Claude Personal and Claude Work are separate cards with distinct progress bars.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["claude_personal","claude_work"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "03. Claude Personal Quota & Multi-Seat Telemetry (STA-210, STA-185)",
+			title:   "Personal projects reflect accurate quota pool attribution",
+			desc:    "Personal projects do not falsely display 'Claude Work prioritized' when assigned to personal quota.",
+			howTo:   "Check personal project cards and org detail. Verify quota attribution shows Personal when appropriate.",
+			contract: `{"type":"file_pattern","file_path":"internal/fleet/aggregator.go","must_contain":["claude_personal"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "03. Claude Personal Quota & Multi-Seat Telemetry (STA-210, STA-185)",
+			title:   "Org detail page 5-hour rolling quota gauges display accurate headroom",
+			desc:    "Each organization page displays live 5h rolling quota and lockout status gauges per provider.",
+			howTo:   "Navigate to /org/StayPoint. Verify '5-Hour Rolling Quotas & Lockout Status' gauges render correct values.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["renderOrgDetail"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+
+		// 04. Hierarchical URL Routing & Deep Linking (STA-211, STA-187)
+		{
+			section: "04. Hierarchical URL Routing & Deep Linking (STA-211, STA-187)",
+			title:   "Opening task detail updates browser URL to /tasks/:id",
+			desc:    "Clicking any task updates the browser history and address bar to /tasks/:id without a full page reload.",
+			howTo:   "Open any task detail panel. Verify browser URL updates to /tasks/<id>.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["history.pushState","tasks/"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "04. Hierarchical URL Routing & Deep Linking (STA-211, STA-187)",
+			title:   "Direct navigation and hard refresh on /tasks/:id opens task",
+			desc:    "Accessing /tasks/:id directly in the address bar or pressing ⌘⇧R loads the app and automatically opens the task.",
+			howTo:   "Copy current task URL (/tasks/<id>). Open in a new tab or press ⌘⇧R. Verify task opens automatically.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui.go","must_contain":["tasks/"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "04. Hierarchical URL Routing & Deep Linking (STA-211, STA-187)",
+			title:   "Browser Back/Forward navigation traverses task history",
+			desc:    "Clicking browser back button closes the task or returns to previously selected task seamlessly.",
+			howTo:   "Open a task, then click Back in browser. Verify detail panel closes and URL restores.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["popstate"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+
+		// 05. Cascading Project Filter & Agents Modernization (STA-212, STA-179)
+		{
+			section: "05. Cascading Project Filter & Agents Modernization (STA-212, STA-179)",
+			title:   "On /agents, selecting an Organization cascades to Project dropdown",
+			desc:    "Selecting an organization dynamically populates the Project dropdown with only projects belonging to that org.",
+			howTo:   "Navigate to /agents. Select an Organization. Verify Project dropdown immediately populates with that org's projects.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["populateAgentsProjectFilter","getProjectsForOrg"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "05. Cascading Project Filter & Agents Modernization (STA-212, STA-179)",
+			title:   "Selecting Project filter narrows agent cards correctly",
+			desc:    "Selecting a project filters agent cards to only those assigned to or executing tasks in that project.",
+			howTo:   "On /agents, choose a project. Verify only agents associated with that project are displayed.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["getAgentProjects","state.agentsFilter.project"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "05. Cascading Project Filter & Agents Modernization (STA-212, STA-179)",
+			title:   "Reset filters restores full agent card grid cleanly",
+			desc:    "Clicking Reset Filters or changing org to 'All Organizations' resets project filter to 'All' and restores grid.",
+			howTo:   "On /agents with filters applied, click 'Reset Filters' (or select All Orgs). Verify all agent cards reappear.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["resetAgentFilters"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+
+		// 06. Full-Page Task View Mode & Boss Card Cache (STA-213, STA-194)
+		{
+			section: "06. Full-Page Task View Mode & Boss Card Cache (STA-213, STA-194)",
+			title:   "Detail panel header includes Expand toggle (⤢) for full-page mode",
+			desc:    "A dedicated expand button in the panel header allows expanding task view into full-page mode.",
+			howTo:   "Open any task detail panel. Click the ⤢ expand button in the top right. Verify panel expands to fill viewport.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/index.html","must_contain":["panel-expand"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "06. Full-Page Task View Mode & Boss Card Cache (STA-213, STA-194)",
+			title:   "Full-page task mode collapses sidebar and expands editor viewport",
+			desc:    "In full-page mode, sidebar automatically collapses and task body occupies full width for distraction-free reading.",
+			howTo:   "In full-page mode, verify sidebar collapses and comment/description area has maximum width. Press ⤢ again to restore.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["toggleDetailFullPage","detail-panel full-page"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "06. Full-Page Task View Mode & Boss Card Cache (STA-213, STA-194)",
+			title:   "Boss Card carousel render caching with instant pre-rendering",
+			desc:    "Generated Boss Card reports are cached in localStorage with TTL, eliminating regeneration delays.",
+			howTo:   "Navigate to Boss Card view. Browse slides. Refresh page. Verify carousel renders instantly from cache.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["bossReportCache","BOSS_REPORT_CACHE_KEY"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+
+		// 07. Verify Contracts Visual Feedback & Gemini Telemetry (STA-214, STA-170, STA-175)
+		{
+			section: "07. Verify Contracts Visual Feedback & Gemini Telemetry (STA-214, STA-170, STA-175)",
+			title:   "⚡ Verify Contracts button provides immediate loading state and toast feedback",
+			desc:    "Clicking Verify Contracts shows a loading spinner on the button and displays an informative floating toast.",
+			howTo:   "On /checklist, click '⚡ Verify Contracts'. Verify button displays spinning state and toast notification appears.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["Evaluating machine contracts","showToast"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "07. Verify Contracts Visual Feedback & Gemini Telemetry (STA-214, STA-170, STA-175)",
+			title:   "Checklist summary banner renders exact contract pass/fail/regression metrics",
+			desc:    "Upon contract evaluation completion, a persistent summary banner displays exact counts of passed, failed, and regressed items.",
+			howTo:   "After contract evaluation completes on /checklist, inspect the top summary banner. Verify pass/fail/regression stats display.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["checklist-summary-banner","banner-success","banner-divergence"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "07. Verify Contracts Visual Feedback & Gemini Telemetry (STA-214, STA-170, STA-175)",
+			title:   "Real-time Gemini token and cost telemetry tracking",
+			desc:    "Gemini provider usage is tracked with on-the-fly pricing in the telemetry pipeline.",
+			howTo:   "On /cost, verify the Gemini provider row is active and tracks token metrics with accurate cost calculations.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["Spend by Provider"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+
+		// 08. Checklist Commit-Hash Gate & DoD Enforcement (STA-236)
+		{
+			section: "08. Checklist Commit-Hash Gate & DoD Enforcement (STA-236)",
+			title:   "Checklist commit-hash binding and ancestor verification",
+			desc:    "Every checklist section and item is bound to git delivery commits and verified against main and running daemon.",
+			howTo:   "Run: scripts/verify-checklist.sh. Verify Section 3 checks commit hashes against main and running binary.",
+			contract: `{"type":"file_pattern","file_path":"internal/checklist/commit_check.go","must_contain":["VerifyCommits","ResolveItemCommit"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "08. Checklist Commit-Hash Gate & DoD Enforcement (STA-236)",
+			title:   "UI Warning Notice Banner renders for missing or unmerged commits",
+			desc:    "When commits are unmerged or unbuilt, Web UI renders a prominent warning banner with expandable commit log table.",
+			howTo:   "On /checklist, inspect top gate notice if any commit is unmerged. Click 'View Commit Log' to see details.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["checklist-commit-gate-banner","cl-gate-log-table"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "08. Checklist Commit-Hash Gate & DoD Enforcement (STA-236)",
+			title:   "Hard Pass button disable gate on unmerged commits",
+			desc:    "Pass button and walkthrough HUD are strictly disabled (cl-btn-blocked) when delivery commit is missing from main or binary.",
+			howTo:   "Attempt to mark a blocked item pass on /checklist. Verify button is disabled with tooltip explaining commit gate.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["isItemCommitBlocked","badge-commit-blocked"]}`,
+			status:  "pending",
+			notes:   "",
+		},
+		{
+			section: "08. Checklist Commit-Hash Gate & DoD Enforcement (STA-236)",
+			title:   "Turnkey DoD verification script (scripts/verify-checklist.sh)",
+			desc:    "Turnkey CLI tool inspects daemon reachability, commit sync against main, checklist verification gate, and machine contracts.",
+			howTo:   "Execute: ./scripts/verify-checklist.sh --sprint STA-236. Verify clear PASS/FAIL exit code and diagnostics.",
+			contract: `{"type":"command","command":"test -x scripts/verify-checklist.sh"}`,
+			status:  "pending",
+			notes:   "",
+		},
+	}
+
+	out := make([]Item, 0, len(rows))
+	for _, r := range rows {
+		st := r.status
+		if st == "" {
+			st = "pending"
+		}
+		commitHash := ResolveSectionCommit(r.section)
+		out = append(out, Item{
+			ID:          uuid.NewSHA1(uuid.NameSpaceURL, []byte(sprint+":"+r.section+":"+r.title)).String(),
+			Sprint:      sprint,
+			Section:     r.section,
+			Title:       r.title,
+			Description: r.desc,
+			HowToTest:   r.howTo,
+			Contract:    r.contract,
+			CommitHash:  commitHash,
+			Status:      st,
+			Notes:       r.notes,
+			Version:     1,
+		})
+	}
+	return out
 }
 
 func defaultChecklistSTA168_2(sprint string) []Item {
@@ -685,7 +980,7 @@ func defaultChecklistSTA168(sprint string) []Item {
 // Seed populates the database with default checklist items.
 func Seed(ctx context.Context, dbConn *sql.DB, sprint string, force bool) (int, int, error) {
 	if sprint == "" {
-		sprint = "STA-168-2"
+		sprint = "STA-236"
 	}
 
 	// Ensure table has contract & commit_hash columns

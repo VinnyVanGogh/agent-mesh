@@ -143,7 +143,12 @@ func (h *ChecklistHandler) ListItems(w http.ResponseWriter, r *http.Request) {
 	_ = ensureChecklistTables(h.db)
 	sprint := r.URL.Query().Get("sprint")
 	if sprint == "" {
-		sprint = "STA-168-2"
+		sprint = "STA-236"
+	}
+	var count int
+	_ = h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM checklist_items WHERE sprint = ?`, sprint).Scan(&count)
+	if count == 0 {
+		_, _, _ = checklist.Seed(r.Context(), h.db, sprint, false)
 	}
 	query := `SELECT id, sprint, section, title, description, how_to_test, contract, commit_hash, status, notes, version, created_at, updated_at
 		FROM checklist_items`
@@ -399,7 +404,7 @@ func (h *ChecklistHandler) Seed(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	sprint := body.Sprint
 	if sprint == "" {
-		sprint = "STA-168-2"
+		sprint = "STA-236"
 	}
 
 	seeded, skipped, err := checklist.Seed(r.Context(), h.db, sprint, body.Force)
@@ -415,7 +420,7 @@ func (h *ChecklistHandler) Evaluate(w http.ResponseWriter, r *http.Request) {
 	_ = ensureChecklistTables(h.db)
 	sprint := r.URL.Query().Get("sprint")
 	if sprint == "" {
-		sprint = "STA-168-2"
+		sprint = "STA-236"
 	}
 
 	downgrade := true

@@ -25,7 +25,7 @@ RESET="\033[0m"
 
 # Default configuration
 DAEMON_URL="${STAYPOINT_ADDR:-http://127.0.0.1:41421}"
-SPRINT="${STAYPOINT_SPRINT:-STA-168-2}"
+SPRINT="${STAYPOINT_SPRINT:-STA-236}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 STRICT_PASS=0
@@ -38,7 +38,7 @@ Pre-completion checklist & commit verification gate for StayPoint.
 
 Options:
   --url <url>       StayPoint daemon base URL (default: http://127.0.0.1:41421)
-  --sprint <name>   Sprint identifier (default: STA-168-2)
+  --sprint <name>   Sprint identifier (default: STA-236)
   --repo <path>     Target git repository root (default: $REPO_DIR)
   --strict          Require 100% of checklist items to be in 'pass' state
   -h, --help        Show this help message
