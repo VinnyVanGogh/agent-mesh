@@ -50,11 +50,12 @@ EOF
 
 if launchctl list | grep -q "$LABEL"; then
     echo "→ Stopping $LABEL ..."
-    launchctl unload "$PLIST"
+    launchctl unload "$PLIST" 2>/dev/null || true
 fi
 
 echo "→ Starting $LABEL ..."
-launchctl load "$PLIST"
+launchctl load "$PLIST" 2>/dev/null || true
+launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null || true
 
 sleep 2
 if launchctl list | grep -q "$LABEL"; then
