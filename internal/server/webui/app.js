@@ -6610,34 +6610,130 @@ document.getElementById('checklist-sprint-filter')?.addEventListener('change', (
   loadChecklist(e.target.value);
 });
 
+function showToast(message, type = 'info', duration = 6000) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const icons = {
+    info: 'ℹ️',
+    success: '✅',
+    warning: '⚠️',
+    error: '❌'
+  };
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
+    <span class="toast-message">${escapeHtml(message)}</span>
+    <button class="toast-close" aria-label="Dismiss">&times;</button>
+  `;
+  const dismiss = () => {
+    toast.classList.add('toast-fadeout');
+    setTimeout(() => toast.remove(), 250);
+  };
+  toast.querySelector('.toast-close')?.addEventListener('click', dismiss);
+  container.appendChild(toast);
+  if (duration > 0) {
+    setTimeout(dismiss, duration);
+  }
+}
+
 async function verifyChecklistContracts() {
   const sprint = document.getElementById('checklist-sprint-filter')?.value || 'STA-168-2';
   const btn = document.getElementById('checklist-verify-btn');
+  const bannerArea = document.getElementById('checklist-banner-area');
+
   if (btn) {
     btn.disabled = true;
-    btn.textContent = 'Verifying…';
+    btn.innerHTML = '<span class="dl-spinner"></span> Verifying…';
   }
+
+  if (bannerArea) {
+    bannerArea.innerHTML = `
+      <div class="checklist-summary-banner banner-loading">
+        <span class="banner-icon">⚡</span>
+        <div class="banner-content">
+          <div class="banner-title">Evaluating Contracts for ${escapeHtml(sprint)}…</div>
+          <div class="banner-desc">Executing machine assertions and inspecting regression status.</div>
+        </div>
+      </div>
+    `;
+  }
+  showToast(`Evaluating machine contracts for sprint ${sprint}…`, 'info', 4000);
+
   try {
     const res = await fetch(`/api/checklist/evaluate?sprint=${encodeURIComponent(sprint)}&downgrade=true`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${window.__STAYPOINT_TOKEN__ || ''}` }
     });
-    const summary = await res.json();
-    if (summary.divergences > 0) {
-      alert(`⚠️ Divergence Detected!\n\n${summary.divergences} previously-verified item(s) regressed and were automatically downgraded to 'fail'.`);
-    } else if (summary.failed > 0) {
-      alert(`Checklist Evaluation:\n\n${summary.passed}/${summary.total} contracts passing, ${summary.failed} failing.`);
-    } else {
-      alert(`✅ All ${summary.total} machine contracts verified successfully!`);
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(errBody.error || `Server responded with ${res.status}`);
     }
+    const summary = await res.json();
+    const commitShort = summary.commit ? summary.commit.substring(0, 7) : 'HEAD';
+
+    let bannerClass = 'banner-success';
+    let bannerIcon = '✅';
+    let bannerTitle = `All ${summary.total} Machine Contracts Passing`;
+    let bannerDesc = `Zero regressions detected across all test suites at commit ${commitShort}.`;
+    let toastType = 'success';
+    let toastMsg = `✅ All ${summary.total} contracts passing (commit ${commitShort})`;
+
+    if (summary.divergences > 0) {
+      bannerClass = 'banner-divergence';
+      bannerIcon = '⚠️';
+      bannerTitle = `${summary.divergences} Contract Regression(s) Detected`;
+      bannerDesc = `${summary.divergences} previously-passing item(s) failed machine verification and were automatically downgraded. Passed: ${summary.passed}, Failed: ${summary.failed}. Commit: ${commitShort}.`;
+      toastType = 'warning';
+      toastMsg = `⚠️ ${summary.divergences} regression(s) detected and downgraded!`;
+    } else if (summary.failed > 0) {
+      bannerClass = 'banner-warning';
+      bannerIcon = '⚡';
+      bannerTitle = `${summary.passed}/${summary.total} Contracts Passing (${summary.failed} failing)`;
+      bannerDesc = `Evaluated machine contracts for sprint ${escapeHtml(sprint)}. Zero regressions detected. Commit: ${commitShort}.`;
+      toastType = 'warning';
+      toastMsg = `Checklist: ${summary.passed}/${summary.total} contracts passing (${summary.failed} failing)`;
+    }
+
+    if (bannerArea) {
+      bannerArea.innerHTML = `
+        <div class="checklist-summary-banner ${bannerClass}">
+          <span class="banner-icon">${bannerIcon}</span>
+          <div class="banner-content">
+            <div class="banner-title">${escapeHtml(bannerTitle)}</div>
+            <div class="banner-desc">${escapeHtml(bannerDesc)}</div>
+          </div>
+          <button class="banner-close" aria-label="Dismiss">&times;</button>
+        </div>
+      `;
+      bannerArea.querySelector('.banner-close')?.addEventListener('click', () => {
+        bannerArea.innerHTML = '';
+      });
+    }
+    showToast(toastMsg, toastType, 7000);
     await loadChecklist(sprint);
   } catch (err) {
     console.error('Failed to verify contracts:', err);
-    alert('Failed to evaluate checklist contracts: ' + err.message);
+    if (bannerArea) {
+      bannerArea.innerHTML = `
+        <div class="checklist-summary-banner banner-divergence">
+          <span class="banner-icon">❌</span>
+          <div class="banner-content">
+            <div class="banner-title">Failed to Evaluate Contracts</div>
+            <div class="banner-desc">${escapeHtml(err.message)}</div>
+          </div>
+          <button class="banner-close" aria-label="Dismiss">&times;</button>
+        </div>
+      `;
+      bannerArea.querySelector('.banner-close')?.addEventListener('click', () => {
+        bannerArea.innerHTML = '';
+      });
+    }
+    showToast('Failed to evaluate checklist contracts: ' + err.message, 'error', 8000);
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = '⚡ Verify Contracts';
+      btn.innerHTML = '⚡ Verify Contracts';
     }
   }
 }
