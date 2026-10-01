@@ -338,7 +338,7 @@ EOF
         E_MISSES=$(echo "$EVAL_METRICS" | grep "^EVAL_CACHE_MISSES=" | cut -d= -f2)
 
         echo -e "  Contracts evaluated: ${E_PASS}/${E_TOTAL} passed (${E_FAIL} failed, ${E_DIV} regressions)"
-        if [[ -n "$E_TOTAL_MS" && "$E_TOTAL_MS" -gt 0 ]]; then
+        if [[ -n "$E_TOTAL_MS" ]]; then
             echo -e "  Evaluation latency:  ${E_TOTAL_MS}ms total, ${E_MAX_MS}ms slowest contract (${E_HITS} cached / ${E_MISSES} live)"
         fi
         if [[ "$E_FAIL" -eq 0 && "$E_DIV" -eq 0 ]]; then
