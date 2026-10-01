@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var (
@@ -117,13 +120,37 @@ func ResolveItemCommit(item Item) string {
 	return ResolveSectionCommit(item.Section)
 }
 
+// resolveRepoRoot ensures the repository root is properly determined even when running from launchd.
+func resolveRepoRoot(repoRoot string) string {
+	if repoRoot != "" && repoRoot != "." {
+		if _, err := os.Stat(filepath.Join(repoRoot, ".git")); err == nil {
+			return repoRoot
+		}
+	}
+	if env := os.Getenv("STAYPOINT_REPO_ROOT"); env != "" {
+		if _, err := os.Stat(filepath.Join(env, ".git")); err == nil {
+			return env
+		}
+	}
+	if _, err := os.Stat(".git"); err == nil {
+		return "."
+	}
+	if _, err := os.Stat("/Users/vincevasile/Documents/dev/agent-mesh/.git"); err == nil {
+		return "/Users/vincevasile/Documents/dev/agent-mesh"
+	}
+	if repoRoot != "" {
+		return repoRoot
+	}
+	return "."
+}
+
 // GetMainCommitSHA returns the HEAD commit of main/origin/main.
 func GetMainCommitSHA(repoRoot string) string {
-	if repoRoot == "" {
-		repoRoot = "."
-	}
+	repoRoot = resolveRepoRoot(repoRoot)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 	for _, ref := range []string{"main", "origin/main", "HEAD"} {
-		cmd := exec.Command("git", "rev-parse", "--short", ref)
+		cmd := exec.CommandContext(ctx, "git", "rev-parse", "--short", ref)
 		cmd.Dir = repoRoot
 		out, err := cmd.Output()
 		if err == nil {
@@ -138,9 +165,7 @@ func GetMainCommitSHA(repoRoot string) string {
 
 // VerifyCommits verifies all items against main and the running binary commit.
 func VerifyCommits(ctx context.Context, repoRoot string, binaryCommit string, items []Item) (*CommitVerificationSummary, error) {
-	if repoRoot == "" {
-		repoRoot = "."
-	}
+	repoRoot = resolveRepoRoot(repoRoot)
 	binaryCommit = strings.TrimSpace(binaryCommit)
 	mainSHA := GetMainCommitSHA(repoRoot)
 
@@ -212,12 +237,16 @@ func VerifyCommits(ctx context.Context, repoRoot string, binaryCommit string, it
 }
 
 func checkCommit(ctx context.Context, repoRoot, commitSHA, binaryCommit string) CommitStatus {
+	repoRoot = resolveRepoRoot(repoRoot)
 	status := CommitStatus{
 		Commit: commitSHA,
 	}
 
+	gitCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
 	// 1. Resolve commit object in git
-	cmdRev := exec.CommandContext(ctx, "git", "rev-parse", "--verify", commitSHA+"^{commit}")
+	cmdRev := exec.CommandContext(gitCtx, "git", "rev-parse", "--verify", commitSHA+"^{commit}")
 	cmdRev.Dir = repoRoot
 	outRev, err := cmdRev.Output()
 	if err != nil {
@@ -231,7 +260,7 @@ func checkCommit(ctx context.Context, repoRoot, commitSHA, binaryCommit string) 
 	// 2. Check if commit is ancestor of / in main
 	inMain := false
 	for _, mainRef := range []string{"main", "origin/main", "HEAD"} {
-		cmdMain := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", commitSHA, mainRef)
+		cmdMain := exec.CommandContext(gitCtx, "git", "merge-base", "--is-ancestor", commitSHA, mainRef)
 		cmdMain.Dir = repoRoot
 		if err := cmdMain.Run(); err == nil {
 			inMain = true
@@ -254,7 +283,7 @@ func checkCommit(ctx context.Context, repoRoot, commitSHA, binaryCommit string) 
 			status.Reason += fmt.Sprintf("; also running staypointd binary has unverified commit %q", cleanBinary)
 		}
 	} else {
-		cmdBinary := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", commitSHA, cleanBinary)
+		cmdBinary := exec.CommandContext(gitCtx, "git", "merge-base", "--is-ancestor", commitSHA, cleanBinary)
 		cmdBinary.Dir = repoRoot
 		if err := cmdBinary.Run(); err != nil {
 			status.MissingFromBinary = true
