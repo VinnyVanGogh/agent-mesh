@@ -445,6 +445,8 @@
           </select>
           <button id="checklist-seed-btn" class="sidebar-filter-btn">Seed / Reset</button>
           <button id="checklist-verify-btn" class="sidebar-filter-btn" title="Run machine contracts and auto-flag regressions">⚡ Verify Contracts</button>
+          <button id="checklist-tour-toggle-btn" class="sidebar-filter-btn" title="Toggle internal Dev Walkthrough Tour Mode">🧪 Dev Tour: ON</button>
+          <button id="checklist-start-tour-btn" class="sidebar-filter-btn" style="background:#0284c7;color:#fff;border-color:#38bdf8;" title="Start guided interactive verification tour">▶ Start Walkthrough</button>
           <span id="checklist-progress" class="muted-text"></span>
         </div>
       </div>
@@ -550,6 +552,54 @@
       <div id="fleet-modal-footer-info" class="modal-footer-info"></div>
       <button id="fleet-modal-footer-close" class="modal-btn-close">Close</button>
     </div>
+  </div>
+</div>
+
+<!-- Floating Checklist Walkthrough HUD Modal -->
+<div id="checklist-walkthrough-hud" class="checklist-walkthrough-hud" style="display:none;" role="region" aria-label="Checklist Walkthrough Tour">
+  <div class="hud-header" id="hud-drag-handle">
+    <div class="hud-title-wrap">
+      <span class="hud-badge">🧪 DEV TOUR</span>
+      <span class="hud-step-counter" id="hud-step-counter">Step 1 of 49</span>
+    </div>
+    <div class="hud-header-actions">
+      <button id="hud-toggle-minimize-btn" class="hud-tool-btn" title="Minimize / Expand">_</button>
+      <button id="hud-exit-btn" class="hud-tool-btn" title="Exit Walkthrough">✕</button>
+    </div>
+  </div>
+  <div class="hud-body">
+    <div class="hud-guide-box" id="hud-guide-box">
+      <div class="hud-guide-text">
+        <span class="hud-guide-icon">📍</span>
+        <span id="hud-guide-label">Target: Projects Page</span>
+      </div>
+      <button id="hud-jump-btn" class="hud-jump-btn">Jump to Page</button>
+    </div>
+    <div class="hud-item-meta" id="hud-item-section">Section 01: Infrastructure</div>
+    <div class="hud-item-title" id="hud-item-title">Item Title</div>
+    <div class="hud-item-desc" id="hud-item-desc">Item Description</div>
+    <div class="hud-item-howto" id="hud-item-howto">How to test...</div>
+    <div class="hud-status-bar">
+      <button class="hud-status-btn" data-status="pass">✓ Pass</button>
+      <button class="hud-status-btn" data-status="partial">◐ In-Between</button>
+      <button class="hud-status-btn" data-status="fail">✗ Fail</button>
+      <button class="hud-status-btn" data-status="skip">– Skip</button>
+      <button class="hud-status-btn" data-status="not_done">! Not Done</button>
+    </div>
+    <div class="hud-notes-box">
+      <textarea id="hud-notes-input" class="hud-notes-input" placeholder="Notes for this question..."></textarea>
+      <div class="hud-notes-row">
+        <span id="hud-save-indicator" class="muted-text" style="font-size:11px;"></span>
+        <button id="hud-save-note-btn" class="hud-save-note-btn">Save Note</button>
+      </div>
+    </div>
+  </div>
+  <div class="hud-footer">
+    <div class="hud-nav-left">
+      <button id="hud-prev-btn" class="hud-nav-btn">◀ Prev</button>
+      <select id="hud-jump-select" class="hud-jump-select"></select>
+    </div>
+    <button id="hud-next-btn" class="hud-nav-btn hud-next-btn">Done & Next ▶</button>
   </div>
 </div>
 

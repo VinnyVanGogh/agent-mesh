@@ -192,9 +192,9 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Status   string `json:"status"`
-		Notes    string `json:"notes"`
-		Contract string `json:"contract"`
+		Status   string  `json:"status"`
+		Notes    *string `json:"notes"`
+		Contract *string `json:"contract"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json: "+err.Error())
@@ -238,12 +238,12 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		newStatus = body.Status
 	}
 	newNotes := current.Notes
-	if body.Notes != "" {
-		newNotes = body.Notes
+	if body.Notes != nil {
+		newNotes = *body.Notes
 	}
 	newContract := current.Contract
-	if body.Contract != "" {
-		newContract = body.Contract
+	if body.Contract != nil {
+		newContract = *body.Contract
 	}
 
 	tx, err := h.db.BeginTx(r.Context(), nil)

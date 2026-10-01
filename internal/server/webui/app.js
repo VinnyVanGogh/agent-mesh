@@ -460,6 +460,10 @@ function navigateTo(viewName, orgName = null, pushHistory = true) {
     if (viewName === 'kanban')       renderKanban();
     if (viewName === 'boss')         renderBoss();
   }
+
+  if (typeof updateWalkthroughSidebarHighlight === 'function') {
+    updateWalkthroughSidebarHighlight();
+  }
 }
 
 function showView(viewName) {
@@ -6148,6 +6152,9 @@ async function loadChecklist(sprint) {
     const r = await apiFetch(`/api/checklist?sprint=${encodeURIComponent(s)}`);
     checklistItems = r.items || [];
     renderChecklist();
+    updateChecklistProgress();
+    if (typeof updateDevTourToggleUI === 'function') updateDevTourToggleUI();
+    if (typeof isWalkthroughActive === 'function' && isWalkthroughActive()) renderWalkthroughHUD();
   } catch (err) {
     const c = document.getElementById('checklist-container');
     if (c) c.innerHTML = `<p style="color:var(--red)">Failed to load checklist: ${err.message}. Try seeding first.</p>`;
@@ -6374,6 +6381,16 @@ function buildChecklistItem(item) {
     contractTag.title = 'Machine-verifiable contract: ' + item.contract;
     titleEl.appendChild(contractTag);
   }
+  const tourItemBtn = el('button', 'cl-item-walkthrough-btn', '▶ Tour');
+  tourItemBtn.title = 'Start interactive walkthrough tour from this question';
+  tourItemBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const sel = document.getElementById('checklist-sprint-filter');
+    const s = sel?.value || 'STA-168-2';
+    const idx = checklistItems.findIndex(i => i.id === item.id);
+    startWalkthrough(s, idx >= 0 ? idx : 0);
+  });
+  titleEl.appendChild(tourItemBtn);
   body.appendChild(titleEl);
   if (item.description) body.appendChild(el('div', 'checklist-desc', item.description));
   if (item.how_to_test) body.appendChild(el('div', 'checklist-howto', item.how_to_test));
@@ -6381,16 +6398,34 @@ function buildChecklistItem(item) {
   // Notes + version history
   const notesRow = el('div', 'checklist-notes-row');
   const notesInput = el('textarea', 'checklist-notes-input');
-  notesInput.value = item.notes || '';
+  const draftKey = 'staypoint_cl_draft_' + item.id;
+  const draftVal = localStorage.getItem(draftKey);
+  const initialNote = (draftVal !== null && draftVal !== undefined && (!item.notes || draftVal.length >= item.notes.length))
+    ? draftVal
+    : (item.notes || '');
+  notesInput.value = initialNote;
+  item.notes = initialNote;
   notesInput.placeholder = 'Add a note…';
-  const rawNote = item.notes || '';
+  const rawNote = initialNote;
   const lineCount = Math.max(rawNote.split('\n').length, Math.ceil(rawNote.length / 50));
   notesInput.rows = Math.max(2, Math.min(15, lineCount));
   const autoResize = () => {
     notesInput.style.height = 'auto';
     notesInput.style.height = Math.max(48, notesInput.scrollHeight) + 'px';
   };
-  notesInput.addEventListener('input', autoResize);
+  notesInput.addEventListener('input', () => {
+    autoResize();
+    const val = notesInput.value;
+    item.notes = val;
+    const idx = checklistItems.findIndex(i => i.id === item.id);
+    if (idx !== -1) checklistItems[idx].notes = val;
+    localStorage.setItem(draftKey, val);
+    const state = typeof getWalkthroughState === 'function' ? getWalkthroughState() : null;
+    if (state?.active && checklistItems[state.index]?.id === item.id) {
+      const hudInput = document.getElementById('hud-notes-input');
+      if (hudInput) hudInput.value = val;
+    }
+  });
   notesInput.addEventListener('focus', autoResize);
   notesInput.addEventListener('blur', () => {
     // Note: NEVER collapse height on blur
@@ -6469,12 +6504,30 @@ function updateSectionCounts(sectionName) {
   }
 }
 
-async function updateChecklistStatus(id, status) {
+async function updateChecklistStatus(id, status, explicitNotes = null) {
   const idx = checklistItems.findIndex(i => i.id === id);
   if (idx === -1) return;
   const row = document.querySelector(`.checklist-item[data-id="${id}"]`);
   const currentNotesInput = row?.querySelector('.checklist-notes-input');
-  const notes = currentNotesInput ? currentNotesInput.value : checklistItems[idx].notes;
+  const draftKey = 'staypoint_cl_draft_' + id;
+  const draftVal = localStorage.getItem(draftKey);
+
+  let notes = explicitNotes;
+  if (notes === null || notes === undefined) {
+    if (currentNotesInput && currentNotesInput.value !== undefined) {
+      notes = currentNotesInput.value;
+    } else if (draftVal !== null && draftVal !== undefined) {
+      notes = draftVal;
+    } else {
+      notes = checklistItems[idx].notes || '';
+    }
+  }
+
+  // Synchronize in memory immediately
+  checklistItems[idx].status = status;
+  checklistItems[idx].notes = notes;
+  if (currentNotesInput) currentNotesInput.value = notes;
+
   try {
     const r = await fetch(`/api/checklist/${id}`, {
       method: 'PATCH',
@@ -6484,6 +6537,7 @@ async function updateChecklistStatus(id, status) {
     if (!r.ok) throw new Error(await r.text());
     const updated = await r.json();
     checklistItems[idx] = updated;
+    localStorage.removeItem(draftKey);
 
     if (row) {
       row.querySelectorAll('.cl-btn').forEach(btn => {
@@ -6495,9 +6549,18 @@ async function updateChecklistStatus(id, status) {
       }
       const histBtn = row.querySelector('.checklist-history-toggle');
       if (histBtn) histBtn.textContent = `v${updated.version}`;
+      const input = row.querySelector('.checklist-notes-input');
+      if (input && updated.notes !== undefined) input.value = updated.notes;
     }
     updateChecklistProgress();
     updateSectionCounts(checklistItems[idx].section);
+
+    if (typeof isWalkthroughActive === 'function' && isWalkthroughActive()) {
+      const state = getWalkthroughState();
+      if (state && checklistItems[state.index]?.id === id && typeof updateHUDStatusButtons === 'function') {
+        updateHUDStatusButtons(updated.status);
+      }
+    }
   } catch (err) {
     console.error('checklist update failed', err);
   }
@@ -6506,6 +6569,8 @@ async function updateChecklistStatus(id, status) {
 async function updateChecklistNotes(id, notes) {
   const idx = checklistItems.findIndex(i => i.id === id);
   if (idx === -1) return;
+  checklistItems[idx].notes = notes;
+  const draftKey = 'staypoint_cl_draft_' + id;
   try {
     const r = await fetch(`/api/checklist/${id}`, {
       method: 'PATCH',
@@ -6515,10 +6580,12 @@ async function updateChecklistNotes(id, notes) {
     if (!r.ok) throw new Error(await r.text());
     const updated = await r.json();
     checklistItems[idx] = updated;
-    // Re-render just the version badge without full re-render for UX
+    localStorage.removeItem(draftKey);
     const row = document.querySelector(`.checklist-item[data-id="${id}"]`);
     const histBtn = row?.querySelector('.checklist-history-toggle');
     if (histBtn) histBtn.textContent = `v${updated.version}`;
+    const input = row?.querySelector('.checklist-notes-input');
+    if (input && updated.notes !== undefined) input.value = updated.notes;
     updateChecklistProgress();
   } catch (err) {
     console.error('checklist note save failed', err);
@@ -6574,6 +6641,430 @@ async function verifyChecklistContracts() {
     }
   }
 }
+
+// ── Dev Walkthrough Tour Engine ───────────────────────────
+
+const DEV_TOUR_TOGGLE_KEY = 'staypoint_dev_walkthrough_enabled';
+const WALKTHROUGH_STATE_KEY = 'staypoint_walkthrough_state';
+
+function isDevTourEnabled() {
+  const v = localStorage.getItem(DEV_TOUR_TOGGLE_KEY);
+  return v !== 'false'; // default enabled
+}
+
+function setDevTourEnabled(enabled) {
+  localStorage.setItem(DEV_TOUR_TOGGLE_KEY, enabled ? 'true' : 'false');
+  updateDevTourToggleUI();
+  if (!enabled) {
+    stopWalkthrough();
+  }
+}
+
+function updateDevTourToggleUI() {
+  const btn = document.getElementById('checklist-tour-toggle-btn');
+  const startBtn = document.getElementById('checklist-start-tour-btn');
+  const enabled = isDevTourEnabled();
+  if (btn) {
+    btn.textContent = enabled ? '🧪 Dev Tour: ON' : '🧪 Dev Tour: OFF';
+    btn.style.borderColor = enabled ? '#38bdf8' : 'var(--border)';
+    btn.style.color = enabled ? '#38bdf8' : 'var(--muted)';
+  }
+  if (startBtn) {
+    startBtn.style.display = enabled ? 'inline-block' : 'none';
+    const state = getWalkthroughState();
+    if (state?.active) {
+      startBtn.textContent = `▶ Resume Walkthrough (${(state.index || 0) + 1}/${checklistItems.length || '?'})`;
+    } else {
+      startBtn.textContent = '▶ Start Walkthrough';
+    }
+  }
+}
+
+function getWalkthroughState() {
+  try {
+    return JSON.parse(localStorage.getItem(WALKTHROUGH_STATE_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+function saveWalkthroughState(state) {
+  if (!state) {
+    localStorage.removeItem(WALKTHROUGH_STATE_KEY);
+  } else {
+    localStorage.setItem(WALKTHROUGH_STATE_KEY, JSON.stringify(state));
+  }
+}
+
+function isWalkthroughActive() {
+  const s = getWalkthroughState();
+  return Boolean(s && s.active);
+}
+
+// Maps a checklist item to its target sidebar view and label
+function resolveItemTarget(item) {
+  if (!item) return { view: 'overview', label: 'All Organizations' };
+  const text = `${item.section || ''} ${item.how_to_test || ''} ${item.description || ''} ${item.title || ''}`.toLowerCase();
+
+  if (text.includes('/projects') || text.includes('projects page') || text.includes('project card')) {
+    return { view: 'projects', label: 'Projects' };
+  }
+  if (text.includes('/agents') || text.includes('agents page') || text.includes('agent card')) {
+    return { view: 'agents', label: 'Agents' };
+  }
+  if (text.includes('/recent-tasks') || text.includes('recent tasks') || text.includes('activity feed') || text.includes('subtask tree')) {
+    return { view: 'recent-tasks', label: 'Recent Tasks' };
+  }
+  if (text.includes('/task-status') || text.includes('task status') || text.includes('9-column table') || text.includes('global task')) {
+    return { view: 'task-status', label: 'Global Task Status' };
+  }
+  if (text.includes('/cost') || text.includes('cost & accounting') || text.includes('spend by') || text.includes('cost page')) {
+    return { view: 'cost', label: 'Cost & Accounting' };
+  }
+  if (text.includes('/settings') || text.includes('settings page') || text.includes('provider accounts') || text.includes('fleet info')) {
+    return { view: 'settings', label: 'Settings' };
+  }
+  if (text.includes('/checklist') || text.includes('checklist page') || text.includes('divergence')) {
+    return { view: 'checklist', label: 'Checklist' };
+  }
+  if (text.includes('/kanban') || text.includes('kanban board')) {
+    return { view: 'kanban', label: 'Kanban' };
+  }
+  if (text.includes('boss card') || text.includes('all organizations') || text.includes('kpi row') || text.includes('quota gauge')) {
+    return { view: 'overview', label: 'All Organizations' };
+  }
+  return { view: 'overview', label: 'All Organizations' };
+}
+
+async function ensureChecklistItemsLoaded(sprint) {
+  const s = sprint || document.getElementById('checklist-sprint-filter')?.value || 'STA-168-2';
+  if (!checklistItems || !checklistItems.length || checklistItems[0]?.sprint !== s) {
+    try {
+      const r = await apiFetch(`/api/checklist?sprint=${encodeURIComponent(s)}`);
+      checklistItems = r.items || [];
+    } catch (e) {
+      console.error('Failed to load items for walkthrough:', e);
+    }
+  }
+}
+
+async function startWalkthrough(sprint, startIndex = 0) {
+  const s = sprint || document.getElementById('checklist-sprint-filter')?.value || 'STA-168-2';
+  await ensureChecklistItemsLoaded(s);
+  if (!checklistItems.length) {
+    alert('No checklist items found for sprint ' + s + '. Please seed first.');
+    return;
+  }
+
+  let targetIndex = startIndex;
+  if (targetIndex < 0 || targetIndex >= checklistItems.length) {
+    const firstPending = checklistItems.findIndex(i => i.status === 'pending');
+    targetIndex = firstPending >= 0 ? firstPending : 0;
+  }
+
+  const curItem = checklistItems[targetIndex];
+  saveWalkthroughState({
+    active: true,
+    sprint: s,
+    index: targetIndex,
+    itemId: curItem?.id,
+    isMinimized: false
+  });
+
+  renderWalkthroughHUD();
+  updateDevTourToggleUI();
+}
+
+function stopWalkthrough() {
+  saveWalkthroughState(null);
+  const hud = document.getElementById('checklist-walkthrough-hud');
+  if (hud) hud.style.display = 'none';
+  clearWalkthroughSidebarHighlight();
+  updateDevTourToggleUI();
+}
+
+function clearWalkthroughSidebarHighlight() {
+  document.querySelectorAll('.sidebar-item').forEach(b => {
+    b.classList.remove('tour-target-highlight');
+  });
+}
+
+function updateWalkthroughSidebarHighlight() {
+  clearWalkthroughSidebarHighlight();
+  if (!isWalkthroughActive()) return;
+  const state = getWalkthroughState();
+  if (!state || !checklistItems.length) return;
+  const item = checklistItems[state.index];
+  if (!item) return;
+
+  const target = resolveItemTarget(item);
+  const currentPath = window.location.pathname.replace(/\/+$/, '') || '/';
+  const targetPath = viewToPath(target.view, null);
+
+  // If we are NOT on the target page, highlight the sidebar item
+  if (currentPath !== targetPath) {
+    const sidebarBtn = document.querySelector(`.sidebar-item[data-view="${target.view}"]`);
+    if (sidebarBtn) {
+      sidebarBtn.classList.add('tour-target-highlight');
+    }
+  }
+
+  // Update HUD guide box
+  const guideBox = document.getElementById('hud-guide-box');
+  const guideLabel = document.getElementById('hud-guide-label');
+  const jumpBtn = document.getElementById('hud-jump-btn');
+
+  if (guideBox && guideLabel && jumpBtn) {
+    if (currentPath === targetPath) {
+      guideBox.classList.add('guide-matched');
+      guideLabel.innerHTML = `✅ <strong>On target page:</strong> ${target.label}`;
+      jumpBtn.style.display = 'none';
+    } else {
+      guideBox.classList.remove('guide-matched');
+      guideLabel.innerHTML = `📍 <strong>Step ${(state.index || 0) + 1}:</strong> Click <u>${target.label}</u> in sidebar`;
+      jumpBtn.style.display = 'inline-block';
+      jumpBtn.textContent = `Jump to ${target.label}`;
+      jumpBtn.onclick = () => {
+        navigateTo(target.view, null, true);
+      };
+    }
+  }
+}
+
+function renderWalkthroughHUD() {
+  const hud = document.getElementById('checklist-walkthrough-hud');
+  if (!hud) return;
+  if (!isWalkthroughActive() || !isDevTourEnabled()) {
+    hud.style.display = 'none';
+    clearWalkthroughSidebarHighlight();
+    return;
+  }
+
+  const state = getWalkthroughState();
+  if (!state || !checklistItems.length) {
+    ensureChecklistItemsLoaded(state?.sprint).then(() => renderWalkthroughHUD());
+    return;
+  }
+
+  const idx = Math.max(0, Math.min(checklistItems.length - 1, state.index || 0));
+  const item = checklistItems[idx];
+  if (!item) return;
+
+  state.itemId = item.id;
+  state.index = idx;
+  saveWalkthroughState(state);
+
+  hud.style.display = 'flex';
+  hud.classList.toggle('minimized', Boolean(state.isMinimized));
+
+  // Step counter & section
+  const counterEl = document.getElementById('hud-step-counter');
+  if (counterEl) counterEl.textContent = `Question ${idx + 1} of ${checklistItems.length}`;
+
+  const secEl = document.getElementById('hud-item-section');
+  if (secEl) secEl.textContent = item.section || 'General Verification';
+
+  // Title
+  const titleEl = document.getElementById('hud-item-title');
+  if (titleEl) {
+    titleEl.textContent = item.title;
+    if (item.contract) {
+      const tag = el('span', 'checklist-contract-tag', '⚙ contract');
+      tag.title = 'Machine contract: ' + item.contract;
+      titleEl.appendChild(tag);
+    }
+  }
+
+  // Desc
+  const descEl = document.getElementById('hud-item-desc');
+  if (descEl) descEl.textContent = item.description || '';
+
+  // How to test
+  const howtoEl = document.getElementById('hud-item-howto');
+  if (howtoEl) howtoEl.textContent = item.how_to_test || 'Verify this requirement in the application view.';
+
+  // Target & sidebar highlight
+  updateWalkthroughSidebarHighlight();
+
+  // Status buttons
+  updateHUDStatusButtons(item.status);
+
+  // Notes
+  const notesInput = document.getElementById('hud-notes-input');
+  const draftKey = 'staypoint_cl_draft_' + item.id;
+  const draftVal = localStorage.getItem(draftKey);
+  const currentNote = (draftVal !== null && draftVal !== undefined && (!item.notes || draftVal.length >= item.notes.length))
+    ? draftVal
+    : (item.notes || '');
+
+  if (notesInput) {
+    notesInput.value = currentNote;
+    notesInput.oninput = () => {
+      const v = notesInput.value;
+      item.notes = v;
+      checklistItems[idx].notes = v;
+      localStorage.setItem(draftKey, v);
+      const pageTa = document.querySelector(`.checklist-item[data-id="${item.id}"] .checklist-notes-input`);
+      if (pageTa) pageTa.value = v;
+    };
+  }
+
+  // Prev / Next buttons
+  const prevBtn = document.getElementById('hud-prev-btn');
+  if (prevBtn) {
+    prevBtn.disabled = idx <= 0;
+    prevBtn.onclick = () => prevWalkthroughQuestion();
+  }
+
+  const nextBtn = document.getElementById('hud-next-btn');
+  if (nextBtn) {
+    const isLast = idx >= checklistItems.length - 1;
+    nextBtn.textContent = isLast ? 'Finish Tour 🎉' : 'Done / Next ▶';
+    nextBtn.onclick = () => nextWalkthroughQuestion();
+  }
+
+  // Jump select dropdown
+  const jumpSel = document.getElementById('hud-jump-select');
+  if (jumpSel) {
+    jumpSel.innerHTML = '';
+    checklistItems.forEach((it, i) => {
+      const opt = document.createElement('option');
+      opt.value = i;
+      const statusIcon = it.status === 'pass' ? '✓' : (it.status === 'fail' ? '✗' : (it.status === 'partial' ? '◐' : '○'));
+      opt.textContent = `${statusIcon} #${i + 1}: ${it.title.slice(0, 30)}…`;
+      if (i === idx) opt.selected = true;
+      jumpSel.appendChild(opt);
+    });
+    jumpSel.onchange = (e) => {
+      jumpWalkthroughQuestion(parseInt(e.target.value, 10));
+    };
+  }
+
+  // Save note button
+  const saveNoteBtn = document.getElementById('hud-save-note-btn');
+  const saveInd = document.getElementById('hud-save-indicator');
+  if (saveNoteBtn) {
+    saveNoteBtn.onclick = async () => {
+      const val = notesInput ? notesInput.value : item.notes;
+      saveNoteBtn.disabled = true;
+      saveNoteBtn.textContent = 'Saving…';
+      await updateChecklistNotes(item.id, val);
+      saveNoteBtn.disabled = false;
+      saveNoteBtn.textContent = 'Saved!';
+      if (saveInd) saveInd.textContent = '✓ Note saved';
+      setTimeout(() => {
+        saveNoteBtn.textContent = 'Save Note';
+        if (saveInd) saveInd.textContent = '';
+      }, 1500);
+    };
+  }
+}
+
+function updateHUDStatusButtons(currentStatus) {
+  const state = getWalkthroughState();
+  if (!state || !checklistItems.length) return;
+  const item = checklistItems[state.index];
+  if (!item) return;
+
+  document.querySelectorAll('.hud-status-btn').forEach(btn => {
+    const st = btn.dataset.status;
+    btn.className = `hud-status-btn${item.status === st ? ' active-' + st : ''}`;
+    btn.onclick = async () => {
+      const notesInput = document.getElementById('hud-notes-input');
+      const val = notesInput ? notesInput.value : item.notes;
+      await updateChecklistStatus(item.id, st, val);
+      updateHUDStatusButtons(st);
+      const saveInd = document.getElementById('hud-save-indicator');
+      if (saveInd) {
+        saveInd.textContent = `✓ Status set to ${st.toUpperCase()}`;
+        setTimeout(() => { if (saveInd) saveInd.textContent = ''; }, 2000);
+      }
+    };
+  });
+}
+
+async function nextWalkthroughQuestion() {
+  const state = getWalkthroughState();
+  if (!state || !checklistItems.length) return;
+  const idx = state.index;
+  const item = checklistItems[idx];
+
+  // Auto-save current note if modified
+  const notesInput = document.getElementById('hud-notes-input');
+  if (notesInput && item) {
+    const val = notesInput.value;
+    if (val !== item.notes) {
+      await updateChecklistNotes(item.id, val);
+    }
+  }
+
+  if (idx >= checklistItems.length - 1) {
+    alert('🎉 You have completed all questions in the walkthrough!');
+    stopWalkthrough();
+    return;
+  }
+
+  state.index = idx + 1;
+  state.itemId = checklistItems[state.index]?.id;
+  saveWalkthroughState(state);
+  renderWalkthroughHUD();
+}
+
+async function prevWalkthroughQuestion() {
+  const state = getWalkthroughState();
+  if (!state || !checklistItems.length) return;
+  const idx = state.index;
+  if (idx <= 0) return;
+
+  const item = checklistItems[idx];
+  const notesInput = document.getElementById('hud-notes-input');
+  if (notesInput && item) {
+    const val = notesInput.value;
+    if (val !== item.notes) {
+      await updateChecklistNotes(item.id, val);
+    }
+  }
+
+  state.index = idx - 1;
+  state.itemId = checklistItems[state.index]?.id;
+  saveWalkthroughState(state);
+  renderWalkthroughHUD();
+}
+
+function jumpWalkthroughQuestion(targetIndex) {
+  const state = getWalkthroughState();
+  if (!state || !checklistItems.length) return;
+  if (targetIndex < 0 || targetIndex >= checklistItems.length) return;
+
+  state.index = targetIndex;
+  state.itemId = checklistItems[targetIndex]?.id;
+  saveWalkthroughState(state);
+  renderWalkthroughHUD();
+}
+
+// Wire up HUD static controls
+document.getElementById('hud-exit-btn')?.addEventListener('click', stopWalkthrough);
+document.getElementById('hud-toggle-minimize-btn')?.addEventListener('click', () => {
+  const state = getWalkthroughState();
+  if (!state) return;
+  state.isMinimized = !state.isMinimized;
+  saveWalkthroughState(state);
+  document.getElementById('checklist-walkthrough-hud')?.classList.toggle('minimized', Boolean(state.isMinimized));
+  const minBtn = document.getElementById('hud-toggle-minimize-btn');
+  if (minBtn) minBtn.textContent = state.isMinimized ? '▲' : '_';
+});
+document.getElementById('checklist-tour-toggle-btn')?.addEventListener('click', () => {
+  const next = !isDevTourEnabled();
+  setDevTourEnabled(next);
+});
+document.getElementById('checklist-start-tour-btn')?.addEventListener('click', () => {
+  const state = getWalkthroughState();
+  if (state?.active) {
+    renderWalkthroughHUD();
+  } else {
+    startWalkthrough(document.getElementById('checklist-sprint-filter')?.value || 'STA-168-2', 0);
+  }
+});
 
 // ── Filter listeners (projects page) ─────────────────────
 document.getElementById('projects-status-filter')?.addEventListener('change', (e) => {
@@ -6643,4 +7134,8 @@ loadAll().then(() => {
     openDetail(initialRoute.taskId, false);
   }
   connectSSE();
+  updateDevTourToggleUI();
+  if (isWalkthroughActive()) {
+    renderWalkthroughHUD();
+  }
 });
