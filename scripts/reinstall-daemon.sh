@@ -8,20 +8,43 @@ BINARY="$HOME/.local/bin/staypointd"
 PLIST="$HOME/Library/LaunchAgents/com.staypoint.daemon.plist"
 LABEL="com.staypoint.daemon"
 
-COMMIT="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'none')"
-echo "→ Building staypointd from $REPO (commit: $COMMIT) ..."
-go build -ldflags "-X main.GitCommit=$COMMIT -X main.commit=$COMMIT" -o "$BINARY" "$REPO/cmd/staypointd"
 # macOS privacy grants (TCC, e.g. "access files in your Documents folder") are
 # keyed to the binary's designated requirement. An ad-hoc signature's
 # requirement is its cdhash, which changes on every rebuild, so each rebuild
 # re-prompts. Signing with a real certificate makes the requirement
-# "identifier + certificate", which survives rebuilds. Override with
-# STAYPOINT_SIGN_IDENTITY; falls back to ad-hoc when no identity exists.
-SIGN_IDENTITY="${STAYPOINT_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk 'NR==1 && $2 ~ /^[0-9A-F]{40}$/ {print $2}')}"
-if [ -n "$SIGN_IDENTITY" ]; then
+# "identifier + certificate", which survives rebuilds. Check the certificate
+# before building so a failure never leaves an ad-hoc binary installed.
+# Override the identity with STAYPOINT_SIGN_IDENTITY; set STAYPOINT_ALLOW_ADHOC=1
+# to deliberately build ad-hoc (e.g. a machine with no certificate).
+SIGN_IDENTITY=""
+if [ "$(uname)" = "Darwin" ]; then
+    set +e
+    CERT_OUT="$("$REPO/scripts/check-signing-cert.sh")"
+    CERT_STATUS=$?
+    set -e
+    echo "$CERT_OUT" | grep -v '^[A-Z_]*=' || true
+    SIGN_IDENTITY="$(echo "$CERT_OUT" | sed -n 's/^IDENTITY=//p')"
+    if [ "$CERT_STATUS" -eq 1 ]; then
+        if [ "${STAYPOINT_ALLOW_ADHOC:-0}" = "1" ]; then
+            echo "  ! STAYPOINT_ALLOW_ADHOC=1: building ad-hoc. macOS WILL re-prompt for permissions after every rebuild."
+            SIGN_IDENTITY="-"
+        else
+            echo "✗ ABORTING: no valid signing certificate. Building ad-hoc would bring back the"
+            echo "  'staypointd would like to access your Documents folder' popup on every rebuild."
+            echo "  Fix the certificate (see above), or rerun with STAYPOINT_ALLOW_ADHOC=1 to accept that."
+            exit 1
+        fi
+    elif [ "$CERT_STATUS" -eq 2 ]; then
+        echo "  !!! RENEW THE SIGNING CERTIFICATE SOON (see above). Building with it for now."
+    fi
+fi
+
+COMMIT="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'none')"
+echo "→ Building staypointd from $REPO (commit: $COMMIT) ..."
+go build -ldflags "-X main.GitCommit=$COMMIT -X main.commit=$COMMIT" -o "$BINARY" "$REPO/cmd/staypointd"
+if [ -n "$SIGN_IDENTITY" ] && [ "$SIGN_IDENTITY" != "-" ]; then
     codesign -s "$SIGN_IDENTITY" -f --timestamp=none -i com.staypoint.daemon "$BINARY"
 else
-    echo "  ! No codesigning identity found; ad-hoc signing. macOS will re-prompt for permissions after every rebuild."
     codesign -s - -f -i com.staypoint.daemon "$BINARY"
 fi
 echo "  Built: $BINARY ($(staypointd -version 2>/dev/null || echo 'ok'))"
@@ -59,6 +82,48 @@ cat <<EOF > "$PLIST"
 </dict>
 </plist>
 EOF
+
+# Daily renewal reminder: a notification banner (never a modal) once the
+# signing certificate is within 30 days of expiry, and every day after.
+REMINDER_LABEL="com.staypoint.cert-reminder"
+REMINDER_PLIST="$HOME/Library/LaunchAgents/$REMINDER_LABEL.plist"
+REMINDER_BIN="$HOME/.local/bin/staypoint-check-signing-cert"
+if [ "$(uname)" = "Darwin" ]; then
+    # Copy, not reference: the repo checkout may be a worktree that gets deleted.
+    install -m 0755 "$REPO/scripts/check-signing-cert.sh" "$REMINDER_BIN"
+    cat <<EOF > "$REMINDER_PLIST"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$REMINDER_LABEL</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>$REMINDER_BIN</string>
+        <string>--notify</string>
+        <string>--quiet</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/staypoint-cert-reminder.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/staypoint-cert-reminder.log</string>
+</dict>
+</plist>
+EOF
+    launchctl unload "$REMINDER_PLIST" 2>/dev/null || true
+    launchctl load "$REMINDER_PLIST" 2>/dev/null || true
+fi
 
 if launchctl list | grep -q "$LABEL"; then
     echo "→ Stopping $LABEL ..."
