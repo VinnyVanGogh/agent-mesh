@@ -715,3 +715,77 @@ func TestRegisterUIRoutes_AgentsCascadingProjectFilter(t *testing.T) {
 		t.Error("app.js missing populateAgentsProjectFilter() calls")
 	}
 }
+
+func TestRegisterUIRoutes_STA213_BossCardCachingAndFullPageTaskView(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterUIRoutes(mux, "test-tok")
+
+	// 1. Verify index.html contains expand button & header actions in detail panel
+	reqHTML := httptest.NewRequest("GET", "/", nil)
+	wHTML := httptest.NewRecorder()
+	mux.ServeHTTP(wHTML, reqHTML)
+	if wHTML.Code != http.StatusOK {
+		t.Fatalf("expected 200 for index.html, got %d", wHTML.Code)
+	}
+	html := wHTML.Body.String()
+
+	for _, token := range []string{
+		`id="detail-panel"`,
+		`id="panel-expand"`,
+		`class="panel-expand"`,
+		`class="panel-header-actions"`,
+		`id="panel-close"`,
+	} {
+		if !strings.Contains(html, token) {
+			t.Errorf("index.html missing %s", token)
+		}
+	}
+
+	// 2. Verify style.css contains styles for full-page mode and expand button
+	reqCSS := httptest.NewRequest("GET", "/ui/style.css", nil)
+	wCSS := httptest.NewRecorder()
+	mux.ServeHTTP(wCSS, reqCSS)
+	if wCSS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for style.css, got %d", wCSS.Code)
+	}
+	css := wCSS.Body.String()
+
+	for _, token := range []string{
+		".panel-header-actions",
+		".panel-expand",
+		".panel-close",
+		".detail-panel.full-page",
+		"left: var(--sidebar-w)",
+		"body.sidebar-collapsed .detail-panel.full-page",
+	} {
+		if !strings.Contains(css, token) {
+			t.Errorf("style.css missing %s", token)
+		}
+	}
+
+	// 3. Verify app.js contains Boss Card caching, preloading, and full-page task mode logic
+	reqJS := httptest.NewRequest("GET", "/ui/app.js", nil)
+	wJS := httptest.NewRecorder()
+	mux.ServeHTTP(wJS, reqJS)
+	if wJS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for app.js, got %d", wJS.Code)
+	}
+	js := wJS.Body.String()
+
+	for _, token := range []string{
+		"bossReportCache",
+		"BOSS_REPORT_CACHE_KEY",
+		"BOSS_REPORT_CACHE_TTL_MS",
+		"loadBossReportCache",
+		"saveBossReportCache",
+		"preloadBossReports",
+		"toggleDetailFullPage",
+		"taskDetailFullPage",
+		"panel-expand",
+		"sidebar-collapsed",
+	} {
+		if !strings.Contains(js, token) {
+			t.Errorf("app.js missing %s", token)
+		}
+	}
+}

@@ -17,16 +17,18 @@ import (
 )
 
 type TelemetryHandler struct {
-	db       *sql.DB
-	hub      *EventHub
-	fleetAgg *fleet.Aggregator
+	db              *sql.DB
+	hub             *EventHub
+	fleetAgg        *fleet.Aggregator
+	telemetryDBPath string
 }
 
 func NewTelemetryHandler(db *sql.DB, hub *EventHub, telemetryDBPath string) *TelemetryHandler {
 	return &TelemetryHandler{
-		db:       db,
-		hub:      hub,
-		fleetAgg: fleet.NewAggregator(db, telemetryDBPath, nil),
+		db:              db,
+		hub:             hub,
+		fleetAgg:        fleet.NewAggregator(db, telemetryDBPath, nil),
+		telemetryDBPath: telemetryDBPath,
 	}
 }
 
@@ -215,6 +217,9 @@ func (h *TelemetryHandler) GetReport(w http.ResponseWriter, r *http.Request) {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		cfg = config.DefaultConfig()
+	}
+	if cfg.TelemetryDBPath == "" && h.telemetryDBPath != "" {
+		cfg.TelemetryDBPath = h.telemetryDBPath
 	}
 
 	var rangeOpts []reporting.DateRangeOptions

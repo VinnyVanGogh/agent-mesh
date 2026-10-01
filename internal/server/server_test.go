@@ -40,6 +40,7 @@ func startTestServer(t *testing.T, database *sql.DB) (*server.Server, string) {
 		Port:                 0, // dynamic port
 		AuthToken:            token,
 		DB:                   database,
+		TelemetryDBPath:      filepath.Join(t.TempDir(), "test_telemetry.db"),
 		ReplayBufferSize:     100,
 		SubscriberBufferSize: 16,
 	}
