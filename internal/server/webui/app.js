@@ -15,10 +15,63 @@ const state = {
   },
   tsFilter: { search: '', org: 'all', status: 'all' },
   agentsFilter: { search: '', org: 'all', project: 'all', provider: 'all', status: 'all' },
+  projectsFilter: {
+    orgs: [],       // selected org names, empty = all
+    status: 'all',  // 'all', 'active', 'running', 'done', 'blocked'
+    cardStatus: {}, // `${org}:${proj}` -> status filter on that card
+  },
+  recentTasksFilter: {
+    project: 'all',
+    org: 'all',
+    priority: 'all',
+  },
+  expandedRecentSubtasks: new Set(),
   currentOrgDetail: null,
   openDetailTaskId: null,
   chatPollTimer:    null,
 };
+
+// ── Projects Filter Persistence (STA-192) ────────────────
+const STORAGE_PROJECTS_ORGS_KEY = 'staypoint_projects_selected_orgs';
+const STORAGE_PROJECTS_STATUS_KEY = 'staypoint_projects_status_filter';
+const STORAGE_PROJECTS_CARD_STATUS_KEY = 'staypoint_projects_card_status';
+
+function loadProjectsFilters() {
+  try {
+    const savedOrgs = localStorage.getItem(STORAGE_PROJECTS_ORGS_KEY);
+    if (savedOrgs) {
+      const parsed = JSON.parse(savedOrgs);
+      if (Array.isArray(parsed)) {
+        state.projectsFilter.orgs = parsed;
+      }
+    }
+  } catch { /* ignore parse error */ }
+
+  try {
+    const savedStatus = localStorage.getItem(STORAGE_PROJECTS_STATUS_KEY);
+    if (savedStatus && ['all', 'active', 'running', 'done', 'blocked'].includes(savedStatus)) {
+      state.projectsFilter.status = savedStatus;
+    }
+  } catch { /* ignore */ }
+
+  try {
+    const savedCards = localStorage.getItem(STORAGE_PROJECTS_CARD_STATUS_KEY);
+    if (savedCards) {
+      const parsed = JSON.parse(savedCards);
+      if (parsed && typeof parsed === 'object') {
+        state.projectsFilter.cardStatus = parsed;
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+function saveProjectsFilters() {
+  try {
+    localStorage.setItem(STORAGE_PROJECTS_ORGS_KEY, JSON.stringify(state.projectsFilter.orgs || []));
+    localStorage.setItem(STORAGE_PROJECTS_STATUS_KEY, state.projectsFilter.status || 'all');
+    localStorage.setItem(STORAGE_PROJECTS_CARD_STATUS_KEY, JSON.stringify(state.projectsFilter.cardStatus || {}));
+  } catch { /* ignore storage errors */ }
+}
 
 // ── Token (injected by Go template) ─────────────────────
 const TOKEN = document.querySelector('meta[name="staypoint-token"]')?.content || '';
@@ -189,9 +242,12 @@ async function loadAll() {
       }
     }
 
+    loadProjectsFilters();
     populateOrgFilter();
     populateTSOrgFilter();
     populateAgentsFilters();
+    populateProjectsOrgFilter();
+    populateRecentTasksFilters();
     renderAll();
     renderSidebarOrgTree();
   } catch (err) {
@@ -260,6 +316,8 @@ async function refreshFleetData() {
       populateOrgFilter();
       populateTSOrgFilter();
       populateAgentsFilters();
+      populateProjectsOrgFilter();
+      populateRecentTasksFilters();
       renderOverview();
       renderSidebarOrgTree();
     }
@@ -357,9 +415,9 @@ function navigateTo(viewName, orgName = null, pushHistory = true) {
     const org = (state.fleet?.organizations || []).find(o => o.name === orgName || o.name.toLowerCase() === orgName.toLowerCase());
     if (org) renderOrgDetailView(org);
   } else {
-    if (viewName === 'projects')     renderProjects();
+    if (viewName === 'projects')     { populateProjectsOrgFilter(); renderProjects(); }
     if (viewName === 'agents')       { populateAgentsFilters(); renderAgentsPage(); }
-    if (viewName === 'recent-tasks') renderRecentTasks();
+    if (viewName === 'recent-tasks') { populateRecentTasksFilters(); renderRecentTasks(); }
     if (viewName === 'task-status')  renderTaskStatusPage();
     if (viewName === 'cost')         renderCostPage();
     if (viewName === 'settings')     renderSettings();
@@ -430,32 +488,130 @@ document.getElementById('filter-clear')?.addEventListener('click', () => {
   renderGlobalTaskTable();
 });
 
+// ── Universal KPI Drill-down Navigation Helpers ───────────
+function drillDownToTasks(status, org = 'all') {
+  state.tsFilter = state.tsFilter || { search: '', org: 'all', status: 'all' };
+  state.tsFilter.status = status;
+  state.tsFilter.org = org;
+  state.tsFilter.search = '';
+
+  const tsStatusSel = document.getElementById('ts-status-filter');
+  if (tsStatusSel) tsStatusSel.value = status;
+  const tsOrgSel = document.getElementById('ts-org-filter');
+  if (tsOrgSel) tsOrgSel.value = org;
+  const tsSearch = document.getElementById('ts-search-input');
+  if (tsSearch) tsSearch.value = '';
+
+  // Also synchronize Overview table filters so returning retains filter context
+  state.taskFilter = state.taskFilter || { search: '', org: 'all', status: 'all' };
+  state.taskFilter.status = status;
+  state.taskFilter.org = org;
+  const ovStatusSel = document.getElementById('task-status-filter');
+  if (ovStatusSel) ovStatusSel.value = status;
+  const ovOrgSel = document.getElementById('task-org-filter');
+  if (ovOrgSel) ovOrgSel.value = org;
+
+  showView('task-status');
+  renderTaskStatusPage();
+}
+
+function drillDownToAgents(status = 'all', org = 'all') {
+  state.agentsFilter = state.agentsFilter || { search: '', org: 'all', project: 'all', provider: 'all', status: 'all' };
+  if (status !== 'all') state.agentsFilter.status = status;
+  if (org !== 'all') state.agentsFilter.org = org;
+  const selOrg = document.getElementById('agents-org-filter');
+  if (selOrg && org !== 'all') selOrg.value = org;
+  showView('agents');
+}
+
+function drillDownToCost() {
+  showView('cost');
+}
+
+function initOverviewKPIClicks() {
+  if (state.__kpisInitialized) return;
+  state.__kpisInitialized = true;
+
+  const wire = (id, fn) => {
+    const cardEl = document.getElementById(id);
+    if (!cardEl) return;
+    cardEl.addEventListener('click', fn);
+    cardEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        fn();
+      }
+    });
+  };
+
+  wire('kpi-card-orgs', () => showView('projects'));
+  wire('kpi-card-running', () => drillDownToTasks('running'));
+  wire('kpi-card-active', () => drillDownToTasks('active'));
+  wire('kpi-card-blocked', () => drillDownToTasks('blocked'));
+  wire('kpi-card-done', () => drillDownToTasks('done'));
+  wire('kpi-card-total', () => drillDownToTasks('all'));
+  wire('kpi-card-agents', () => drillDownToAgents());
+  wire('kpi-card-tokens', () => drillDownToCost());
+  wire('kpi-card-cost', () => drillDownToCost());
+}
+
 // ── Render: All Organizations Overview Screen ─────────────
 function renderOverview() {
   const f = state.fleet;
   if (!f) return;
 
   const orgCount = (f.organizations || []).length;
-  document.getElementById('kpi-orgs').textContent = String(orgCount);
+  const elOrgs = document.getElementById('kpi-orgs');
+  if (elOrgs) elOrgs.textContent = String(orgCount);
 
-  const runningTasks = f.global_tasks?.running || 0;
-  const totalTasks = f.global_tasks?.total || 0;
-  document.getElementById('kpi-running-tasks').textContent = String(runningTasks);
-  document.getElementById('kpi-tasks-total').textContent = `${totalTasks} total tasks`;
+  const gt = f.global_tasks || {};
+  const runningTasks = gt.running || 0;
+  const activeTasks  = gt.active || 0;
+  const blockedTasks = gt.blocked || 0;
+  const doneTasks    = gt.done || 0;
+  const totalTasks   = gt.total || 0;
+
+  const elRunning = document.getElementById('kpi-running-tasks');
+  if (elRunning) elRunning.textContent = String(runningTasks);
+  const elTasksTotal = document.getElementById('kpi-tasks-total');
+  if (elTasksTotal) elTasksTotal.textContent = `${totalTasks} total tasks`;
+
+  const elActive = document.getElementById('kpi-active-tasks');
+  if (elActive) elActive.textContent = String(activeTasks);
+
+  const elBlocked = document.getElementById('kpi-blocked-tasks');
+  if (elBlocked) elBlocked.textContent = String(blockedTasks);
+
+  const elDone = document.getElementById('kpi-done-tasks');
+  if (elDone) elDone.textContent = String(doneTasks);
+
+  const elTotalVal = document.getElementById('kpi-total-tasks-val');
+  if (elTotalVal) elTotalVal.textContent = String(totalTasks);
 
   const activeAgents = f.global_agents?.active_running || 0;
-  document.getElementById('kpi-active-agents').textContent = String(activeAgents);
+  const elAgents = document.getElementById('kpi-active-agents');
+  if (elAgents) elAgents.textContent = String(activeAgents);
 
   const providerCounts = f.global_agents?.by_provider || {};
-  document.getElementById('kpi-agents-breakdown').textContent =
-    `Claude: ${providerCounts.claude || 0} · Gemini: ${providerCounts.gemini || 0} · OpenAI: ${providerCounts.openai || 0}`;
+  const elAgentsBreakdown = document.getElementById('kpi-agents-breakdown');
+  if (elAgentsBreakdown) {
+    elAgentsBreakdown.textContent =
+      `Claude: ${providerCounts.claude || 0} · Gemini: ${providerCounts.gemini || 0} · OpenAI: ${providerCounts.openai || 0}`;
+  }
 
   const totTokens = f.token_telemetry?.total_tokens || 0;
-  document.getElementById('kpi-total-tokens').textContent = fmtCompactNum(totTokens);
-  document.getElementById('kpi-tokens-io').textContent =
-    `In: ${fmtCompactNum(f.token_telemetry?.input_tokens)} · Out: ${fmtCompactNum(f.token_telemetry?.output_tokens)}`;
+  const elTokens = document.getElementById('kpi-total-tokens');
+  if (elTokens) elTokens.textContent = fmtCompactNum(totTokens);
+  const elTokensIo = document.getElementById('kpi-tokens-io');
+  if (elTokensIo) {
+    elTokensIo.textContent =
+      `In: ${fmtCompactNum(f.token_telemetry?.input_tokens)} · Out: ${fmtCompactNum(f.token_telemetry?.output_tokens)}`;
+  }
 
-  document.getElementById('kpi-total-cost').textContent = fmtCurrency(f.token_telemetry?.total_cost_usd);
+  const elCost = document.getElementById('kpi-total-cost');
+  if (elCost) elCost.textContent = fmtCurrency(f.token_telemetry?.total_cost_usd);
+
+  initOverviewKPIClicks();
 
   updateFleetPacingBadge(f.provider_quotas);
   renderQuotaGauges(f.provider_quotas);
@@ -813,114 +969,460 @@ function makeTaskTableRow(t, colCount) {
   return tr;
 }
 
-// ── Projects View ─────────────────────────────────────────
+// ── Projects View (STA-192) ───────────────────────────────
+function matchTaskStatus(taskStatus, targetFilter) {
+  if (!targetFilter || targetFilter === 'all') return true;
+  const st = (taskStatus || '').toLowerCase();
+  if (targetFilter === 'running') {
+    return st === 'running' || st === 'in_progress';
+  }
+  if (targetFilter === 'blocked') {
+    return st === 'blocked';
+  }
+  if (targetFilter === 'done') {
+    return st === 'done' || st === 'completed' || st === 'soft_deleted';
+  }
+  if (targetFilter === 'active') {
+    return st === 'active' || st === 'todo' || st === 'backlog' || (!['running', 'in_progress', 'blocked', 'done', 'completed', 'soft_deleted'].includes(st));
+  }
+  return st === targetFilter;
+}
+
+function populateProjectsOrgFilter() {
+  const optionsContainer = document.getElementById('projects-org-options');
+  const legacySel = document.getElementById('projects-org-filter');
+  const statusSel = document.getElementById('projects-status-filter');
+
+  if (statusSel) {
+    statusSel.value = state.projectsFilter.status || 'all';
+  }
+
+  // Collect all known org names from fleet, tasks, sessions
+  const orgNames = new Set();
+  for (const org of (state.fleet?.organizations || [])) {
+    if (org.name) orgNames.add(org.name);
+  }
+  for (const t of Object.values(state.tasks)) {
+    if (t.organization) orgNames.add(t.organization);
+  }
+  for (const t of (state.fleet?.tasks || [])) {
+    if (t.organization) orgNames.add(t.organization);
+  }
+  for (const s of Object.values(state.sessions)) {
+    orgNames.add(s.org || 'StayPoint');
+  }
+  if (!orgNames.size) orgNames.add('StayPoint');
+
+  const sortedOrgs = Array.from(orgNames).sort();
+
+  // Keep legacy select in sync
+  if (legacySel) {
+    const prevVal = legacySel.value;
+    legacySel.innerHTML = '<option value="all">All Organizations</option>';
+    for (const org of sortedOrgs) {
+      const opt = document.createElement('option');
+      opt.value = org;
+      opt.textContent = org;
+      legacySel.appendChild(opt);
+    }
+    legacySel.value = prevVal || 'all';
+  }
+
+  if (!optionsContainer) return;
+
+  // Task counts per org
+  const orgTaskCounts = {};
+  const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
+  for (const org of (state.fleet?.organizations || [])) {
+    for (const t of (org.tasks || [])) allTasks.push(t);
+  }
+  const seen = new Set();
+  for (const t of allTasks) {
+    if (t && t.id && !seen.has(t.id)) {
+      seen.add(t.id);
+      const o = t.organization || 'StayPoint';
+      orgTaskCounts[o] = (orgTaskCounts[o] || 0) + 1;
+    }
+  }
+
+  // Filter out any stored orgs that no longer exist
+  if (state.projectsFilter.orgs.length > 0) {
+    state.projectsFilter.orgs = state.projectsFilter.orgs.filter(o => orgNames.has(o));
+  }
+
+  optionsContainer.innerHTML = '';
+  for (const org of sortedOrgs) {
+    const isChecked = state.projectsFilter.orgs.length === 0 || state.projectsFilter.orgs.includes(org);
+    const label = el('label', 'multiselect-option');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = org;
+    cb.checked = isChecked;
+    cb.className = 'multiselect-checkbox';
+    cb.addEventListener('change', () => {
+      handleProjectsOrgCheckboxChange();
+    });
+
+    label.appendChild(cb);
+    label.appendChild(el('span', 'multiselect-option-label', org));
+    const cnt = orgTaskCounts[org] || 0;
+    label.appendChild(el('span', 'multiselect-option-count', `${cnt} task${cnt !== 1 ? 's' : ''}`));
+    optionsContainer.appendChild(label);
+  }
+
+  updateProjectsOrgButtonLabel();
+}
+
+function handleProjectsOrgCheckboxChange() {
+  const checkboxes = document.querySelectorAll('#projects-org-options .multiselect-checkbox');
+  const checked = [];
+  checkboxes.forEach(cb => {
+    if (cb.checked) checked.push(cb.value);
+  });
+
+  if (checked.length === checkboxes.length || checked.length === 0) {
+    state.projectsFilter.orgs = [];
+  } else {
+    state.projectsFilter.orgs = checked;
+  }
+
+  saveProjectsFilters();
+  updateProjectsOrgButtonLabel();
+  renderProjects();
+}
+
+function updateProjectsOrgButtonLabel() {
+  const btnLabel = document.getElementById('projects-org-btn-label');
+  const btnBadge = document.getElementById('projects-org-btn-badge');
+  const legacySel = document.getElementById('projects-org-filter');
+  if (!btnLabel) return;
+
+  const selCount = state.projectsFilter.orgs.length;
+  if (selCount === 0) {
+    btnLabel.textContent = 'All Organizations';
+    if (btnBadge) btnBadge.style.display = 'none';
+    if (legacySel) legacySel.value = 'all';
+  } else if (selCount === 1) {
+    btnLabel.textContent = state.projectsFilter.orgs[0];
+    if (btnBadge) btnBadge.style.display = 'none';
+    if (legacySel) legacySel.value = state.projectsFilter.orgs[0];
+  } else {
+    btnLabel.textContent = `${selCount} Organizations`;
+    if (btnBadge) {
+      btnBadge.textContent = String(selCount);
+      btnBadge.style.display = 'inline-flex';
+    }
+    if (legacySel) legacySel.value = 'all';
+  }
+}
+
 function renderProjects() {
   const grid = document.getElementById('projects-grid');
   if (!grid) return;
   grid.innerHTML = '';
 
   const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
+  for (const org of (state.fleet?.organizations || [])) {
+    for (const t of (org.tasks || [])) {
+      if (!t.organization) t.organization = org.name;
+      allTasks.push(t);
+    }
+  }
+
   const seenIds = new Set();
   const dedupTasks = [];
   for (const t of allTasks) {
-    if (!seenIds.has(t.id)) { seenIds.add(t.id); dedupTasks.push(t); }
-  }
-
-  // Group by project
-  const projectMap = {};
-  for (const t of dedupTasks) {
-    const proj = t.project || '(No Project)';
-    if (!projectMap[proj]) {
-      projectMap[proj] = { name: proj, org: t.organization || '', tasks: [] };
+    if (t && t.id && !seenIds.has(t.id)) {
+      seenIds.add(t.id);
+      dedupTasks.push(t);
     }
-    projectMap[proj].tasks.push(t);
   }
 
-  const orgFilter = document.getElementById('projects-org-filter')?.value || 'all';
-  const projects = Object.values(projectMap).filter(p =>
-    orgFilter === 'all' || p.org === orgFilter
-  );
+  const selectedOrgs = state.projectsFilter.orgs || [];
+  const globalStatusFilter = state.projectsFilter.status || 'all';
 
-  if (!projects.length) {
-    grid.appendChild(el('p', 'muted-text', 'No projects found.'));
+  // Group by Organization -> Project
+  // Ensures (No Project) tasks are strictly partitioned by organization and respect org filters
+  const orgMap = {};
+
+  for (const t of dedupTasks) {
+    const orgName = t.organization || 'StayPoint';
+
+    // Respect organization filter
+    if (selectedOrgs.length > 0 && !selectedOrgs.includes(orgName)) {
+      continue;
+    }
+
+    if (!orgMap[orgName]) {
+      orgMap[orgName] = { name: orgName, projects: {} };
+    }
+
+    const rawProj = (t.project && typeof t.project === 'string' ? t.project.trim() : '');
+    const projName = (rawProj && rawProj !== 'None') ? rawProj : '(No Project)';
+
+    if (!orgMap[orgName].projects[projName]) {
+      orgMap[orgName].projects[projName] = {
+        name: projName,
+        org: orgName,
+        isNoProject: projName === '(No Project)',
+        tasks: []
+      };
+    }
+    orgMap[orgName].projects[projName].tasks.push(t);
+  }
+
+  // Include explicit projects defined on fleet organizations matching org filter
+  for (const org of (state.fleet?.organizations || [])) {
+    const orgName = org.name || 'StayPoint';
+    if (selectedOrgs.length > 0 && !selectedOrgs.includes(orgName)) continue;
+    if (Array.isArray(org.projects)) {
+      for (const p of org.projects) {
+        const pName = typeof p === 'string' ? p : p.name;
+        if (pName && pName !== '(No Project)') {
+          if (!orgMap[orgName]) orgMap[orgName] = { name: orgName, projects: {} };
+          if (!orgMap[orgName].projects[pName]) {
+            orgMap[orgName].projects[pName] = {
+              name: pName,
+              org: orgName,
+              isNoProject: false,
+              tasks: []
+            };
+          }
+        }
+      }
+    }
+  }
+
+  // Filter projects by global status if set
+  const orgEntries = Object.values(orgMap).map(org => {
+    let projs = Object.values(org.projects);
+    if (globalStatusFilter !== 'all') {
+      projs = projs.filter(p => p.tasks.some(t => matchTaskStatus(t.status, globalStatusFilter)));
+    }
+    return {
+      name: org.name,
+      projects: projs.sort((a, b) => {
+        if (a.isNoProject && !b.isNoProject) return 1;
+        if (!a.isNoProject && b.isNoProject) return -1;
+        return b.tasks.length - a.tasks.length;
+      })
+    };
+  }).filter(org => org.projects.length > 0);
+
+  if (!orgEntries.length) {
+    grid.appendChild(el('p', 'muted-text', 'No projects found matching current filters.'));
     return;
   }
 
-  for (const p of projects.sort((a, b) => b.tasks.length - a.tasks.length)) {
-    const card = el('div', 'project-card');
+  // Render Grouped Headers by Organization
+  for (const orgGroup of orgEntries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const groupWrap = el('div', 'project-org-group');
 
-    const hdr = el('div', 'project-card-header');
-    const titleWrap = el('div');
+    // Grouped Header
+    const groupHeader = el('div', 'project-org-header');
+    const headerLeft = el('div', 'project-org-header-left');
+    headerLeft.appendChild(el('span', 'project-org-icon', '🏢'));
+    headerLeft.appendChild(el('h2', 'project-org-title', orgGroup.name));
+    groupHeader.appendChild(headerLeft);
+
+    const totalTasksInOrg = orgGroup.projects.reduce((sum, p) => sum + p.tasks.length, 0);
+    const totalSpendInOrg = orgGroup.projects.reduce((sum, p) =>
+      sum + p.tasks.reduce((ts, t) => ts + (t.spent_usd || 0), 0), 0);
+
+    const headerMeta = el('div', 'project-org-header-meta');
+    headerMeta.appendChild(el('span', 'pill', `${orgGroup.projects.length} project${orgGroup.projects.length !== 1 ? 's' : ''}`));
+    headerMeta.appendChild(el('span', 'pill pill-todo', `${totalTasksInOrg} task${totalTasksInOrg !== 1 ? 's' : ''}`));
+    if (totalSpendInOrg > 0) {
+      headerMeta.appendChild(el('span', 'pill pill-gold', fmtCurrency(totalSpendInOrg)));
+    }
+    groupHeader.appendChild(headerMeta);
+    groupWrap.appendChild(groupHeader);
+
+    // Grid of cards for this organization
+    const subGrid = el('div', 'project-cards-subgrid');
+
+    for (const p of orgGroup.projects) {
+      const card = createProjectCard(p, globalStatusFilter);
+      subGrid.appendChild(card);
+    }
+
+    groupWrap.appendChild(subGrid);
+    grid.appendChild(groupWrap);
+  }
+}
+
+function createProjectCard(p, globalStatusFilter) {
+  const card = el('div', 'project-card');
+  const cardKey = `${p.org}:${p.name}`;
+
+  // Card Header
+  const hdr = el('div', 'project-card-header');
+  const titleWrap = el('div');
+  if (p.isNoProject) {
+    const nameEl = el('div', 'project-name', '(No Project)');
+    nameEl.style.color = 'var(--muted)';
+    nameEl.style.fontStyle = 'italic';
+    titleWrap.appendChild(nameEl);
+    titleWrap.appendChild(el('div', 'project-org', `${p.org} · Unassigned Tasks`));
+  } else {
     titleWrap.appendChild(el('div', 'project-name', p.name));
     titleWrap.appendChild(el('div', 'project-org', p.org));
-    hdr.appendChild(titleWrap);
-    const totalBadge = el('span', 'pill', `${p.tasks.length} task${p.tasks.length !== 1 ? 's' : ''}`);
-    hdr.appendChild(totalBadge);
-    card.appendChild(hdr);
+  }
+  hdr.appendChild(titleWrap);
+  const totalBadge = el('span', 'pill', `${p.tasks.length} task${p.tasks.length !== 1 ? 's' : ''}`);
+  hdr.appendChild(totalBadge);
+  card.appendChild(hdr);
 
-    // Status counts
-    const counts = { running: 0, blocked: 0, done: 0, active: 0 };
-    let totalSpend = 0;
-    for (const t of p.tasks) {
-      const st = (t.status || '').toLowerCase();
-      if (st === 'running' || st === 'in_progress') counts.running++;
-      else if (st === 'blocked') counts.blocked++;
-      else if (st === 'done') counts.done++;
-      else counts.active++;
-      totalSpend += t.spent_usd || 0;
+  // Status counts
+  const counts = { running: 0, blocked: 0, done: 0, active: 0 };
+  let totalSpend = 0;
+  for (const t of p.tasks) {
+    const st = (t.status || '').toLowerCase();
+    if (st === 'running' || st === 'in_progress') counts.running++;
+    else if (st === 'blocked') counts.blocked++;
+    else if (st === 'done' || st === 'completed' || st === 'soft_deleted') counts.done++;
+    else counts.active++;
+    totalSpend += t.spent_usd || 0;
+  }
+
+  // Active status filter for this card
+  let activeCardFilter = state.projectsFilter.cardStatus[cardKey] ||
+    (globalStatusFilter !== 'all' ? globalStatusFilter : 'all');
+
+  // Stats row with clickable status filter buttons
+  const statsRow = el('div', 'project-stats-row');
+  const statDefs = [
+    { status: 'running', label: 'Running', val: counts.running, cls: 'highlight-cyan' },
+    { status: 'blocked', label: 'Blocked', val: counts.blocked, cls: 'highlight-red' },
+    { status: 'done',    label: 'Done',    val: counts.done,    cls: 'highlight-green' },
+    { status: 'active',  label: 'Active',  val: counts.active,  cls: '' },
+  ];
+
+  for (const sDef of statDefs) {
+    const s = el('div', 'project-stat project-stat-clickable');
+    s.dataset.status = sDef.status;
+    s.title = `Filter tasks by ${sDef.label}`;
+    if (activeCardFilter === sDef.status) {
+      s.classList.add('active');
+    }
+    s.appendChild(el('div', `project-stat-n ${sDef.cls}`, String(sDef.val)));
+    s.appendChild(el('div', 'project-stat-l', sDef.label));
+    s.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setCardStatusFilter(sDef.status);
+    });
+    statsRow.appendChild(s);
+  }
+
+  if (totalSpend > 0) {
+    const s = el('div', 'project-stat clickable');
+    s.setAttribute('role', 'button');
+    s.setAttribute('tabindex', '0');
+    s.title = 'View Cost & Accounting';
+    s.appendChild(el('div', 'project-stat-n highlight-gold', fmtCurrency(totalSpend)));
+    s.appendChild(el('div', 'project-stat-l', 'Spend'));
+    s.addEventListener('click', (e) => {
+      e.stopPropagation();
+      drillDownToCost();
+    });
+    s.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        drillDownToCost();
+      }
+    });
+    statsRow.appendChild(s);
+  }
+  card.appendChild(statsRow);
+
+  // Status Filter Pill Bar on Card: [All] [Active] [Running] [Done] [Blocked]
+  const filterBar = el('div', 'project-card-filter-bar');
+  const pillFilters = [
+    { status: 'all',     label: 'All',     count: p.tasks.length },
+    { status: 'active',  label: 'Active',  count: counts.active },
+    { status: 'running', label: 'Running', count: counts.running },
+    { status: 'done',    label: 'Done',    count: counts.done },
+    { status: 'blocked', label: 'Blocked', count: counts.blocked },
+  ];
+
+  const pillButtons = [];
+  for (const pf of pillFilters) {
+    const pill = el('button', `project-card-filter-pill pill-${pf.status}`, `${pf.label} (${pf.count})`);
+    pill.type = 'button';
+    pill.dataset.status = pf.status;
+    if (activeCardFilter === pf.status) {
+      pill.classList.add('active');
+    }
+    pill.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setCardStatusFilter(pf.status);
+    });
+    filterBar.appendChild(pill);
+    pillButtons.push(pill);
+  }
+  card.appendChild(filterBar);
+
+  // Task list preview container
+  const taskList = el('div', 'project-task-list');
+  card.appendChild(taskList);
+
+  function renderTaskList() {
+    taskList.innerHTML = '';
+    const filteredTasks = p.tasks.filter(t => matchTaskStatus(t.status, activeCardFilter));
+
+    if (!filteredTasks.length) {
+      const emptyMsg = activeCardFilter === 'all'
+        ? 'No tasks in this project.'
+        : `No ${activeCardFilter} tasks.`;
+      taskList.appendChild(el('div', 'project-task-empty muted-text', emptyMsg));
+      return;
     }
 
-    const statsRow = el('div', 'project-stats-row');
-    for (const [label, val, cls] of [
-      ['Running', counts.running, 'highlight-cyan'],
-      ['Blocked', counts.blocked, 'highlight-red'],
-      ['Done', counts.done, 'highlight-green'],
-      ['Active', counts.active, ''],
-    ]) {
-      const s = el('div', 'project-stat');
-      s.appendChild(el('div', `project-stat-n ${cls}`, String(val)));
-      s.appendChild(el('div', 'project-stat-l', label));
-      statsRow.appendChild(s);
-    }
-    if (totalSpend > 0) {
-      const s = el('div', 'project-stat');
-      s.appendChild(el('div', 'project-stat-n highlight-gold', fmtCurrency(totalSpend)));
-      s.appendChild(el('div', 'project-stat-l', 'Spend'));
-      statsRow.appendChild(s);
-    }
-    card.appendChild(statsRow);
-
-    // Task preview
-    const taskList = el('div', 'project-task-list');
-    for (const t of p.tasks.slice(0, 5)) {
+    for (const t of filteredTasks.slice(0, 5)) {
       const item = el('div', 'project-task-item');
       item.appendChild(statusPill(t.status));
       const titleEl = el('span', null, t.title || t.name || '(untitled)');
       titleEl.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
       item.appendChild(titleEl);
-      item.addEventListener('click', () => openDetail(t.id));
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openDetail(t.id);
+      });
       taskList.appendChild(item);
     }
-    if (p.tasks.length > 5) {
-      taskList.appendChild(el('div', 'muted-text', `+${p.tasks.length - 5} more tasks`));
-    }
-    card.appendChild(taskList);
 
-    grid.appendChild(card);
+    if (filteredTasks.length > 5) {
+      const moreMsg = el('div', 'muted-text', `+${filteredTasks.length - 5} more ${activeCardFilter !== 'all' ? activeCardFilter + ' ' : ''}tasks`);
+      moreMsg.style.fontSize = '11px';
+      moreMsg.style.paddingTop = '2px';
+      taskList.appendChild(moreMsg);
+    }
   }
 
-  // Populate org filter for projects
-  const sel = document.getElementById('projects-org-filter');
-  if (sel && state.fleet?.organizations) {
-    const cur = sel.value;
-    sel.innerHTML = '<option value="all">All Organizations</option>';
-    for (const org of state.fleet.organizations) {
-      const opt = document.createElement('option');
-      opt.value = org.name; opt.textContent = org.name;
-      sel.appendChild(opt);
+  function setCardStatusFilter(newStatus) {
+    if (activeCardFilter === newStatus && newStatus !== 'all') {
+      activeCardFilter = 'all';
+    } else {
+      activeCardFilter = newStatus;
     }
-    sel.value = cur || 'all';
+    state.projectsFilter.cardStatus[cardKey] = activeCardFilter;
+    saveProjectsFilters();
+
+    pillButtons.forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.status === activeCardFilter);
+    });
+
+    statsRow.querySelectorAll('.project-stat-clickable').forEach(statEl => {
+      statEl.classList.toggle('active', statEl.dataset.status === activeCardFilter);
+    });
+
+    renderTaskList();
   }
+
+  renderTaskList();
+
+  return card;
 }
 
 // ── Agents Filter Helpers ─────────────────────────────────
@@ -1472,6 +1974,219 @@ function getAgentQuota(providerQuotas, provider) {
   }
 }
 
+// ── Recent Tasks Filter Population ────────────────────────
+function populateRecentTasksOrgFilter() {
+  const sel = document.getElementById('recent-tasks-org-filter');
+  if (!sel) return;
+
+  const current = state.recentTasksFilter.org || 'all';
+  const orgNames = new Set();
+  for (const org of (state.fleet?.organizations || [])) {
+    if (org.name) orgNames.add(org.name);
+  }
+  for (const t of Object.values(state.tasks)) {
+    if (t.organization) orgNames.add(t.organization);
+  }
+  for (const t of (state.fleet?.tasks || [])) {
+    if (t.organization) orgNames.add(t.organization);
+  }
+
+  sel.innerHTML = '<option value="all">All Organizations</option>';
+  for (const org of Array.from(orgNames).sort()) {
+    const opt = document.createElement('option');
+    opt.value = org;
+    opt.textContent = org;
+    sel.appendChild(opt);
+  }
+
+  if (orgNames.has(current) || current === 'all') {
+    sel.value = current;
+    state.recentTasksFilter.org = current;
+  } else {
+    sel.value = 'all';
+    state.recentTasksFilter.org = 'all';
+  }
+}
+
+function populateRecentTasksProjectFilter() {
+  const sel = document.getElementById('recent-tasks-project-filter');
+  if (!sel) return;
+
+  const currentOrg = state.recentTasksFilter.org || 'all';
+  const currentProj = state.recentTasksFilter.project || 'all';
+  const projects = getProjectsForOrg(currentOrg);
+
+  sel.innerHTML = '<option value="all">All Projects</option>';
+  for (const p of projects) {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p;
+    sel.appendChild(opt);
+  }
+
+  if (projects.includes(currentProj) || currentProj === 'all') {
+    sel.value = currentProj;
+    state.recentTasksFilter.project = currentProj;
+  } else {
+    sel.value = 'all';
+    state.recentTasksFilter.project = 'all';
+  }
+}
+
+function populateRecentTasksPriorityFilter() {
+  const sel = document.getElementById('recent-tasks-priority-filter');
+  if (!sel) return;
+
+  const current = state.recentTasksFilter.priority || 'all';
+  const standardPriorities = ['critical', 'urgent', 'high', 'medium', 'low'];
+  const knownPriorities = new Set(standardPriorities);
+
+  const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
+  for (const t of allTasks) {
+    if (t.priority && typeof t.priority === 'string') {
+      const p = t.priority.toLowerCase().trim();
+      if (p) knownPriorities.add(p);
+    }
+  }
+
+  sel.innerHTML = '<option value="all">All Priorities</option>';
+  for (const p of standardPriorities) {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p.charAt(0).toUpperCase() + p.slice(1);
+    sel.appendChild(opt);
+    knownPriorities.delete(p);
+  }
+  for (const p of Array.from(knownPriorities).sort()) {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p.charAt(0).toUpperCase() + p.slice(1);
+    sel.appendChild(opt);
+  }
+
+  sel.value = current;
+}
+
+function populateRecentTasksFilters() {
+  populateRecentTasksOrgFilter();
+  populateRecentTasksProjectFilter();
+  populateRecentTasksPriorityFilter();
+}
+
+function taskMatchesRecentFilter(t, orgFilter, projFilter, priFilter) {
+  if (!t) return false;
+  if (orgFilter !== 'all') {
+    const org = t.organization || 'StayPoint';
+    if (org !== orgFilter) return false;
+  }
+  if (projFilter !== 'all') {
+    const prj = t.project || '(No Project)';
+    if (prj !== projFilter) return false;
+  }
+  if (priFilter !== 'all') {
+    const pri = (t.priority || 'medium').toLowerCase().trim();
+    if (pri !== priFilter.toLowerCase().trim()) return false;
+  }
+  return true;
+}
+
+function renderSubtaskTree(parentId, childrenMap, taskMap, visited, orgFilter, projFilter, priFilter, isFilterActive) {
+  const tree = el('div', 'activity-subtasks-tree');
+  const allKids = childrenMap.get(parentId) || [];
+
+  function nodeOrDescendantMatches(taskId, seen = new Set()) {
+    if (seen.has(taskId)) return false;
+    seen.add(taskId);
+    const node = taskMap.get(taskId);
+    if (node && taskMatchesRecentFilter(node, orgFilter, projFilter, priFilter)) return true;
+    const kids = childrenMap.get(taskId) || [];
+    for (const k of kids) {
+      if (nodeOrDescendantMatches(k.id, seen)) return true;
+    }
+    return false;
+  }
+
+  const visibleKids = isFilterActive
+    ? allKids.filter(k => nodeOrDescendantMatches(k.id))
+    : allKids;
+
+  visibleKids.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+
+  visibleKids.forEach((k, idx) => {
+    if (visited.has(k.id)) return; // cycle protection
+    const isLast = idx === visibleKids.length - 1;
+    const row = el('div', 'activity-subtask-row');
+
+    const branch = el('span', 'activity-subtask-branch', isLast ? '└──' : '├──');
+    row.appendChild(branch);
+
+    const kDot = el('span', 'activity-subtask-dot');
+    const kSt = (k.status || '').toLowerCase();
+    kDot.style.background =
+      (kSt === 'running' || kSt === 'in_progress') ? 'var(--cyan)' :
+      kSt === 'blocked' ? 'var(--red)' :
+      kSt === 'done'    ? 'var(--green)' : 'var(--muted)';
+    row.appendChild(kDot);
+
+    const kBody = el('div', 'activity-subtask-body');
+    const kTitleRow = el('div', 'activity-subtask-title-row');
+    const kTitle = el('span', 'activity-subtask-title', k.title || k.name || '(untitled)');
+    kTitle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openDetail(k.id);
+    });
+    kTitleRow.appendChild(kTitle);
+
+    const grandKids = isFilterActive
+      ? (childrenMap.get(k.id) || []).filter(gk => nodeOrDescendantMatches(gk.id))
+      : (childrenMap.get(k.id) || []);
+
+    if (grandKids.length > 0) {
+      const isChildExpanded = state.expandedRecentSubtasks.has(k.id) || (isFilterActive && !taskMatchesRecentFilter(k, orgFilter, projFilter, priFilter));
+      const subToggle = el('button', 'activity-subtask-toggle');
+      subToggle.innerHTML = `${isChildExpanded ? '▼' : '▶'} ${grandKids.length} subtask${grandKids.length === 1 ? '' : 's'}`;
+      subToggle.title = isChildExpanded ? 'Collapse subtasks' : 'Expand subtasks';
+      subToggle.setAttribute('aria-expanded', isChildExpanded ? 'true' : 'false');
+      subToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (state.expandedRecentSubtasks.has(k.id)) {
+          state.expandedRecentSubtasks.delete(k.id);
+        } else {
+          state.expandedRecentSubtasks.add(k.id);
+        }
+        renderRecentTasks();
+      });
+      kTitleRow.appendChild(subToggle);
+    }
+    kBody.appendChild(kTitleRow);
+
+    const kMetaParts = [
+      k.identifier || (k.id ? `#${k.id.slice(0, 8)}` : ''),
+      k.project,
+      k.organization,
+      k.priority,
+      fmtRelTime(k.updated_at),
+    ].filter(Boolean);
+    kBody.appendChild(el('div', 'activity-subtask-meta', kMetaParts.join(' · ')));
+
+    if (grandKids.length > 0) {
+      const isChildExpanded = state.expandedRecentSubtasks.has(k.id) || (isFilterActive && !taskMatchesRecentFilter(k, orgFilter, projFilter, priFilter));
+      if (isChildExpanded) {
+        const nextVisited = new Set(visited);
+        nextVisited.add(k.id);
+        const subTree = renderSubtaskTree(k.id, childrenMap, taskMap, nextVisited, orgFilter, projFilter, priFilter, isFilterActive);
+        kBody.appendChild(subTree);
+      }
+    }
+
+    row.appendChild(kBody);
+    row.appendChild(statusPill(k.status));
+    tree.appendChild(row);
+  });
+
+  return tree;
+}
+
 // ── Recent Tasks View ─────────────────────────────────────
 function renderRecentTasks() {
   const feed = document.getElementById('recent-tasks-feed');
@@ -1479,23 +2194,96 @@ function renderRecentTasks() {
   feed.innerHTML = '';
 
   const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
-  const seenIds = new Set();
-  const dedupTasks = [];
+  const taskMap = new Map();
   for (const t of allTasks) {
-    if (!seenIds.has(t.id)) { seenIds.add(t.id); dedupTasks.push(t); }
+    if (t && t.id && !taskMap.has(t.id)) {
+      taskMap.set(t.id, t);
+    }
   }
 
-  const sorted = dedupTasks
-    .filter(t => t.updated_at)
-    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
-    .slice(0, 50);
+  // Build parent -> children mappings
+  const parentMap = new Map();
+  const childrenMap = new Map();
 
-  if (!sorted.length) {
+  for (const [id, t] of taskMap.entries()) {
+    const pId = t.parent_id || t.parentId || null;
+    if (pId && pId !== id) {
+      parentMap.set(id, pId);
+      if (!childrenMap.has(pId)) childrenMap.set(pId, []);
+      childrenMap.get(pId).push(t);
+    }
+    if (Array.isArray(t.dependencies?.subtasks)) {
+      for (const st of t.dependencies.subtasks) {
+        if (st && st.id && st.id !== id && !parentMap.has(st.id)) {
+          parentMap.set(st.id, id);
+          if (!childrenMap.has(id)) childrenMap.set(id, []);
+          if (!childrenMap.get(id).some(c => c.id === st.id)) {
+            const resolved = taskMap.get(st.id) || {
+              ...st,
+              title: st.title || st.name,
+              updated_at: st.updated_at || t.updated_at,
+            };
+            childrenMap.get(id).push(resolved);
+          }
+        }
+      }
+    }
+  }
+
+  const orgFilter = state.recentTasksFilter.org || 'all';
+  const projFilter = state.recentTasksFilter.project || 'all';
+  const priFilter = state.recentTasksFilter.priority || 'all';
+  const isFilterActive = orgFilter !== 'all' || projFilter !== 'all' || priFilter !== 'all';
+
+  function nodeOrDescendantMatches(taskId, seen = new Set()) {
+    if (seen.has(taskId)) return false;
+    seen.add(taskId);
+    const node = taskMap.get(taskId);
+    if (node && taskMatchesRecentFilter(node, orgFilter, projFilter, priFilter)) return true;
+    const kids = childrenMap.get(taskId) || [];
+    for (const k of kids) {
+      if (nodeOrDescendantMatches(k.id, seen)) return true;
+    }
+    return false;
+  }
+
+  // Find root/top-level tasks
+  const rootTasks = [];
+  for (const [id, t] of taskMap.entries()) {
+    const pId = parentMap.get(id);
+    const hasKnownParent = pId && taskMap.has(pId);
+    if (!hasKnownParent) {
+      if (!isFilterActive || nodeOrDescendantMatches(id)) {
+        rootTasks.push(t);
+      }
+    }
+  }
+
+  function getLatestUpdatedAt(taskId, seen = new Set()) {
+    if (seen.has(taskId)) return 0;
+    seen.add(taskId);
+    const node = taskMap.get(taskId);
+    let latest = node?.updated_at ? new Date(node.updated_at).getTime() : 0;
+    const kids = childrenMap.get(taskId) || [];
+    for (const k of kids) {
+      const kLatest = getLatestUpdatedAt(k.id, seen);
+      if (kLatest > latest) latest = kLatest;
+    }
+    return latest;
+  }
+
+  rootTasks
+    .filter(t => t.updated_at || getLatestUpdatedAt(t.id) > 0)
+    .sort((a, b) => getLatestUpdatedAt(b.id) - getLatestUpdatedAt(a.id));
+
+  const displayTasks = rootTasks.slice(0, 50);
+
+  if (!displayTasks.length) {
     feed.appendChild(el('p', 'muted-text', 'No recent task activity.'));
     return;
   }
 
-  sorted.forEach((t, i) => {
+  displayTasks.forEach((t, i) => {
     const item = el('div', 'activity-item');
 
     const dotCol = el('div', 'activity-dot-col');
@@ -1506,22 +2294,56 @@ function renderRecentTasks() {
       st === 'blocked' ? 'var(--red)' :
       st === 'done'    ? 'var(--green)' : 'var(--muted)';
     dotCol.appendChild(dot);
-    if (i < sorted.length - 1) dotCol.appendChild(el('span', 'activity-line'));
+    if (i < displayTasks.length - 1) dotCol.appendChild(el('span', 'activity-line'));
     item.appendChild(dotCol);
 
     const body = el('div', 'activity-body');
-    const titleEl = el('div', 'activity-title', t.title || t.name || '(untitled)');
+    const titleRow = el('div', 'activity-title-row');
+    const titleEl = el('span', 'activity-title', t.title || t.name || '(untitled)');
     titleEl.style.cursor = 'pointer';
     titleEl.addEventListener('click', () => openDetail(t.id));
-    body.appendChild(titleEl);
+    titleRow.appendChild(titleEl);
+
+    const allKids = childrenMap.get(t.id) || [];
+    const visibleKids = isFilterActive
+      ? allKids.filter(k => nodeOrDescendantMatches(k.id))
+      : allKids;
+
+    if (visibleKids.length > 0) {
+      const isExpanded = state.expandedRecentSubtasks.has(t.id) || (isFilterActive && !taskMatchesRecentFilter(t, orgFilter, projFilter, priFilter));
+      const toggleBtn = el('button', 'activity-subtask-toggle');
+      toggleBtn.innerHTML = `${isExpanded ? '▼' : '▶'} ${visibleKids.length} subtask${visibleKids.length === 1 ? '' : 's'}`;
+      toggleBtn.title = isExpanded ? 'Collapse subtasks' : 'Expand subtasks';
+      toggleBtn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+      toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (state.expandedRecentSubtasks.has(t.id)) {
+          state.expandedRecentSubtasks.delete(t.id);
+        } else {
+          state.expandedRecentSubtasks.add(t.id);
+        }
+        renderRecentTasks();
+      });
+      titleRow.appendChild(toggleBtn);
+    }
+    body.appendChild(titleRow);
 
     const metaParts = [
       t.identifier || (t.id ? `#${t.id.slice(0, 8)}` : ''),
+      t.project,
       t.organization,
       t.priority,
       fmtRelTime(t.updated_at),
     ].filter(Boolean);
     body.appendChild(el('div', 'activity-meta', metaParts.join(' · ')));
+
+    if (visibleKids.length > 0) {
+      const isExpanded = state.expandedRecentSubtasks.has(t.id) || (isFilterActive && !taskMatchesRecentFilter(t, orgFilter, projFilter, priFilter));
+      if (isExpanded) {
+        const treeEl = renderSubtaskTree(t.id, childrenMap, taskMap, new Set([t.id]), orgFilter, projFilter, priFilter, isFilterActive);
+        body.appendChild(treeEl);
+      }
+    }
 
     item.appendChild(body);
     item.appendChild(statusPill(t.status));
@@ -2482,19 +3304,49 @@ function renderOrgDetailView(org) {
   const statsRow = el('div', 'org-detail-stats');
   const tc = org.task_counts || {};
   const statItems = [
-    { val: tc.running || 0,  label: 'Running',  cls: 'highlight-cyan' },
-    { val: tc.active  || 0,  label: 'Active' },
-    { val: tc.blocked || 0,  label: 'Blocked',  cls: 'highlight-red' },
-    { val: tc.done    || 0,  label: 'Done',     cls: 'highlight-green' },
-    { val: tc.total   || 0,  label: 'Total' },
-    { val: org.active_agents || 0, label: 'Agents', cls: 'highlight-green' },
-    { val: fmtCurrency(org.spent_usd), label: 'Spend', isStr: true },
+    { val: tc.running || 0,  label: 'Running',  cls: 'highlight-cyan', status: 'running' },
+    { val: tc.active  || 0,  label: 'Active',   status: 'active' },
+    { val: tc.blocked || 0,  label: 'Blocked',  cls: 'highlight-red',  status: 'blocked' },
+    { val: tc.done    || 0,  label: 'Done',     cls: 'highlight-green',status: 'done' },
+    { val: tc.total   || 0,  label: 'Total',    status: 'all' },
+    { val: org.active_agents || 0, label: 'Agents', cls: 'highlight-green', type: 'agents' },
+    { val: fmtCurrency(org.spent_usd), label: 'Spend', isStr: true, type: 'cost' },
   ];
   for (const s of statItems) {
-    const d = el('div', 'org-detail-stat');
+    const d = el('div', 'org-detail-stat clickable');
+    d.setAttribute('role', 'button');
+    d.setAttribute('tabindex', '0');
+    d.title = `Filter ${org.name} by ${s.label}`;
     const valEl = el('div', 'org-detail-stat-val' + (s.cls ? ' ' + s.cls : ''), String(s.val));
     d.appendChild(valEl);
     d.appendChild(el('div', 'org-detail-stat-label', s.label));
+
+    if (s.status) {
+      d.addEventListener('click', () => drillDownToTasks(s.status, org.name));
+      d.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          drillDownToTasks(s.status, org.name);
+        }
+      });
+    } else if (s.type === 'agents') {
+      d.addEventListener('click', () => drillDownToAgents('all', org.name));
+      d.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          drillDownToAgents('all', org.name);
+        }
+      });
+    } else if (s.type === 'cost') {
+      d.addEventListener('click', () => drillDownToCost());
+      d.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          drillDownToCost();
+        }
+      });
+    }
+
     statsRow.appendChild(d);
   }
   container.appendChild(statsRow);
@@ -2771,22 +3623,352 @@ function renderBoss() {
   card.appendChild(header);
 
   const grid = el('div', 'boss-stat-grid');
-  for (const { val, label } of [
-    { val: inProg,  label: 'In Progress' },
-    { val: todo,    label: 'Todo' },
-    { val: blocked, label: 'Blocked' },
-    { val: done,    label: 'Done' },
-    { val: active,  label: 'Agents' },
+  for (const { val, label, status, type } of [
+    { val: inProg,  label: 'In Progress', status: 'running' },
+    { val: todo,    label: 'Todo',        status: 'active' },
+    { val: blocked, label: 'Blocked',     status: 'blocked' },
+    { val: done,    label: 'Done',        status: 'done' },
+    { val: active,  label: 'Agents',      type: 'agents' },
   ]) {
-    const s = el('div', 'boss-stat');
+    const s = el('div', 'boss-stat clickable');
+    s.setAttribute('role', 'button');
+    s.setAttribute('tabindex', '0');
+    s.title = `View ${label}`;
     s.appendChild(el('div', 'boss-stat-val', String(val)));
     s.appendChild(el('div', 'boss-stat-label', label));
+    if (status) {
+      s.addEventListener('click', () => drillDownToTasks(status));
+      s.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          drillDownToTasks(status);
+        }
+      });
+    } else if (type === 'agents') {
+      s.addEventListener('click', () => drillDownToAgents());
+      s.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          drillDownToAgents();
+        }
+      });
+    }
     grid.appendChild(s);
   }
   card.appendChild(grid);
   container.appendChild(card);
 
+  // In-app interactive report preview / carousel
+  container.appendChild(buildBossReportCarousel());
+
   renderEventStream();
+}
+
+// ── Boss Card In-App Report Carousel & Modal Preview ─────
+const BOSS_REPORTS = [
+  { id: 'work',     label: 'Work / Boss Card', desc: 'Executive Justification Memo', icon: '🏢' },
+  { id: 'combined', label: 'Combined Fleet',   desc: 'Cross-Account Fleet Audit',   icon: '🌐' },
+  { id: 'personal', label: 'Personal',         desc: 'Claude Code Value Audit',     icon: '👤' },
+  { id: 'gemini',   label: 'Gemini / AGY',     desc: 'Antigravity Agent Velocity',  icon: '⚡' },
+];
+
+function buildBossReportCarousel() {
+  const card = el('div', 'boss-carousel-card');
+
+  if (typeof state.bossReportIndex !== 'number' || state.bossReportIndex < 0 || state.bossReportIndex >= BOSS_REPORTS.length) {
+    state.bossReportIndex = 0;
+  }
+  if (!state.bossReportZoom) {
+    state.bossReportZoom = 1.0;
+  }
+  if (!state.bossReportCache) {
+    state.bossReportCache = {};
+  }
+
+  const currentReport = () => BOSS_REPORTS[state.bossReportIndex];
+
+  // 1. Header with title & interactive action buttons
+  const hdr = el('div', 'boss-carousel-header');
+  const titleGroup = el('div', 'boss-carousel-title-group');
+  const title = el('div', 'boss-carousel-title');
+  title.innerHTML = '<span>📄</span> Executive Report In-App Preview';
+  const desc = el('div', 'boss-carousel-desc', 'Interactive carousel — view and inspect executive briefing memos and audits live in-app.');
+  titleGroup.appendChild(title);
+  titleGroup.appendChild(desc);
+  hdr.appendChild(titleGroup);
+
+  const actions = el('div', 'boss-carousel-actions');
+
+  // Zoom controls
+  const zoomOutBtn = el('button', 'carousel-btn', '−');
+  zoomOutBtn.type = 'button';
+  zoomOutBtn.title = 'Zoom out';
+  const zoomLabel = el('span', 'carousel-btn', `${Math.round(state.bossReportZoom * 100)}%`);
+  zoomLabel.style.cursor = 'default';
+  const zoomInBtn = el('button', 'carousel-btn', '+');
+  zoomInBtn.type = 'button';
+  zoomInBtn.title = 'Zoom in';
+
+  zoomOutBtn.addEventListener('click', () => {
+    state.bossReportZoom = Math.max(0.6, Math.round((state.bossReportZoom - 0.1) * 10) / 10);
+    zoomLabel.textContent = `${Math.round(state.bossReportZoom * 100)}%`;
+    applyZoom();
+  });
+  zoomInBtn.addEventListener('click', () => {
+    state.bossReportZoom = Math.min(1.4, Math.round((state.bossReportZoom + 0.1) * 10) / 10);
+    zoomLabel.textContent = `${Math.round(state.bossReportZoom * 100)}%`;
+    applyZoom();
+  });
+  actions.appendChild(zoomOutBtn);
+  actions.appendChild(zoomLabel);
+  actions.appendChild(zoomInBtn);
+
+  // Fullscreen / Modal expander
+  const expandBtn = el('button', 'carousel-btn', '⛶ Expand');
+  expandBtn.type = 'button';
+  expandBtn.title = 'Open full-screen modal preview';
+  expandBtn.addEventListener('click', () => {
+    openBossReportModal(currentReport().id, currentReport().label);
+  });
+  actions.appendChild(expandBtn);
+
+  // Print button
+  const printBtn = el('button', 'carousel-btn', '🖨 Print');
+  printBtn.type = 'button';
+  printBtn.title = 'Print active report';
+  printBtn.addEventListener('click', () => {
+    if (iframe && iframe.contentWindow) {
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+    }
+  });
+  actions.appendChild(printBtn);
+
+  // Refresh preview data
+  const refreshBtn = el('button', 'carousel-btn', '↻ Refresh');
+  refreshBtn.type = 'button';
+  refreshBtn.title = 'Refresh current report data';
+  refreshBtn.addEventListener('click', () => {
+    delete state.bossReportCache[currentReport().id];
+    loadReport();
+  });
+  actions.appendChild(refreshBtn);
+
+  // Download PDF button for current report
+  const dlCurrentBtn = el('button', 'carousel-btn primary', '⬇ PDF');
+  dlCurrentBtn.type = 'button';
+  dlCurrentBtn.title = 'Download current report as PDF';
+  dlCurrentBtn.addEventListener('click', async () => {
+    const rep = currentReport();
+    const origText = dlCurrentBtn.innerHTML;
+    dlCurrentBtn.disabled = true;
+    dlCurrentBtn.innerHTML = '<span class="dl-spinner"></span> Generating…';
+    try {
+      const url = `/api/report?type=${encodeURIComponent(rep.id)}${TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : ''}`;
+      const resp = await fetch(url, { headers: authHeader() });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `staypoint-${rep.id}-report.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
+    } catch (err) {
+      alert(`Download failed: ${err.message}`);
+    } finally {
+      dlCurrentBtn.disabled = false;
+      dlCurrentBtn.innerHTML = origText;
+    }
+  });
+  actions.appendChild(dlCurrentBtn);
+
+  hdr.appendChild(actions);
+  card.appendChild(hdr);
+
+  // 2. Carousel Nav Bar (Tabs & Pager)
+  const navBar = el('div', 'boss-carousel-nav');
+  const tabsWrap = el('div', 'boss-carousel-tabs');
+  const tabBtns = [];
+
+  BOSS_REPORTS.forEach((rep, idx) => {
+    const tab = el('button', 'carousel-tab' + (idx === state.bossReportIndex ? ' active' : ''));
+    tab.type = 'button';
+    tab.innerHTML = `<span>${rep.icon}</span> ${rep.label}`;
+    tab.addEventListener('click', () => {
+      state.bossReportIndex = idx;
+      updateCarousel();
+    });
+    tabsWrap.appendChild(tab);
+    tabBtns.push(tab);
+  });
+  navBar.appendChild(tabsWrap);
+
+  const pagerWrap = el('div', 'boss-carousel-pager');
+  const prevBtn = el('button', 'carousel-btn', '‹ Prev');
+  prevBtn.type = 'button';
+  prevBtn.title = 'Previous report (←)';
+  const pagerInd = el('span', 'carousel-page-indicator');
+  const nextBtn = el('button', 'carousel-btn', 'Next ›');
+  nextBtn.type = 'button';
+  nextBtn.title = 'Next report (→)';
+
+  prevBtn.addEventListener('click', () => {
+    state.bossReportIndex = (state.bossReportIndex - 1 + BOSS_REPORTS.length) % BOSS_REPORTS.length;
+    updateCarousel();
+  });
+  nextBtn.addEventListener('click', () => {
+    state.bossReportIndex = (state.bossReportIndex + 1) % BOSS_REPORTS.length;
+    updateCarousel();
+  });
+
+  pagerWrap.appendChild(prevBtn);
+  pagerWrap.appendChild(pagerInd);
+  pagerWrap.appendChild(nextBtn);
+  navBar.appendChild(pagerWrap);
+  card.appendChild(navBar);
+
+  // 3. Document Preview Sheet Frame
+  const frameWrap = el('div', 'boss-preview-frame-wrap');
+  const sheet = el('div', 'boss-preview-sheet');
+  const iframe = document.createElement('iframe');
+  iframe.className = 'boss-preview-iframe';
+  iframe.setAttribute('title', 'Boss Card Report Preview');
+  iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-modals allow-popups');
+
+  const loadingOverlay = el('div', 'boss-preview-loading');
+  loadingOverlay.innerHTML = '<span class="dl-spinner"></span><span>Loading executive report preview…</span>';
+
+  const errorOverlay = el('div', 'boss-preview-error');
+  errorOverlay.style.display = 'none';
+
+  sheet.appendChild(iframe);
+  frameWrap.appendChild(sheet);
+  frameWrap.appendChild(loadingOverlay);
+  frameWrap.appendChild(errorOverlay);
+  card.appendChild(frameWrap);
+
+  function applyZoom() {
+    if (state.bossReportZoom === 1.0) {
+      sheet.style.transform = 'none';
+      sheet.style.transformOrigin = 'top center';
+    } else {
+      sheet.style.transform = `scale(${state.bossReportZoom})`;
+      sheet.style.transformOrigin = 'top center';
+    }
+  }
+
+  async function loadReport() {
+    const rep = currentReport();
+    loadingOverlay.style.display = 'flex';
+    errorOverlay.style.display = 'none';
+
+    try {
+      if (state.bossReportCache[rep.id]) {
+        iframe.srcdoc = state.bossReportCache[rep.id];
+        loadingOverlay.style.display = 'none';
+        return;
+      }
+
+      const url = `/api/report?type=${encodeURIComponent(rep.id)}&format=html${TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : ''}`;
+      const res = await fetch(url, { headers: authHeader() });
+      if (!res.ok) {
+        throw new Error(`Server returned HTTP ${res.status}`);
+      }
+      const html = await res.text();
+      state.bossReportCache[rep.id] = html;
+      iframe.srcdoc = html;
+      loadingOverlay.style.display = 'none';
+    } catch (err) {
+      loadingOverlay.style.display = 'none';
+      errorOverlay.innerHTML = '';
+      errorOverlay.style.display = 'flex';
+      errorOverlay.appendChild(el('div', 'boss-preview-error-title', `Failed to load ${rep.label}`));
+      errorOverlay.appendChild(el('div', 'boss-preview-error-desc', err.message || 'Unknown network error.'));
+      const retryBtn = el('button', 'carousel-btn primary', '↻ Retry');
+      retryBtn.type = 'button';
+      retryBtn.addEventListener('click', loadReport);
+      errorOverlay.appendChild(retryBtn);
+    }
+  }
+
+  function updateCarousel() {
+    tabBtns.forEach((btn, idx) => {
+      btn.classList.toggle('active', idx === state.bossReportIndex);
+    });
+    pagerInd.textContent = `Report ${state.bossReportIndex + 1} of ${BOSS_REPORTS.length}: ${currentReport().label}`;
+    applyZoom();
+    loadReport();
+  }
+
+  // Keyboard navigation for carousel
+  card.setAttribute('tabindex', '0');
+  card.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      prevBtn.click();
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      nextBtn.click();
+    }
+  });
+
+  updateCarousel();
+  return card;
+}
+
+function openBossReportModal(reportId, label) {
+  const existing = document.getElementById('boss-report-modal');
+  if (existing) existing.remove();
+
+  const backdrop = el('div', 'boss-modal-backdrop');
+  backdrop.id = 'boss-report-modal';
+
+  const win = el('div', 'boss-modal-window');
+
+  const hdr = el('div', 'boss-modal-header');
+  const title = el('div', 'boss-modal-title', `Executive Report: ${label}`);
+  const closeBtn = el('button', 'boss-modal-close-btn', '✕');
+  closeBtn.type = 'button';
+  closeBtn.title = 'Close modal (Esc)';
+  hdr.appendChild(title);
+  hdr.appendChild(closeBtn);
+  win.appendChild(hdr);
+
+  const body = el('div', 'boss-modal-body');
+  const sheet = el('div', 'boss-modal-sheet');
+  const modalIframe = document.createElement('iframe');
+  modalIframe.className = 'boss-preview-iframe';
+  modalIframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-modals allow-popups');
+
+  if (state.bossReportCache && state.bossReportCache[reportId]) {
+    modalIframe.srcdoc = state.bossReportCache[reportId];
+  } else {
+    modalIframe.src = `/api/report?type=${encodeURIComponent(reportId)}&format=html${TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : ''}`;
+  }
+
+  sheet.appendChild(modalIframe);
+  body.appendChild(sheet);
+  win.appendChild(body);
+  backdrop.appendChild(win);
+
+  const closeModal = () => {
+    backdrop.remove();
+    document.removeEventListener('keydown', onEsc);
+  };
+  const onEsc = (e) => {
+    if (e.key === 'Escape') closeModal();
+  };
+
+  closeBtn.addEventListener('click', closeModal);
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) closeModal();
+  });
+  document.addEventListener('keydown', onEsc);
+
+  document.body.appendChild(backdrop);
 }
 
 function renderEventStream() {
@@ -3530,6 +4712,21 @@ document.querySelectorAll('.agent-filter-pill').forEach(btn => {
   });
 });
 
+// ── Filter listeners (recent tasks view) ──────────────────
+document.getElementById('recent-tasks-org-filter')?.addEventListener('change', (e) => {
+  state.recentTasksFilter.org = e.target.value;
+  populateRecentTasksProjectFilter();
+  renderRecentTasks();
+});
+document.getElementById('recent-tasks-project-filter')?.addEventListener('change', (e) => {
+  state.recentTasksFilter.project = e.target.value;
+  renderRecentTasks();
+});
+document.getElementById('recent-tasks-priority-filter')?.addEventListener('change', (e) => {
+  state.recentTasksFilter.priority = e.target.value;
+  renderRecentTasks();
+});
+
 // ── Checklist View ────────────────────────────────────────
 
 let checklistItems = [];   // local cache
@@ -3954,7 +5151,62 @@ async function verifyChecklistContracts() {
 }
 
 // ── Filter listeners (projects page) ─────────────────────
-document.getElementById('projects-org-filter')?.addEventListener('change', () => {
+document.getElementById('projects-status-filter')?.addEventListener('change', (e) => {
+  state.projectsFilter.status = e.target.value;
+  saveProjectsFilters();
+  renderProjects();
+});
+
+document.getElementById('projects-org-multiselect-btn')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const menu = document.getElementById('projects-org-menu');
+  const btn = document.getElementById('projects-org-multiselect-btn');
+  if (!menu || !btn) return;
+  const isExpanded = btn.getAttribute('aria-expanded') === 'true';
+  menu.classList.toggle('hidden', isExpanded);
+  btn.setAttribute('aria-expanded', String(!isExpanded));
+});
+
+document.getElementById('projects-org-select-all')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const checkboxes = document.querySelectorAll('#projects-org-options .multiselect-checkbox');
+  checkboxes.forEach(cb => { cb.checked = true; });
+  state.projectsFilter.orgs = [];
+  saveProjectsFilters();
+  updateProjectsOrgButtonLabel();
+  renderProjects();
+});
+
+document.getElementById('projects-org-clear-all')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const checkboxes = document.querySelectorAll('#projects-org-options .multiselect-checkbox');
+  checkboxes.forEach(cb => { cb.checked = false; });
+  state.projectsFilter.orgs = ['__none__'];
+  saveProjectsFilters();
+  updateProjectsOrgButtonLabel();
+  renderProjects();
+});
+
+// Outside click to dismiss multi-select dropdown
+document.addEventListener('click', (e) => {
+  const ms = document.getElementById('projects-org-multiselect');
+  const menu = document.getElementById('projects-org-menu');
+  const btn = document.getElementById('projects-org-multiselect-btn');
+  if (ms && menu && !ms.contains(e.target)) {
+    menu.classList.add('hidden');
+    btn?.setAttribute('aria-expanded', 'false');
+  }
+});
+
+// Legacy select listener for backwards compatibility
+document.getElementById('projects-org-filter')?.addEventListener('change', (e) => {
+  if (e.target.value === 'all') {
+    state.projectsFilter.orgs = [];
+  } else {
+    state.projectsFilter.orgs = [e.target.value];
+  }
+  saveProjectsFilters();
+  populateProjectsOrgFilter();
   renderProjects();
 });
 

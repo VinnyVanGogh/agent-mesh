@@ -193,15 +193,16 @@ func (h *TelemetryHandler) GetFleetTask(w http.ResponseWriter, r *http.Request) 
 	proxyPaperclip(w, r, "/api/issues/"+id)
 }
 
-// GetReport handles GET /api/report?type={work|personal|gemini|combined}
-// It renders the requested PDF report via chromedp and streams it as application/pdf.
+// GetReport handles GET /api/report?type={work|personal|gemini|combined}&format={pdf|html}
+// It renders the requested PDF report via chromedp and streams it as application/pdf,
+// or returns the HTML directly if format=html is requested for interactive in-app preview.
 func (h *TelemetryHandler) GetReport(w http.ResponseWriter, r *http.Request) {
 	reportType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("type")))
 	if reportType == "" {
 		reportType = "work"
 	}
 
-	allowed := map[string]bool{"work": true, "personal": true, "gemini": true, "combined": true}
+	allowed := map[string]bool{"work": true, "personal": true, "gemini": true, "combined": true, "boss": true, "fleet": true}
 	if !allowed[reportType] {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -216,6 +217,30 @@ func (h *TelemetryHandler) GetReport(w http.ResponseWriter, r *http.Request) {
 		cfg = config.DefaultConfig()
 	}
 
+	var rangeOpts []reporting.DateRangeOptions
+	startParam := strings.TrimSpace(r.URL.Query().Get("start"))
+	endParam := strings.TrimSpace(r.URL.Query().Get("end"))
+	if startParam != "" || endParam != "" {
+		rangeOpts = append(rangeOpts, reporting.DateRangeOptions{
+			Since: startParam,
+			Until: endParam,
+		})
+	}
+
+	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
+	if format == "html" {
+		htmlContent, err := reporting.GenerateReportHTML(reportType, cfg, rangeOpts...)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(htmlContent))
+		return
+	}
+
 	tmpFile, err := os.CreateTemp("", "staypoint-report-*.pdf")
 	if err != nil {
 		http.Error(w, `{"error":"failed to create temp file"}`, http.StatusInternalServerError)
@@ -228,7 +253,7 @@ func (h *TelemetryHandler) GetReport(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
 	defer cancel()
 
-	if err := reporting.RenderReport(ctx, reportType, cfg, tmpPath); err != nil {
+	if err := reporting.RenderReport(ctx, reportType, cfg, tmpPath, rangeOpts...); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})

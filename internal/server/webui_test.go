@@ -101,3 +101,153 @@ func TestRegisterUIRoutes_SPARoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestRegisterUIRoutes_ProjectsViewElements(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterUIRoutes(mux, "test-tok")
+
+	// 1. Verify index.html contains projects multi-org controls and status filters
+	req := httptest.NewRequest("GET", "/projects", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /projects, got %d", w.Code)
+	}
+	body := w.Body.String()
+	requiredElements := []string{
+		`id="projects-org-multiselect"`,
+		`id="projects-org-multiselect-btn"`,
+		`id="projects-org-menu"`,
+		`id="projects-org-options"`,
+		`id="projects-status-filter"`,
+		`id="projects-grid"`,
+		`class="projects-container"`,
+	}
+	for _, el := range requiredElements {
+		if !strings.Contains(body, el) {
+			t.Errorf("/projects response missing expected element: %s", el)
+		}
+	}
+
+	// 2. Verify app.js contains multi-org and card status filtering logic
+	reqJS := httptest.NewRequest("GET", "/ui/app.js", nil)
+	wJS := httptest.NewRecorder()
+	mux.ServeHTTP(wJS, reqJS)
+	if wJS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /ui/app.js, got %d", wJS.Code)
+	}
+	jsBody := wJS.Body.String()
+	requiredJS := []string{
+		"populateProjectsOrgFilter",
+		"STORAGE_PROJECTS_ORGS_KEY",
+		"STORAGE_PROJECTS_STATUS_KEY",
+		"STORAGE_PROJECTS_CARD_STATUS_KEY",
+		"project-org-group",
+		"project-card-filter-pill",
+		"project-stat-clickable",
+	}
+	for _, symbol := range requiredJS {
+		if !strings.Contains(jsBody, symbol) {
+			t.Errorf("/ui/app.js missing expected symbol: %s", symbol)
+		}
+	}
+
+	// 3. Verify style.css contains styles for projects grouped headers and multi-select
+	reqCSS := httptest.NewRequest("GET", "/ui/style.css", nil)
+	wCSS := httptest.NewRecorder()
+	mux.ServeHTTP(wCSS, reqCSS)
+	if wCSS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /ui/style.css, got %d", wCSS.Code)
+	}
+	cssBody := wCSS.Body.String()
+	requiredCSS := []string{
+		".project-org-group",
+		".project-org-header",
+		".project-cards-subgrid",
+		".project-card-filter-pill",
+		".multiselect-dropdown",
+		".multiselect-menu",
+	}
+	for _, selector := range requiredCSS {
+		if !strings.Contains(cssBody, selector) {
+			t.Errorf("/ui/style.css missing expected CSS selector: %s", selector)
+		}
+	}
+}
+
+func TestRegisterUIRoutes_STA194_ClickableKPIsAndBossCarousel(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterUIRoutes(mux, "test-tok")
+
+	// 1. Verify index.html contains clickable KPI cards for Running, Active, Blocked, Done, Total, Agents, Spend
+	req := httptest.NewRequest("GET", "/overview", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /overview, got %d", w.Code)
+	}
+	body := w.Body.String()
+	requiredKPIs := []string{
+		`id="kpi-card-running"`,
+		`id="kpi-card-active"`,
+		`id="kpi-card-blocked"`,
+		`id="kpi-card-done"`,
+		`id="kpi-card-total"`,
+		`id="kpi-card-agents"`,
+		`id="kpi-card-cost"`,
+	}
+	for _, kpi := range requiredKPIs {
+		if !strings.Contains(body, kpi) {
+			t.Errorf("expected overview to contain KPI card %s", kpi)
+		}
+	}
+
+	// 2. Verify app.js contains drill-down navigation and Boss Card carousel logic
+	reqJS := httptest.NewRequest("GET", "/ui/app.js", nil)
+	wJS := httptest.NewRecorder()
+	mux.ServeHTTP(wJS, reqJS)
+	if wJS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /ui/app.js, got %d", wJS.Code)
+	}
+	jsBody := wJS.Body.String()
+	requiredJS := []string{
+		"drillDownToTasks",
+		"drillDownToAgents",
+		"drillDownToCost",
+		"buildBossReportCarousel",
+		"openBossReportModal",
+		"BOSS_REPORTS",
+		"boss-carousel-card",
+		"boss-preview-iframe",
+	}
+	for _, symbol := range requiredJS {
+		if !strings.Contains(jsBody, symbol) {
+			t.Errorf("expected app.js to contain %s", symbol)
+		}
+	}
+
+	// 3. Verify style.css contains styles for clickable cards and boss report preview carousel
+	reqCSS := httptest.NewRequest("GET", "/ui/style.css", nil)
+	wCSS := httptest.NewRecorder()
+	mux.ServeHTTP(wCSS, reqCSS)
+	if wCSS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /ui/style.css, got %d", wCSS.Code)
+	}
+	cssBody := wCSS.Body.String()
+	requiredCSS := []string{
+		".kpi-card.clickable",
+		".boss-carousel-card",
+		".boss-carousel-nav",
+		".boss-carousel-tabs",
+		".boss-preview-sheet",
+		".boss-preview-iframe",
+		".boss-modal-backdrop",
+	}
+	for _, selector := range requiredCSS {
+		if !strings.Contains(cssBody, selector) {
+			t.Errorf("expected style.css to contain %s", selector)
+		}
+	}
+}
+
+

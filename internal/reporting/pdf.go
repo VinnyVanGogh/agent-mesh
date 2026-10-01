@@ -49,14 +49,15 @@ func RenderExecutiveMemoPDF(ctx context.Context, data MemoData, outputPath strin
 	return RenderReport(ctx, "work", cfg, outputPath)
 }
 
-func RenderReport(ctx context.Context, reportType string, cfg *config.Config, outputPath string, rangeOpts ...DateRangeOptions) error {
+// GenerateReportHTML returns the rendered HTML report string for the given report type and options.
+func GenerateReportHTML(reportType string, cfg *config.Config, rangeOpts ...DateRangeOptions) (string, error) {
 	var opts DateRangeOptions
 	if len(rangeOpts) > 0 {
 		opts = rangeOpts[0]
 	}
 	workData, personalData, geminiData, combinedData, err := FetchTelemetryWithRange(cfg, opts)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	var htmlContent string
@@ -71,11 +72,20 @@ func RenderReport(ctx context.Context, reportType string, cfg *config.Config, ou
 	case "combined", "fleet":
 		htmlContent, err = generateCombinedHTML(combinedData)
 	default:
-		return fmt.Errorf("unknown report type: %s (supported: work, personal, gemini, combined)", reportType)
+		return "", fmt.Errorf("unknown report type: %s (supported: work, personal, gemini, combined)", reportType)
 	}
 
 	if err != nil {
-		return fmt.Errorf("failed to generate HTML template for %s: %w", reportType, err)
+		return "", fmt.Errorf("failed to generate HTML template for %s: %w", reportType, err)
+	}
+
+	return htmlContent, nil
+}
+
+func RenderReport(ctx context.Context, reportType string, cfg *config.Config, outputPath string, rangeOpts ...DateRangeOptions) error {
+	htmlContent, err := GenerateReportHTML(reportType, cfg, rangeOpts...)
+	if err != nil {
+		return err
 	}
 
 	return renderHTMLToPDF(ctx, htmlContent, outputPath)
