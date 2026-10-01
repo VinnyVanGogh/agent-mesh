@@ -25,6 +25,7 @@ type TaskItem struct {
 	Status         string    `json:"status"` // running, active, stopped, blocked, errored, done
 	ExecutionStage string    `json:"execution_stage,omitempty"`
 	Priority       string    `json:"priority,omitempty"`
+	ParentID       string    `json:"parent_id,omitempty"`
 	SpentUSD       float64   `json:"spent_usd"`
 	SpentTokens    int64     `json:"spent_tokens"`
 	IsBlocked      bool      `json:"is_blocked"`

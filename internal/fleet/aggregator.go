@@ -487,6 +487,7 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 							Title:        iss.Title,
 							Organization: c.Name,
 							Priority:     iss.Priority,
+							ParentID:     iss.ParentID,
 							UpdatedAt:    now,
 						}
 						switch iss.Status {
@@ -582,18 +583,18 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 		tRows, err := a.DB.Query(`
 			SELECT id, name, COALESCE(organization, ''), COALESCE(project, ''),
 			       status, execution_stage, is_blocked, COALESCE(block_reason, ''),
-			       spent_usd, spent_tokens, updated_at
+			       spent_usd, spent_tokens, updated_at, COALESCE(parent_id, '')
 			FROM tasks
 			WHERE status != 'soft_deleted';
 		`)
 		if err == nil {
 			defer tRows.Close()
 			for tRows.Next() {
-				var id, name, org, proj, st, stage, bReason, upAt string
+				var id, name, org, proj, st, stage, bReason, upAt, parentID string
 				var isBlockedInt int
 				var spentUSD float64
 				var spentTokens int64
-				if err := tRows.Scan(&id, &name, &org, &proj, &st, &stage, &isBlockedInt, &bReason, &spentUSD, &spentTokens, &upAt); err == nil {
+				if err := tRows.Scan(&id, &name, &org, &proj, &st, &stage, &isBlockedInt, &bReason, &spentUSD, &spentTokens, &upAt, &parentID); err == nil {
 					if org == "" {
 						org = "StayPoint"
 					}
@@ -657,6 +658,7 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 						Title:          name,
 						Organization:   org,
 						Project:        proj,
+						ParentID:       parentID,
 						Status:         taskStatus,
 						ExecutionStage: stage,
 						SpentUSD:       spentUSD,

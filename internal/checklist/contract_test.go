@@ -3,6 +3,7 @@ package checklist_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -286,5 +287,27 @@ func TestEvaluateSprint_DivergenceDowngradeAndAudit(t *testing.T) {
 	// Check broadcast event
 	if len(broadcastEvents) != 1 || broadcastEvents[0] != "checklist:divergence" {
 		t.Fatalf("expected checklist:divergence broadcast, got %v", broadcastEvents)
+	}
+}
+
+func TestRecentTasksContracts(t *testing.T) {
+	ctx := context.Background()
+	items := checklist.DefaultChecklist("STA-168")
+	var testedCount int
+	for _, it := range items {
+		if it.Section == "Recent Tasks Page" && it.Contract != "" {
+			var c checklist.Contract
+			if err := json.Unmarshal([]byte(it.Contract), &c); err != nil {
+				t.Fatalf("failed to unmarshal contract for %s: %v", it.Title, err)
+			}
+			res := checklist.EvaluateContract(ctx, c, "../..", nil, "")
+			if !res.Passed {
+				t.Fatalf("contract for %q failed: %s", it.Title, res.Reason)
+			}
+			testedCount++
+		}
+	}
+	if testedCount < 2 {
+		t.Fatalf("expected at least 2 Recent Tasks contracts, tested %d", testedCount)
 	}
 }

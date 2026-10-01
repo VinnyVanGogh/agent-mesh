@@ -99,6 +99,10 @@ func DefaultChecklist(sprint string) []Item {
 		{"Recent Tasks Page", "Feed sorted by updated_at descending", "", "", ""},
 		{"Recent Tasks Page", "Dots colored by status (cyan/red/green)", "", "", ""},
 		{"Recent Tasks Page", "Clicking task title opens detail panel", "", "", ""},
+		{"Recent Tasks Page", "Project, Organization, and Priority dropdown filters work", "", "",
+			`{"type":"file_pattern","file_path":"internal/server/webui/index.html","must_contain":["recent-tasks-project-filter","recent-tasks-org-filter","recent-tasks-priority-filter"]}`},
+		{"Recent Tasks Page", "Subtask tree expansion displays child issues nested under parent tasks", "", "",
+			`{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["activity-subtasks-tree","activity-subtask-toggle","renderSubtaskTree"]}`},
 
 		// Task Status
 		{"Task Status Page", "Sidebar → Task Status shows 9-column table", "", "", ""},

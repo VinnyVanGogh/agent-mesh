@@ -34,6 +34,7 @@ type IssueResponse struct {
 	Priority    string   `json:"priority"`
 	CompanyID   string   `json:"companyId"`
 	ProjectID   string   `json:"projectId"`
+	ParentID    string   `json:"parentId,omitempty"`
 	IssueNumber int      `json:"issueNumber"`
 	Labels      []string `json:"labels"`
 	CreatedAt   string   `json:"createdAt"`

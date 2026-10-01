@@ -299,8 +299,26 @@
     <!-- Recent Tasks view -->
     <section id="view-recent-tasks" class="view">
       <div class="view-header">
-        <h1 class="view-title">Recent Tasks</h1>
-        <span class="refresh-indicator">Activity feed — all agents</span>
+        <div class="view-title-group">
+          <h1 class="view-title">Recent Tasks</h1>
+          <span class="refresh-indicator">Activity feed — all agents</span>
+        </div>
+        <div class="table-controls">
+          <select id="recent-tasks-project-filter" class="select-filter">
+            <option value="all">All Projects</option>
+          </select>
+          <select id="recent-tasks-org-filter" class="select-filter">
+            <option value="all">All Organizations</option>
+          </select>
+          <select id="recent-tasks-priority-filter" class="select-filter">
+            <option value="all">All Priorities</option>
+            <option value="critical">Critical</option>
+            <option value="urgent">Urgent</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
       </div>
       <div class="dashboard-section">
         <div id="recent-tasks-feed" class="activity-feed"></div>

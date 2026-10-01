@@ -15,6 +15,12 @@ const state = {
   },
   tsFilter: { search: '', org: 'all', status: 'all' },
   agentsFilter: { search: '', org: 'all', project: 'all', provider: 'all', status: 'all' },
+  recentTasksFilter: {
+    project: 'all',
+    org: 'all',
+    priority: 'all',
+  },
+  expandedRecentSubtasks: new Set(),
   currentOrgDetail: null,
   openDetailTaskId: null,
   chatPollTimer:    null,
@@ -192,6 +198,7 @@ async function loadAll() {
     populateOrgFilter();
     populateTSOrgFilter();
     populateAgentsFilters();
+    populateRecentTasksFilters();
     renderAll();
     renderSidebarOrgTree();
   } catch (err) {
@@ -260,6 +267,7 @@ async function refreshFleetData() {
       populateOrgFilter();
       populateTSOrgFilter();
       populateAgentsFilters();
+      populateRecentTasksFilters();
       renderOverview();
       renderSidebarOrgTree();
     }
@@ -359,7 +367,7 @@ function navigateTo(viewName, orgName = null, pushHistory = true) {
   } else {
     if (viewName === 'projects')     renderProjects();
     if (viewName === 'agents')       { populateAgentsFilters(); renderAgentsPage(); }
-    if (viewName === 'recent-tasks') renderRecentTasks();
+    if (viewName === 'recent-tasks') { populateRecentTasksFilters(); renderRecentTasks(); }
     if (viewName === 'task-status')  renderTaskStatusPage();
     if (viewName === 'cost')         renderCostPage();
     if (viewName === 'settings')     renderSettings();
@@ -1473,30 +1481,265 @@ function getAgentQuota(providerQuotas, provider) {
 }
 
 // ── Recent Tasks View ─────────────────────────────────────
+function populateRecentTasksOrgFilter() {
+  const sel = document.getElementById('recent-tasks-org-filter');
+  if (!sel) return;
+
+  const current = state.recentTasksFilter.org || 'all';
+  const orgNames = new Set();
+  for (const org of (state.fleet?.organizations || [])) {
+    if (org.name) orgNames.add(org.name);
+  }
+  for (const t of Object.values(state.tasks)) {
+    if (t.organization) orgNames.add(t.organization);
+  }
+  for (const t of (state.fleet?.tasks || [])) {
+    if (t.organization) orgNames.add(t.organization);
+  }
+  for (const s of Object.values(state.sessions)) {
+    orgNames.add(s.org || 'StayPoint');
+  }
+
+  sel.innerHTML = '<option value="all">All Organizations</option>';
+  for (const org of Array.from(orgNames).sort()) {
+    const opt = document.createElement('option');
+    opt.value = org;
+    opt.textContent = org;
+    sel.appendChild(opt);
+  }
+
+  if (orgNames.has(current) || current === 'all') {
+    sel.value = current;
+    state.recentTasksFilter.org = current;
+  } else {
+    sel.value = 'all';
+    state.recentTasksFilter.org = 'all';
+  }
+}
+
+function populateRecentTasksProjectFilter() {
+  const sel = document.getElementById('recent-tasks-project-filter');
+  if (!sel) return;
+
+  const currentOrg = state.recentTasksFilter.org || 'all';
+  const currentProj = state.recentTasksFilter.project || 'all';
+  const projects = getProjectsForOrg(currentOrg);
+
+  sel.innerHTML = '<option value="all">All Projects</option>';
+  for (const p of projects) {
+    const opt = document.createElement('option');
+    opt.value = p;
+    opt.textContent = p;
+    sel.appendChild(opt);
+  }
+
+  if (projects.includes(currentProj) || currentProj === 'all') {
+    sel.value = currentProj;
+    state.recentTasksFilter.project = currentProj;
+  } else {
+    sel.value = 'all';
+    state.recentTasksFilter.project = 'all';
+  }
+}
+
+function populateRecentTasksPriorityFilter() {
+  const sel = document.getElementById('recent-tasks-priority-filter');
+  if (!sel) return;
+  sel.value = state.recentTasksFilter.priority || 'all';
+}
+
+function populateRecentTasksFilters() {
+  populateRecentTasksOrgFilter();
+  populateRecentTasksProjectFilter();
+  populateRecentTasksPriorityFilter();
+}
+
+function taskMatchesRecentFilter(t, orgFilter, projFilter, priFilter) {
+  if (orgFilter !== 'all') {
+    const tOrg = (t.organization || '').trim();
+    if (tOrg.toLowerCase() !== orgFilter.toLowerCase()) return false;
+  }
+  if (projFilter !== 'all') {
+    const tProj = (t.project || '').trim();
+    if (tProj.toLowerCase() !== projFilter.toLowerCase()) return false;
+  }
+  if (priFilter !== 'all') {
+    const tPri = (t.priority || '').trim();
+    if (tPri.toLowerCase() !== priFilter.toLowerCase()) return false;
+  }
+  return true;
+}
+
+function renderSubtaskTree(parentID, childrenMap, level = 0) {
+  const children = childrenMap.get(parentID) || [];
+  if (!children.length) return null;
+
+  const tree = el('div', 'activity-subtasks-tree');
+  tree.setAttribute('role', 'group');
+  tree.setAttribute('aria-label', 'Subtasks');
+
+  children.forEach((child, index) => {
+    const isLast = index === children.length - 1;
+    const row = el('div', 'activity-subtask-row');
+    row.dataset.taskId = child.id;
+
+    // Branch connector symbol
+    const branch = el('span', 'activity-subtask-branch', isLast ? '└── ' : '├── ');
+    row.appendChild(branch);
+
+    // Subtask status dot
+    const dot = el('span', 'activity-subtask-dot');
+    const st = (child.status || '').toLowerCase();
+    dot.style.background =
+      (st === 'running' || st === 'in_progress') ? 'var(--cyan)' :
+      st === 'blocked' ? 'var(--red)' :
+      (st === 'done' || st === 'completed') ? 'var(--green)' : 'var(--muted)';
+    row.appendChild(dot);
+
+    // Subtask body
+    const body = el('div', 'activity-subtask-body');
+    const titleRow = el('div', 'activity-subtask-title-row');
+
+    const titleEl = el('span', 'activity-subtask-title', child.title || child.name || '(untitled child task)');
+    titleEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openDetail(child.id);
+    });
+    titleRow.appendChild(titleEl);
+
+    // Subtask status pill
+    titleRow.appendChild(statusPill(child.status));
+
+    // Check if child itself has nested subtasks
+    const subChildren = childrenMap.get(child.id) || [];
+    if (subChildren.length > 0) {
+      const isExpanded = state.expandedRecentSubtasks.has(child.id);
+      const childToggle = el('button', 'activity-subtask-toggle', isExpanded ? `▼ ${subChildren.length}` : `▶ ${subChildren.length}`);
+      childToggle.type = 'button';
+      childToggle.title = isExpanded ? 'Collapse subtasks' : 'Expand subtasks';
+      childToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (state.expandedRecentSubtasks.has(child.id)) {
+          state.expandedRecentSubtasks.delete(child.id);
+        } else {
+          state.expandedRecentSubtasks.add(child.id);
+        }
+        renderRecentTasks();
+      });
+      titleRow.appendChild(childToggle);
+    }
+
+    body.appendChild(titleRow);
+
+    const metaParts = [
+      child.identifier || (child.id ? `#${child.id.slice(0, 8)}` : ''),
+      child.organization,
+      child.project,
+      child.assignee_name || child.assignee_role,
+      child.priority ? `Priority: ${child.priority}` : '',
+      child.updated_at ? fmtRelTime(child.updated_at) : '',
+    ].filter(Boolean);
+    body.appendChild(el('div', 'activity-subtask-meta', metaParts.join(' · ')));
+
+    // Recursive rendering if expanded
+    if (subChildren.length > 0 && state.expandedRecentSubtasks.has(child.id)) {
+      const nestedTree = renderSubtaskTree(child.id, childrenMap, level + 1);
+      if (nestedTree) body.appendChild(nestedTree);
+    }
+
+    row.appendChild(body);
+    tree.appendChild(row);
+  });
+
+  return tree;
+}
+
 function renderRecentTasks() {
   const feed = document.getElementById('recent-tasks-feed');
   if (!feed) return;
   feed.innerHTML = '';
 
+  const orgSel = document.getElementById('recent-tasks-org-filter');
+  if (orgSel && orgSel.options.length <= 1) {
+    populateRecentTasksFilters();
+  }
+
   const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
   const seenIds = new Set();
   const dedupTasks = [];
   for (const t of allTasks) {
-    if (!seenIds.has(t.id)) { seenIds.add(t.id); dedupTasks.push(t); }
+    if (t.id && !seenIds.has(t.id)) {
+      seenIds.add(t.id);
+      dedupTasks.push(t);
+    }
   }
 
-  const sorted = dedupTasks
-    .filter(t => t.updated_at)
-    .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+  // Build parent -> children map and id -> task map
+  const taskById = new Map();
+  const childrenMap = new Map();
+  for (const t of dedupTasks) {
+    taskById.set(t.id, t);
+    const pid = t.parent_id || t.parentId;
+    if (pid) {
+      if (!childrenMap.has(pid)) {
+        childrenMap.set(pid, []);
+      }
+      childrenMap.get(pid).push(t);
+    }
+  }
+
+  // Active filters
+  const orgFilter = state.recentTasksFilter.org || 'all';
+  const projFilter = state.recentTasksFilter.project || 'all';
+  const priFilter = state.recentTasksFilter.priority || 'all';
+
+  function matchesFilter(t) {
+    return taskMatchesRecentFilter(t, orgFilter, projFilter, priFilter);
+  }
+
+  function matchesOrHasMatchingDescendant(t) {
+    if (matchesFilter(t)) return true;
+    const kids = childrenMap.get(t.id) || [];
+    for (const kid of kids) {
+      if (matchesOrHasMatchingDescendant(kid)) return true;
+    }
+    return false;
+  }
+
+  // Top-level tasks are root tasks (tasks without a parent in taskById)
+  const topLevelTasks = dedupTasks.filter(t => {
+    const pid = t.parent_id || t.parentId;
+    return !pid || !taskById.has(pid);
+  });
+
+  // Filter top-level tasks
+  const filteredTasks = topLevelTasks.filter(t => matchesOrHasMatchingDescendant(t));
+
+  // Sort by latest activity (maximum of own updated_at and all descendants' updated_at)
+  function getEffectiveTime(t) {
+    let maxTime = t.updated_at ? new Date(t.updated_at).getTime() : 0;
+    const kids = childrenMap.get(t.id) || [];
+    for (const k of kids) {
+      if (k.updated_at) {
+        const kt = new Date(k.updated_at).getTime();
+        if (kt > maxTime) maxTime = kt;
+      }
+    }
+    return maxTime;
+  }
+
+  const sorted = filteredTasks
+    .sort((a, b) => getEffectiveTime(b) - getEffectiveTime(a))
     .slice(0, 50);
 
   if (!sorted.length) {
-    feed.appendChild(el('p', 'muted-text', 'No recent task activity.'));
+    feed.appendChild(el('p', 'muted-text', 'No task activity matching selected filters.'));
     return;
   }
 
   sorted.forEach((t, i) => {
     const item = el('div', 'activity-item');
+    item.dataset.taskId = t.id;
 
     const dotCol = el('div', 'activity-dot-col');
     const dot = el('span', 'activity-dot');
@@ -1504,30 +1747,64 @@ function renderRecentTasks() {
     dot.style.background =
       (st === 'running' || st === 'in_progress') ? 'var(--cyan)' :
       st === 'blocked' ? 'var(--red)' :
-      st === 'done'    ? 'var(--green)' : 'var(--muted)';
+      (st === 'done' || st === 'completed') ? 'var(--green)' : 'var(--muted)';
     dotCol.appendChild(dot);
     if (i < sorted.length - 1) dotCol.appendChild(el('span', 'activity-line'));
     item.appendChild(dotCol);
 
     const body = el('div', 'activity-body');
+    const titleRow = el('div', 'activity-title-row');
+
     const titleEl = el('div', 'activity-title', t.title || t.name || '(untitled)');
     titleEl.style.cursor = 'pointer';
     titleEl.addEventListener('click', () => openDetail(t.id));
-    body.appendChild(titleEl);
+    titleRow.appendChild(titleEl);
+
+    // Expandable subtask toggle & child count badge
+    const children = childrenMap.get(t.id) || [];
+    if (children.length > 0) {
+      const isExpanded = state.expandedRecentSubtasks.has(t.id);
+      const countLabel = children.length === 1 ? '1 subtask' : `${children.length} subtasks`;
+      const toggle = el('button', 'activity-subtask-toggle', isExpanded ? `▼ ${countLabel}` : `▶ ${countLabel}`);
+      toggle.type = 'button';
+      toggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+      toggle.title = isExpanded ? 'Collapse subtasks' : 'Expand subtasks';
+      toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (state.expandedRecentSubtasks.has(t.id)) {
+          state.expandedRecentSubtasks.delete(t.id);
+        } else {
+          state.expandedRecentSubtasks.add(t.id);
+        }
+        renderRecentTasks();
+      });
+      titleRow.appendChild(toggle);
+    }
+
+    body.appendChild(titleRow);
 
     const metaParts = [
       t.identifier || (t.id ? `#${t.id.slice(0, 8)}` : ''),
       t.organization,
-      t.priority,
-      fmtRelTime(t.updated_at),
+      t.project,
+      t.assignee_name || t.assignee_role,
+      t.priority ? `Priority: ${t.priority}` : '',
+      t.updated_at ? fmtRelTime(t.updated_at) : '',
     ].filter(Boolean);
     body.appendChild(el('div', 'activity-meta', metaParts.join(' · ')));
+
+    // Subtask Tree Hierarchy
+    if (children.length > 0 && state.expandedRecentSubtasks.has(t.id)) {
+      const subTree = renderSubtaskTree(t.id, childrenMap, 0);
+      if (subTree) body.appendChild(subTree);
+    }
 
     item.appendChild(body);
     item.appendChild(statusPill(t.status));
     feed.appendChild(item);
   });
 }
+
 
 // ── Task Status Dedicated Page ────────────────────────────
 function renderTaskStatusPage() {
@@ -3517,9 +3794,19 @@ document.getElementById('agents-provider-filter')?.addEventListener('change', (e
   state.agentsFilter.provider = e.target.value;
   renderAgentsPage();
 });
-document.getElementById('agents-org-filter')?.addEventListener('change', (e) => {
-  state.agentsFilter.org = e.target.value;
-  renderAgentsPage();
+// ── Filter listeners (recent tasks page) ───────────────────
+document.getElementById('recent-tasks-org-filter')?.addEventListener('change', (e) => {
+  state.recentTasksFilter.org = e.target.value;
+  populateRecentTasksProjectFilter();
+  renderRecentTasks();
+});
+document.getElementById('recent-tasks-project-filter')?.addEventListener('change', (e) => {
+  state.recentTasksFilter.project = e.target.value;
+  renderRecentTasks();
+});
+document.getElementById('recent-tasks-priority-filter')?.addEventListener('change', (e) => {
+  state.recentTasksFilter.priority = e.target.value;
+  renderRecentTasks();
 });
 document.querySelectorAll('.agent-filter-pill').forEach(btn => {
   btn.addEventListener('click', () => {
