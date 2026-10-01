@@ -442,3 +442,81 @@ func TestRegisterUIRoutes_TableSortingAndSearchElements(t *testing.T) {
 		}
 	}
 }
+
+func TestRegisterUIRoutes_RecentTasksSubtaskTreeAndFilterOrder(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterUIRoutes(mux, "test-tok")
+
+	// 1. Verify HTML: Recent Tasks dropdown filters order is Organization, Project, Priority
+	req := httptest.NewRequest("GET", "/recent-tasks", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /recent-tasks, got %d", w.Code)
+	}
+	body := w.Body.String()
+
+	orgIdx := strings.Index(body, `id="recent-tasks-org-filter"`)
+	projIdx := strings.Index(body, `id="recent-tasks-project-filter"`)
+	priIdx := strings.Index(body, `id="recent-tasks-priority-filter"`)
+
+	if orgIdx == -1 {
+		t.Error("missing id=\"recent-tasks-org-filter\" in HTML")
+	}
+	if projIdx == -1 {
+		t.Error("missing id=\"recent-tasks-project-filter\" in HTML")
+	}
+	if priIdx == -1 {
+		t.Error("missing id=\"recent-tasks-priority-filter\" in HTML")
+	}
+
+	if !(orgIdx < projIdx && projIdx < priIdx) {
+		t.Errorf("expected dropdown order Organization < Project < Priority, got indices: org=%d, proj=%d, pri=%d",
+			orgIdx, projIdx, priIdx)
+	}
+
+	// 2. Verify style.css includes subtask tree and connector styling
+	reqCSS := httptest.NewRequest("GET", "/ui/style.css", nil)
+	wCSS := httptest.NewRecorder()
+	mux.ServeHTTP(wCSS, reqCSS)
+	css := wCSS.Body.String()
+
+	for _, selector := range []string{
+		".activity-subtasks-tree",
+		".activity-subtask-row",
+		".activity-subtask-branch",
+		".activity-subtask-dot",
+		".activity-subtask-toggle",
+		".activity-subtask-title",
+		".activity-subtask-meta",
+	} {
+		if !strings.Contains(css, selector) {
+			t.Errorf("style.css missing expected class %q", selector)
+		}
+	}
+
+	// 3. Verify app.js includes subtask tree hierarchy, connectors, toggle, and row navigation
+	reqJS := httptest.NewRequest("GET", "/ui/app.js", nil)
+	wJS := httptest.NewRecorder()
+	mux.ServeHTTP(wJS, reqJS)
+	js := wJS.Body.String()
+
+	for _, expected := range []string{
+		"renderSubtaskTree",
+		"renderRecentTasks",
+		"activity-subtasks-tree",
+		"activity-subtask-branch",
+		"activity-subtask-dot",
+		"activity-subtask-toggle",
+		"├──",
+		"└──",
+		"[+]",
+		"[-]",
+		"openDetail",
+	} {
+		if !strings.Contains(js, expected) {
+			t.Errorf("app.js missing expected symbol/pattern %q", expected)
+		}
+	}
+}
+

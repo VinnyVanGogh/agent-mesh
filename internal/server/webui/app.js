@@ -2322,6 +2322,9 @@ function populateRecentTasksOrgFilter() {
   for (const t of (state.fleet?.tasks || [])) {
     if (t.organization) orgNames.add(t.organization);
   }
+  for (const s of Object.values(state.sessions)) {
+    orgNames.add(s.org || 'StayPoint');
+  }
 
   sel.innerHTML = '<option value="all">All Organizations</option>';
   for (const org of Array.from(orgNames).sort()) {
@@ -2408,12 +2411,12 @@ function populateRecentTasksFilters() {
 function taskMatchesRecentFilter(t, orgFilter, projFilter, priFilter) {
   if (!t) return false;
   if (orgFilter !== 'all') {
-    const org = t.organization || 'StayPoint';
-    if (org !== orgFilter) return false;
+    const org = (t.organization || 'StayPoint').trim();
+    if (org.toLowerCase() !== orgFilter.toLowerCase()) return false;
   }
   if (projFilter !== 'all') {
-    const prj = t.project || '(No Project)';
-    if (prj !== projFilter) return false;
+    const prj = (t.project || '(No Project)').trim();
+    if (prj.toLowerCase() !== projFilter.toLowerCase()) return false;
   }
   if (priFilter !== 'all') {
     const pri = (t.priority || 'medium').toLowerCase().trim();
@@ -2422,9 +2425,28 @@ function taskMatchesRecentFilter(t, orgFilter, projFilter, priFilter) {
   return true;
 }
 
-function renderSubtaskTree(parentId, childrenMap, taskMap, visited, orgFilter, projFilter, priFilter, isFilterActive) {
-  const tree = el('div', 'activity-subtasks-tree');
-  const allKids = childrenMap.get(parentId) || [];
+function renderSubtaskTree(parentID, childrenMap, taskMap, visited = new Set(), level = 0) {
+  const rawChildren = [
+    ...(childrenMap.get(parentID) || []),
+    ...((taskMap.get(parentID)?.identifier && childrenMap.get(taskMap.get(parentID).identifier)) || [])
+  ];
+  if (!rawChildren.length) return null;
+
+  // Deduplicate children by ID
+  const seenKidIds = new Set();
+  const children = [];
+  for (const c of rawChildren) {
+    if (c.id && !seenKidIds.has(c.id)) {
+      seenKidIds.add(c.id);
+      children.push(c);
+    }
+  }
+  if (!children.length) return null;
+
+  const orgFilter = state.recentTasksFilter.org || 'all';
+  const projFilter = state.recentTasksFilter.project || 'all';
+  const priFilter = state.recentTasksFilter.priority || 'all';
+  const isFilterActive = orgFilter !== 'all' || projFilter !== 'all' || priFilter !== 'all';
 
   function nodeOrDescendantMatches(taskId, seen = new Set()) {
     if (seen.has(taskId)) return false;
@@ -2439,200 +2461,47 @@ function renderSubtaskTree(parentId, childrenMap, taskMap, visited, orgFilter, p
   }
 
   const visibleKids = isFilterActive
-    ? allKids.filter(k => nodeOrDescendantMatches(k.id))
-    : allKids;
+    ? children.filter(k => nodeOrDescendantMatches(k.id))
+    : children;
 
   visibleKids.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
-
-  visibleKids.forEach((k, idx) => {
-    if (visited.has(k.id)) return; // cycle protection
-    const isLast = idx === visibleKids.length - 1;
-    const row = el('div', 'activity-subtask-row');
-
-    const branch = el('span', 'activity-subtask-branch', isLast ? '└──' : '├──');
-    row.appendChild(branch);
-
-    const kDot = el('span', 'activity-subtask-dot');
-    const kSt = (k.status || '').toLowerCase();
-    kDot.style.background =
-      (kSt === 'running' || kSt === 'in_progress') ? 'var(--cyan)' :
-      kSt === 'blocked' ? 'var(--red)' :
-      kSt === 'done'    ? 'var(--green)' : 'var(--muted)';
-    row.appendChild(kDot);
-
-    const kBody = el('div', 'activity-subtask-body');
-    const kTitleRow = el('div', 'activity-subtask-title-row');
-    const kTitle = el('span', 'activity-subtask-title', k.title || k.name || '(untitled)');
-    kTitle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openDetail(k.id);
-    });
-    kTitleRow.appendChild(kTitle);
-
-    const grandKids = isFilterActive
-      ? (childrenMap.get(k.id) || []).filter(gk => nodeOrDescendantMatches(gk.id))
-      : (childrenMap.get(k.id) || []);
-
-    if (grandKids.length > 0) {
-      const isChildExpanded = state.expandedRecentSubtasks.has(k.id) || (isFilterActive && !taskMatchesRecentFilter(k, orgFilter, projFilter, priFilter));
-      const subToggle = el('button', 'activity-subtask-toggle');
-      subToggle.innerHTML = `${isChildExpanded ? '▼' : '▶'} ${grandKids.length} subtask${grandKids.length === 1 ? '' : 's'}`;
-      subToggle.title = isChildExpanded ? 'Collapse subtasks' : 'Expand subtasks';
-      subToggle.setAttribute('aria-expanded', isChildExpanded ? 'true' : 'false');
-      subToggle.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (state.expandedRecentSubtasks.has(k.id)) {
-          state.expandedRecentSubtasks.delete(k.id);
-        } else {
-          state.expandedRecentSubtasks.add(k.id);
-        }
-        renderRecentTasks();
-      });
-      kTitleRow.appendChild(subToggle);
-    }
-    kBody.appendChild(kTitleRow);
-
-    const kMetaParts = [
-      k.identifier || (k.id ? `#${k.id.slice(0, 8)}` : ''),
-      k.project,
-      k.organization,
-      k.priority,
-      fmtRelTime(k.updated_at),
-    ].filter(Boolean);
-    kBody.appendChild(el('div', 'activity-subtask-meta', kMetaParts.join(' · ')));
-
-    if (grandKids.length > 0) {
-      const isChildExpanded = state.expandedRecentSubtasks.has(k.id) || (isFilterActive && !taskMatchesRecentFilter(k, orgFilter, projFilter, priFilter));
-      if (isChildExpanded) {
-        const nextVisited = new Set(visited);
-        nextVisited.add(k.id);
-        const subTree = renderSubtaskTree(k.id, childrenMap, taskMap, nextVisited, orgFilter, projFilter, priFilter, isFilterActive);
-        kBody.appendChild(subTree);
-      }
-    }
-
-    row.appendChild(kBody);
-    row.appendChild(statusPill(k.status));
-    tree.appendChild(row);
-  });
-
-  return tree;
-}
-
-// ── Recent Tasks View ─────────────────────────────────────
-function populateRecentTasksOrgFilter() {
-  const sel = document.getElementById('recent-tasks-org-filter');
-  if (!sel) return;
-
-  const current = state.recentTasksFilter.org || 'all';
-  const orgNames = new Set();
-  for (const org of (state.fleet?.organizations || [])) {
-    if (org.name) orgNames.add(org.name);
-  }
-  for (const t of Object.values(state.tasks)) {
-    if (t.organization) orgNames.add(t.organization);
-  }
-  for (const t of (state.fleet?.tasks || [])) {
-    if (t.organization) orgNames.add(t.organization);
-  }
-  for (const s of Object.values(state.sessions)) {
-    orgNames.add(s.org || 'StayPoint');
-  }
-
-  sel.innerHTML = '<option value="all">All Organizations</option>';
-  for (const org of Array.from(orgNames).sort()) {
-    const opt = document.createElement('option');
-    opt.value = org;
-    opt.textContent = org;
-    sel.appendChild(opt);
-  }
-
-  if (orgNames.has(current) || current === 'all') {
-    sel.value = current;
-    state.recentTasksFilter.org = current;
-  } else {
-    sel.value = 'all';
-    state.recentTasksFilter.org = 'all';
-  }
-}
-
-function populateRecentTasksProjectFilter() {
-  const sel = document.getElementById('recent-tasks-project-filter');
-  if (!sel) return;
-
-  const currentOrg = state.recentTasksFilter.org || 'all';
-  const currentProj = state.recentTasksFilter.project || 'all';
-  const projects = getProjectsForOrg(currentOrg);
-
-  sel.innerHTML = '<option value="all">All Projects</option>';
-  for (const p of projects) {
-    const opt = document.createElement('option');
-    opt.value = p;
-    opt.textContent = p;
-    sel.appendChild(opt);
-  }
-
-  if (projects.includes(currentProj) || currentProj === 'all') {
-    sel.value = currentProj;
-    state.recentTasksFilter.project = currentProj;
-  } else {
-    sel.value = 'all';
-    state.recentTasksFilter.project = 'all';
-  }
-}
-
-function populateRecentTasksPriorityFilter() {
-  const sel = document.getElementById('recent-tasks-priority-filter');
-  if (!sel) return;
-  sel.value = state.recentTasksFilter.priority || 'all';
-}
-
-function populateRecentTasksFilters() {
-  populateRecentTasksOrgFilter();
-  populateRecentTasksProjectFilter();
-  populateRecentTasksPriorityFilter();
-}
-
-function taskMatchesRecentFilter(t, orgFilter, projFilter, priFilter) {
-  if (orgFilter !== 'all') {
-    const tOrg = (t.organization || '').trim();
-    if (tOrg.toLowerCase() !== orgFilter.toLowerCase()) return false;
-  }
-  if (projFilter !== 'all') {
-    const tProj = (t.project || '').trim();
-    if (tProj.toLowerCase() !== projFilter.toLowerCase()) return false;
-  }
-  if (priFilter !== 'all') {
-    const tPri = (t.priority || '').trim();
-    if (tPri.toLowerCase() !== priFilter.toLowerCase()) return false;
-  }
-  return true;
-}
-
-function renderSubtaskTree(parentID, childrenMap, level = 0) {
-  const children = childrenMap.get(parentID) || [];
-  if (!children.length) return null;
 
   const tree = el('div', 'activity-subtasks-tree');
   tree.setAttribute('role', 'group');
   tree.setAttribute('aria-label', 'Subtasks');
 
-  children.forEach((child, index) => {
-    const isLast = index === children.length - 1;
+  visibleKids.forEach((child, index) => {
+    if (visited.has(child.id)) return; // cycle protection
+    const isLast = index === visibleKids.length - 1;
     const row = el('div', 'activity-subtask-row');
     row.dataset.taskId = child.id;
+    row.style.cursor = 'pointer';
+    row.setAttribute('tabindex', '0');
+    row.setAttribute('role', 'button');
+    row.setAttribute('aria-label', `View details for subtask ${child.title || child.name || child.id}`);
 
-    // Branch connector symbol
-    const branch = el('span', 'activity-subtask-branch', isLast ? '└── ' : '├── ');
+    // Subtask Navigation: Clicking any subtask row opens its detail panel
+    row.addEventListener('click', (e) => {
+      openDetail(child.id);
+    });
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openDetail(child.id);
+      }
+    });
+
+    // Branch connector glyph (├── or └──)
+    const branch = el('span', 'activity-subtask-branch', isLast ? '└──' : '├──');
     row.appendChild(branch);
 
-    // Subtask status dot
+    // Subtask status indicator dot
     const dot = el('span', 'activity-subtask-dot');
     const st = (child.status || '').toLowerCase();
     dot.style.background =
       (st === 'running' || st === 'in_progress') ? 'var(--cyan)' :
-      st === 'blocked' ? 'var(--red)' :
-      (st === 'done' || st === 'completed') ? 'var(--green)' : 'var(--muted)';
+      (st === 'blocked' || st === 'errored' || st === 'failed') ? 'var(--red)' :
+      (st === 'done' || st === 'completed' || st === 'closed') ? 'var(--green)' : 'var(--muted)';
     row.appendChild(dot);
 
     // Subtask body
@@ -2640,28 +2509,35 @@ function renderSubtaskTree(parentID, childrenMap, level = 0) {
     const titleRow = el('div', 'activity-subtask-title-row');
 
     const titleEl = el('span', 'activity-subtask-title', child.title || child.name || '(untitled child task)');
-    titleEl.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openDetail(child.id);
-    });
     titleRow.appendChild(titleEl);
 
-    // Subtask status pill
-    titleRow.appendChild(statusPill(child.status));
-
     // Check if child itself has nested subtasks
-    const subChildren = childrenMap.get(child.id) || [];
-    if (subChildren.length > 0) {
-      const isExpanded = state.expandedRecentSubtasks.has(child.id);
-      const childToggle = el('button', 'activity-subtask-toggle', isExpanded ? `▼ ${subChildren.length}` : `▶ ${subChildren.length}`);
+    const grandKids = [
+      ...(childrenMap.get(child.id) || []),
+      ...((child.identifier && childrenMap.get(child.identifier)) || [])
+    ].filter(gk => gk.id !== child.id);
+    const visibleGrandKids = isFilterActive
+      ? grandKids.filter(gk => nodeOrDescendantMatches(gk.id))
+      : grandKids;
+
+    if (visibleGrandKids.length > 0) {
+      const isChildExpanded = state.expandedRecentSubtasks.has(child.id) ||
+        (child.identifier && state.expandedRecentSubtasks.has(child.identifier)) ||
+        (isFilterActive && !taskMatchesRecentFilter(child, orgFilter, projFilter, priFilter));
+      const subCountLabel = visibleGrandKids.length === 1 ? '1 subtask' : `${visibleGrandKids.length} subtasks`;
+      const childToggle = el('button', 'activity-subtask-toggle', `${isChildExpanded ? '[-]' : '[+]'} ${subCountLabel}`);
       childToggle.type = 'button';
-      childToggle.title = isExpanded ? 'Collapse subtasks' : 'Expand subtasks';
+      childToggle.setAttribute('aria-expanded', isChildExpanded ? 'true' : 'false');
+      childToggle.title = isChildExpanded ? 'Collapse subtasks' : 'Expand subtasks';
       childToggle.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (state.expandedRecentSubtasks.has(child.id)) {
-          state.expandedRecentSubtasks.delete(child.id);
+        const cid = child.id;
+        if (state.expandedRecentSubtasks.has(cid)) {
+          state.expandedRecentSubtasks.delete(cid);
+          if (child.identifier) state.expandedRecentSubtasks.delete(child.identifier);
         } else {
-          state.expandedRecentSubtasks.add(child.id);
+          state.expandedRecentSubtasks.add(cid);
+          if (child.identifier) state.expandedRecentSubtasks.add(child.identifier);
         }
         renderRecentTasks();
       });
@@ -2681,12 +2557,21 @@ function renderSubtaskTree(parentID, childrenMap, level = 0) {
     body.appendChild(el('div', 'activity-subtask-meta', metaParts.join(' · ')));
 
     // Recursive rendering if expanded
-    if (subChildren.length > 0 && state.expandedRecentSubtasks.has(child.id)) {
-      const nestedTree = renderSubtaskTree(child.id, childrenMap, level + 1);
-      if (nestedTree) body.appendChild(nestedTree);
+    if (visibleGrandKids.length > 0) {
+      const isChildExpanded = state.expandedRecentSubtasks.has(child.id) ||
+        (child.identifier && state.expandedRecentSubtasks.has(child.identifier)) ||
+        (isFilterActive && !taskMatchesRecentFilter(child, orgFilter, projFilter, priFilter));
+      if (isChildExpanded) {
+        const nextVisited = new Set(visited);
+        nextVisited.add(child.id);
+        if (child.identifier) nextVisited.add(child.identifier);
+        const nestedTree = renderSubtaskTree(child.id, childrenMap, taskMap, nextVisited, level + 1);
+        if (nestedTree) body.appendChild(nestedTree);
+      }
     }
 
     row.appendChild(body);
+    row.appendChild(statusPill(child.status));
     tree.appendChild(row);
   });
 
@@ -2715,15 +2600,37 @@ function renderRecentTasks() {
 
   // Build parent -> children map and id -> task map
   const taskById = new Map();
-  const childrenMap = new Map();
   for (const t of dedupTasks) {
-    taskById.set(t.id, t);
-    const pid = t.parent_id || t.parentId;
+    if (t.id) taskById.set(t.id, t);
+    if (t.identifier) taskById.set(t.identifier, t);
+  }
+
+  const childrenMap = new Map();
+  function registerChild(parentId, child) {
+    if (!parentId || !child) return;
+    if (!childrenMap.has(parentId)) {
+      childrenMap.set(parentId, []);
+    }
+    const list = childrenMap.get(parentId);
+    if (!list.some(existing => existing.id === child.id)) {
+      list.push(child);
+    }
+  }
+
+  for (const t of dedupTasks) {
+    const pid = t.parent_id || t.parentId || t.parent?.id;
     if (pid) {
-      if (!childrenMap.has(pid)) {
-        childrenMap.set(pid, []);
+      registerChild(pid, t);
+      const parentTask = taskById.get(pid);
+      if (parentTask) {
+        if (parentTask.id && parentTask.id !== pid) registerChild(parentTask.id, t);
+        if (parentTask.identifier && parentTask.identifier !== pid) registerChild(parentTask.identifier, t);
       }
-      childrenMap.get(pid).push(t);
+    }
+    const embeddedSubtasks = t.dependencies?.subtasks || t.subtasks || [];
+    for (const st of embeddedSubtasks) {
+      registerChild(t.id, st);
+      if (t.identifier) registerChild(t.identifier, st);
     }
   }
 
@@ -2731,23 +2638,29 @@ function renderRecentTasks() {
   const orgFilter = state.recentTasksFilter.org || 'all';
   const projFilter = state.recentTasksFilter.project || 'all';
   const priFilter = state.recentTasksFilter.priority || 'all';
+  const isFilterActive = orgFilter !== 'all' || projFilter !== 'all' || priFilter !== 'all';
 
   function matchesFilter(t) {
     return taskMatchesRecentFilter(t, orgFilter, projFilter, priFilter);
   }
 
-  function matchesOrHasMatchingDescendant(t) {
+  function matchesOrHasMatchingDescendant(t, seen = new Set()) {
+    if (seen.has(t.id)) return false;
+    seen.add(t.id);
     if (matchesFilter(t)) return true;
-    const kids = childrenMap.get(t.id) || [];
+    const kids = [
+      ...(childrenMap.get(t.id) || []),
+      ...((t.identifier && childrenMap.get(t.identifier)) || [])
+    ];
     for (const kid of kids) {
-      if (matchesOrHasMatchingDescendant(kid)) return true;
+      if (matchesOrHasMatchingDescendant(kid, seen)) return true;
     }
     return false;
   }
 
   // Top-level tasks are root tasks (tasks without a parent in taskById)
   const topLevelTasks = dedupTasks.filter(t => {
-    const pid = t.parent_id || t.parentId;
+    const pid = t.parent_id || t.parentId || t.parent?.id;
     return !pid || !taskById.has(pid);
   });
 
@@ -2757,7 +2670,10 @@ function renderRecentTasks() {
   // Sort by latest activity (maximum of own updated_at and all descendants' updated_at)
   function getEffectiveTime(t) {
     let maxTime = t.updated_at ? new Date(t.updated_at).getTime() : 0;
-    const kids = childrenMap.get(t.id) || [];
+    const kids = [
+      ...(childrenMap.get(t.id) || []),
+      ...((t.identifier && childrenMap.get(t.identifier)) || [])
+    ];
     for (const k of kids) {
       if (k.updated_at) {
         const kt = new Date(k.updated_at).getTime();
@@ -2785,8 +2701,8 @@ function renderRecentTasks() {
     const st = (t.status || '').toLowerCase();
     dot.style.background =
       (st === 'running' || st === 'in_progress') ? 'var(--cyan)' :
-      st === 'blocked' ? 'var(--red)' :
-      (st === 'done' || st === 'completed') ? 'var(--green)' : 'var(--muted)';
+      (st === 'blocked' || st === 'errored' || st === 'failed') ? 'var(--red)' :
+      (st === 'done' || st === 'completed' || st === 'closed') ? 'var(--green)' : 'var(--muted)';
     dotCol.appendChild(dot);
     if (i < sorted.length - 1) dotCol.appendChild(el('span', 'activity-line'));
     item.appendChild(dotCol);
@@ -2800,20 +2716,41 @@ function renderRecentTasks() {
     titleRow.appendChild(titleEl);
 
     // Expandable subtask toggle & child count badge
-    const children = childrenMap.get(t.id) || [];
-    if (children.length > 0) {
-      const isExpanded = state.expandedRecentSubtasks.has(t.id);
-      const countLabel = children.length === 1 ? '1 subtask' : `${children.length} subtasks`;
-      const toggle = el('button', 'activity-subtask-toggle', isExpanded ? `▼ ${countLabel}` : `▶ ${countLabel}`);
+    const rawChildren = [
+      ...(childrenMap.get(t.id) || []),
+      ...((t.identifier && childrenMap.get(t.identifier)) || [])
+    ];
+    const seenKidIds = new Set();
+    const children = [];
+    for (const c of rawChildren) {
+      if (c.id && !seenKidIds.has(c.id)) {
+        seenKidIds.add(c.id);
+        children.push(c);
+      }
+    }
+
+    const visibleChildren = isFilterActive
+      ? children.filter(k => matchesOrHasMatchingDescendant(k))
+      : children;
+
+    if (visibleChildren.length > 0) {
+      const isExpanded = state.expandedRecentSubtasks.has(t.id) ||
+        (t.identifier && state.expandedRecentSubtasks.has(t.identifier)) ||
+        (isFilterActive && !matchesFilter(t));
+      const countLabel = visibleChildren.length === 1 ? '1 subtask' : `${visibleChildren.length} subtasks`;
+      const toggle = el('button', 'activity-subtask-toggle', `${isExpanded ? '[-]' : '[+]'} ${countLabel}`);
       toggle.type = 'button';
       toggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
       toggle.title = isExpanded ? 'Collapse subtasks' : 'Expand subtasks';
       toggle.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (state.expandedRecentSubtasks.has(t.id)) {
-          state.expandedRecentSubtasks.delete(t.id);
+        const key = t.id;
+        if (state.expandedRecentSubtasks.has(key)) {
+          state.expandedRecentSubtasks.delete(key);
+          if (t.identifier) state.expandedRecentSubtasks.delete(t.identifier);
         } else {
-          state.expandedRecentSubtasks.add(t.id);
+          state.expandedRecentSubtasks.add(key);
+          if (t.identifier) state.expandedRecentSubtasks.add(t.identifier);
         }
         renderRecentTasks();
       });
@@ -2833,9 +2770,17 @@ function renderRecentTasks() {
     body.appendChild(el('div', 'activity-meta', metaParts.join(' · ')));
 
     // Subtask Tree Hierarchy
-    if (children.length > 0 && state.expandedRecentSubtasks.has(t.id)) {
-      const subTree = renderSubtaskTree(t.id, childrenMap, 0);
-      if (subTree) body.appendChild(subTree);
+    if (visibleChildren.length > 0) {
+      const isExpanded = state.expandedRecentSubtasks.has(t.id) ||
+        (t.identifier && state.expandedRecentSubtasks.has(t.identifier)) ||
+        (isFilterActive && !matchesFilter(t));
+      if (isExpanded) {
+        const visited = new Set();
+        visited.add(t.id);
+        if (t.identifier) visited.add(t.identifier);
+        const subTree = renderSubtaskTree(t.id, childrenMap, taskById, visited, 0);
+        if (subTree) body.appendChild(subTree);
+      }
     }
 
     item.appendChild(body);
@@ -6120,22 +6065,6 @@ document.querySelectorAll('.agent-filter-pill').forEach(btn => {
     renderAgentsPage();
   });
 });
-
-// ── Filter listeners (recent tasks view) ──────────────────
-document.getElementById('recent-tasks-org-filter')?.addEventListener('change', (e) => {
-  state.recentTasksFilter.org = e.target.value;
-  populateRecentTasksProjectFilter();
-  renderRecentTasks();
-});
-document.getElementById('recent-tasks-project-filter')?.addEventListener('change', (e) => {
-  state.recentTasksFilter.project = e.target.value;
-  renderRecentTasks();
-});
-document.getElementById('recent-tasks-priority-filter')?.addEventListener('change', (e) => {
-  state.recentTasksFilter.priority = e.target.value;
-  renderRecentTasks();
-});
-
 // ── Checklist View ────────────────────────────────────────
 
 let checklistItems = [];   // local cache
