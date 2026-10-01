@@ -166,6 +166,17 @@ func evaluateHTTP(ctx context.Context, c Contract, httpClient *http.Client, base
 			Reason: fmt.Sprintf("failed to create HTTP request to %s: %v", urlStr, err),
 		}
 	}
+	token := os.Getenv("STAYPOINT_AUTH_TOKEN")
+	if token == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			if b, err := os.ReadFile(filepath.Join(home, ".staypoint", "auth_token")); err == nil {
+				token = strings.TrimSpace(string(b))
+			}
+		}
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {

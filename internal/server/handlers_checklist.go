@@ -127,6 +127,9 @@ type ChecklistHistoryEntry struct {
 func (h *ChecklistHandler) ListItems(w http.ResponseWriter, r *http.Request) {
 	_ = ensureChecklistTables(h.db)
 	sprint := r.URL.Query().Get("sprint")
+	if sprint == "" {
+		sprint = "STA-168-2"
+	}
 	query := `SELECT id, sprint, section, title, description, how_to_test, contract, status, notes, version, created_at, updated_at
 		FROM checklist_items`
 	args := []any{}
@@ -134,7 +137,7 @@ func (h *ChecklistHandler) ListItems(w http.ResponseWriter, r *http.Request) {
 		query += " WHERE sprint = ?"
 		args = append(args, sprint)
 	}
-	query += " ORDER BY section, rowid ASC"
+	query += " ORDER BY rowid ASC"
 
 	rows, err := h.db.QueryContext(r.Context(), query, args...)
 	if err != nil {
@@ -309,7 +312,7 @@ func (h *ChecklistHandler) Seed(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	sprint := body.Sprint
 	if sprint == "" {
-		sprint = "STA-168"
+		sprint = "STA-168-2"
 	}
 
 	seeded, skipped, err := checklist.Seed(r.Context(), h.db, sprint, body.Force)
@@ -325,7 +328,7 @@ func (h *ChecklistHandler) Evaluate(w http.ResponseWriter, r *http.Request) {
 	_ = ensureChecklistTables(h.db)
 	sprint := r.URL.Query().Get("sprint")
 	if sprint == "" {
-		sprint = "STA-168"
+		sprint = "STA-168-2"
 	}
 
 	downgrade := true

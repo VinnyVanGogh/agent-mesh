@@ -6137,7 +6137,13 @@ document.getElementById('recent-tasks-priority-filter')?.addEventListener('chang
 let checklistItems = [];   // local cache
 
 async function loadChecklist(sprint) {
-  const s = sprint || document.getElementById('checklist-sprint-filter')?.value || 'STA-168';
+  const urlParams = new URLSearchParams(window.location.search);
+  const sprintFromUrl = urlParams.get('sprint');
+  const sel = document.getElementById('checklist-sprint-filter');
+  const s = sprint || sprintFromUrl || sel?.value || 'STA-168-2';
+  if (sel && sel.value !== s) {
+    sel.value = s;
+  }
   try {
     const r = await apiFetch(`/api/checklist?sprint=${encodeURIComponent(s)}`);
     checklistItems = r.items || [];
@@ -6149,7 +6155,7 @@ async function loadChecklist(sprint) {
 }
 
 async function seedChecklist() {
-  const sprint = document.getElementById('checklist-sprint-filter')?.value || 'STA-168';
+  const sprint = document.getElementById('checklist-sprint-filter')?.value || 'STA-168-2';
   const btn = document.getElementById('checklist-seed-btn');
   if (btn) { btn.disabled = true; btn.textContent = 'Seeding…'; }
   try {
@@ -6171,11 +6177,22 @@ async function loadChecklistSprints() {
     const r = await apiFetch('/api/checklist/sprints');
     const sel = document.getElementById('checklist-sprint-filter');
     if (!sel || !r.sprints?.length) return;
+    const currentVal = sel.value;
+    const urlParams = new URLSearchParams(window.location.search);
+    const sprintFromUrl = urlParams.get('sprint');
     sel.innerHTML = '';
     for (const s of r.sprints) {
       const opt = document.createElement('option');
-      opt.value = s; opt.textContent = s;
+      opt.value = s;
+      opt.textContent = s === 'STA-168-2' ? 'STA-168-2 (Sprint 2)' : (s === 'STA-168' ? 'STA-168 (Sprint 1)' : s);
       sel.appendChild(opt);
+    }
+    if (sprintFromUrl && r.sprints.includes(sprintFromUrl)) {
+      sel.value = sprintFromUrl;
+    } else if (currentVal && r.sprints.includes(currentVal)) {
+      sel.value = currentVal;
+    } else {
+      sel.value = r.sprints[0];
     }
   } catch { /* sprints endpoint optional */ }
 }
@@ -6520,11 +6537,14 @@ function updateChecklistProgress() {
 document.getElementById('checklist-seed-btn')?.addEventListener('click', seedChecklist);
 document.getElementById('checklist-verify-btn')?.addEventListener('click', verifyChecklistContracts);
 document.getElementById('checklist-sprint-filter')?.addEventListener('change', (e) => {
+  const url = new URL(window.location);
+  url.searchParams.set('sprint', e.target.value);
+  window.history.replaceState({}, '', url);
   loadChecklist(e.target.value);
 });
 
 async function verifyChecklistContracts() {
-  const sprint = document.getElementById('checklist-sprint-filter')?.value || 'STA-168';
+  const sprint = document.getElementById('checklist-sprint-filter')?.value || 'STA-168-2';
   const btn = document.getElementById('checklist-verify-btn');
   if (btn) {
     btn.disabled = true;
