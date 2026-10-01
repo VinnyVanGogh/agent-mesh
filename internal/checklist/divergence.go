@@ -21,6 +21,7 @@ type Item struct {
 	Description string `json:"description,omitempty"`
 	HowToTest   string `json:"how_to_test,omitempty"`
 	Contract    string `json:"contract,omitempty"`
+	CommitHash  string `json:"commit_hash,omitempty"`
 	Status      string `json:"status"`
 	Notes       string `json:"notes"`
 	Version     int    `json:"version"`
@@ -44,18 +45,20 @@ type ItemEvaluationResult struct {
 
 // EvaluationSummary aggregates the evaluation outcomes for a sprint.
 type EvaluationSummary struct {
-	Sprint      string                 `json:"sprint"`
-	Total       int                    `json:"total"`
-	Passed      int                    `json:"passed"`
-	Failed      int                    `json:"failed"`
-	Divergences int                    `json:"divergences"`
-	CommitSHA   string                 `json:"commit_sha"`
-	Results     []ItemEvaluationResult `json:"results"`
+	Sprint             string                     `json:"sprint"`
+	Total              int                        `json:"total"`
+	Passed             int                        `json:"passed"`
+	Failed             int                        `json:"failed"`
+	Divergences        int                        `json:"divergences"`
+	CommitSHA          string                     `json:"commit_sha"`
+	CommitVerification *CommitVerificationSummary `json:"commit_verification,omitempty"`
+	Results            []ItemEvaluationResult     `json:"results"`
 }
 
 // EvaluateOptions configures divergence evaluation.
 type EvaluateOptions struct {
 	RepoRoot           string
+	RunningCommit      string
 	BaseURL            string
 	HTTPClient         *http.Client
 	Downgrade          bool
@@ -86,14 +89,19 @@ func EvaluateSprint(ctx context.Context, dbConn *sql.DB, sprint string, opts Eva
 	}
 	commitSHA := GetGitCommitSHA(opts.RepoRoot)
 
-	// Ensure checklist_items has contract column
+	// Ensure checklist_items has contract & commit_hash columns
 	var contractCount int
 	_ = dbConn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('checklist_items') WHERE name='contract'").Scan(&contractCount)
 	if contractCount == 0 {
 		_, _ = dbConn.ExecContext(ctx, "ALTER TABLE checklist_items ADD COLUMN contract TEXT;")
 	}
+	var commitColCount int
+	_ = dbConn.QueryRowContext(ctx, "SELECT COUNT(*) FROM pragma_table_info('checklist_items') WHERE name='commit_hash'").Scan(&commitColCount)
+	if commitColCount == 0 {
+		_, _ = dbConn.ExecContext(ctx, "ALTER TABLE checklist_items ADD COLUMN commit_hash TEXT;")
+	}
 
-	query := `SELECT id, sprint, section, title, description, how_to_test, contract, status, notes, version
+	query := `SELECT id, sprint, section, title, description, how_to_test, contract, commit_hash, status, notes, version
 		FROM checklist_items
 		WHERE sprint = ? AND contract IS NOT NULL AND contract != ''
 		ORDER BY section, rowid ASC`
@@ -107,22 +115,34 @@ func EvaluateSprint(ctx context.Context, dbConn *sql.DB, sprint string, opts Eva
 	var items []Item
 	for rows.Next() {
 		var it Item
-		var desc, howTo, contract, notes sql.NullString
-		if err := rows.Scan(&it.ID, &it.Sprint, &it.Section, &it.Title, &desc, &howTo, &contract, &it.Status, &notes, &it.Version); err != nil {
+		var desc, howTo, contract, commitHash, notes sql.NullString
+		if err := rows.Scan(&it.ID, &it.Sprint, &it.Section, &it.Title, &desc, &howTo, &contract, &commitHash, &it.Status, &notes, &it.Version); err != nil {
 			return nil, fmt.Errorf("scan checklist item failed: %w", err)
 		}
 		it.Description = desc.String
 		it.HowToTest = howTo.String
 		it.Contract = contract.String
+		it.CommitHash = commitHash.String
 		it.Notes = notes.String
 		items = append(items, it)
 	}
 
+	commitVer, _ := VerifyCommits(ctx, opts.RepoRoot, opts.RunningCommit, items)
+	blockedSet := make(map[string]string)
+	if commitVer != nil {
+		for _, w := range commitVer.MissingCommits {
+			if w.ItemID != "" {
+				blockedSet[w.ItemID] = w.Reason
+			}
+		}
+	}
+
 	summary := &EvaluationSummary{
-		Sprint:    sprint,
-		Total:     len(items),
-		CommitSHA: commitSHA,
-		Results:   make([]ItemEvaluationResult, 0, len(items)),
+		Sprint:             sprint,
+		Total:              len(items),
+		CommitSHA:          commitSHA,
+		CommitVerification: commitVer,
+		Results:            make([]ItemEvaluationResult, 0, len(items)),
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -148,6 +168,12 @@ func EvaluateSprint(ctx context.Context, dbConn *sql.DB, sprint string, opts Eva
 		}
 
 		eval := EvaluateContract(ctx, *contract, opts.RepoRoot, opts.HTTPClient, opts.BaseURL)
+		if eval.Passed {
+			if blockReason, isBlocked := blockedSet[it.ID]; isBlocked {
+				eval.Passed = false
+				eval.Reason = fmt.Sprintf("commit verification gate: %s", blockReason)
+			}
+		}
 		itemRes := ItemEvaluationResult{
 			ItemID:         it.ID,
 			Sprint:         it.Sprint,

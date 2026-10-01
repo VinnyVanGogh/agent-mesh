@@ -2336,6 +2336,112 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
   color: var(--red);
 }
 
+/* ── Checklist Commit-Hash Gate & Warnings ──────────────────── */
+.checklist-commit-gate-banner {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 20px;
+  animation: fadeIn .2s ease-in-out;
+}
+.cl-gate-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.cl-gate-icon {
+  font-size: 20px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.cl-gate-content {
+  flex: 1;
+  min-width: 0;
+}
+.cl-gate-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f87171;
+  margin-bottom: 4px;
+}
+.cl-gate-desc {
+  font-size: 12px;
+  color: var(--fg);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+.cl-gate-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.cl-gate-meta code {
+  color: var(--cyan);
+  background: var(--surface2);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.cl-gate-toggle-btn {
+  background: rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cl-gate-toggle-btn:hover {
+  background: rgba(239, 68, 68, 0.25);
+  color: #fff;
+}
+.cl-gate-log-container {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(239, 68, 68, 0.2);
+  overflow-x: auto;
+}
+.cl-gate-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.cl-gate-log-table th {
+  text-align: left;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.cl-gate-log-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  vertical-align: top;
+}
+.badge-commit-blocked {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  font-weight: 600;
+  margin-left: 8px;
+}
+.cl-btn.cl-btn-blocked {
+  opacity: 0.35;
+  cursor: not-allowed !important;
+  background: rgba(239, 68, 68, 0.1) !important;
+  border-color: rgba(239, 68, 68, 0.3) !important;
+  color: var(--muted) !important;
+}
+.cl-btn.cl-btn-blocked:hover {
+  background: rgba(239, 68, 68, 0.15) !important;
+}
+
 /* ── Fleet Drill-Down Modal ──────────────────────────────── */
 .modal-overlay {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
