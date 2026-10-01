@@ -255,6 +255,16 @@ async function loadAll() {
         if (!state.tasks[t.id]) {
           state.tasks[t.id] = { ...t, status: normalizeFleetStatus(t.status) };
         } else {
+          state.tasks[t.id] = { ...t, ...state.tasks[t.id] };
+          if (t.identifier && !state.tasks[t.id].identifier) {
+            state.tasks[t.id].identifier = t.identifier;
+          }
+          if (t.organization && !state.tasks[t.id].organization) {
+            state.tasks[t.id].organization = t.organization;
+          }
+          if (t.project && !state.tasks[t.id].project) {
+            state.tasks[t.id].project = t.project;
+          }
           if (!state.tasks[t.id].description && t.description) {
             state.tasks[t.id].description = t.description;
           }
@@ -264,6 +274,20 @@ async function loadAll() {
         }
         if (t.description) state.taskDescriptions[t.id] = t.description;
         if (t.comments && t.comments.length) state.taskComments[t.id] = t.comments;
+      }
+    }
+
+    if (fleetResp?.organizations) {
+      for (const org of fleetResp.organizations) {
+        for (const t of (org.tasks || [])) {
+          if (!state.tasks[t.id]) {
+            state.tasks[t.id] = { ...t, organization: t.organization || org.name, status: normalizeFleetStatus(t.status) };
+          } else {
+            if (!state.tasks[t.id].organization) state.tasks[t.id].organization = org.name;
+            if (t.identifier && !state.tasks[t.id].identifier) state.tasks[t.id].identifier = t.identifier;
+            if (t.project && !state.tasks[t.id].project) state.tasks[t.id].project = t.project;
+          }
+        }
       }
     }
 
@@ -406,6 +430,91 @@ function viewToPath(viewName, orgName) {
   return `/${viewName}`;
 }
 
+function taskToPath(task) {
+  if (!task) return '/';
+  const ident = task.identifier || task.id || '';
+  let org = '';
+  if (ident && ident.includes('-') && !ident.startsWith('task-')) {
+    org = ident.split('-')[0];
+  }
+  if (!org && task.organization) {
+    const matched = (state.fleet?.organizations || []).find(o =>
+      o.name?.toLowerCase() === task.organization.toLowerCase() ||
+      o.issue_prefix?.toLowerCase() === task.organization.toLowerCase() ||
+      o.id === task.organization
+    );
+    org = matched?.issue_prefix || matched?.name || task.organization;
+  }
+  if (!org && task.org) {
+    org = task.org;
+  }
+  if (!org) {
+    org = 'STA';
+  }
+  const project = task.project || 'default';
+  return `/tasks/${encodeURIComponent(org)}/${encodeURIComponent(project)}/${encodeURIComponent(ident)}`;
+}
+
+function findTask(target, orgHint = null, projectHint = null) {
+  if (!target) return null;
+  const targetStr = String(target).trim();
+  const targetLower = targetStr.toLowerCase();
+  const cleanTarget = targetLower.startsWith('#') ? targetLower.slice(1) : targetLower;
+
+  // 1. Direct exact key match in state.tasks
+  if (state.tasks[targetStr]) return state.tasks[targetStr];
+  if (state.tasks[cleanTarget]) return state.tasks[cleanTarget];
+
+  // Gather candidate pool
+  const allTasks = Object.values(state.tasks || {});
+  if (state.fleet?.tasks) {
+    for (const ft of state.fleet.tasks) {
+      if (!allTasks.find(t => t.id === ft.id)) {
+        allTasks.push(ft);
+      }
+    }
+  }
+
+  const exactMatches = [];
+  const partialMatches = [];
+
+  for (const t of allTasks) {
+    const id = (t.id || '').toLowerCase();
+    const ident = (t.identifier || '').toLowerCase();
+
+    if (id === cleanTarget || (ident && ident === cleanTarget) || (ident && ident === targetLower)) {
+      exactMatches.push(t);
+    } else if (cleanTarget.length >= 6 && id.startsWith(cleanTarget)) {
+      partialMatches.push(t);
+    } else if (ident && (ident.endsWith('-' + cleanTarget) || ident.endsWith('-task-' + cleanTarget))) {
+      partialMatches.push(t);
+    }
+  }
+
+  const pool = exactMatches.length > 0 ? exactMatches : partialMatches;
+  if (pool.length === 1) return pool[0];
+
+  if (pool.length > 1) {
+    if (orgHint) {
+      const orgLower = orgHint.toLowerCase();
+      const match = pool.find(t => {
+        const tOrg = (t.organization || t.org || '').toLowerCase();
+        const tPrefix = (t.identifier || '').split('-')[0].toLowerCase();
+        return tOrg === orgLower || tPrefix === orgLower;
+      });
+      if (match) return match;
+    }
+    if (projectHint) {
+      const projLower = projectHint.toLowerCase();
+      const match = pool.find(t => (t.project || 'default').toLowerCase() === projLower);
+      if (match) return match;
+    }
+    return pool[0];
+  }
+
+  return null;
+}
+
 function pathToRoute(pathname) {
   const p = (pathname || window.location.pathname).replace(/\/+$/, '') || '/';
   if (p === '/' || p === '/overview') return { view: 'overview', org: null, taskId: null };
@@ -413,13 +522,30 @@ function pathToRoute(pathname) {
     const org = decodeURIComponent(p.slice(5));
     return { view: 'org-detail', org, taskId: null };
   }
-  if (p.startsWith('/tasks/')) {
-    const taskId = decodeURIComponent(p.slice(7));
-    return { view: 'overview', org: null, taskId };
+  if (p.startsWith('/tasks/') || p.startsWith('/issues/')) {
+    const prefix = p.startsWith('/tasks/') ? '/tasks/' : '/issues/';
+    const rest = p.slice(prefix.length);
+    const segments = rest.split('/').filter(Boolean).map(decodeURIComponent);
+    if (segments.length >= 3) {
+      // /tasks/:org/:project/:identifier
+      const org = segments[0];
+      const project = segments[1];
+      const identifier = segments.slice(2).join('/');
+      return { view: 'overview', org, project, identifier, taskId: identifier };
+    } else if (segments.length === 2) {
+      // /tasks/:org/:identifier
+      const org = segments[0];
+      const identifier = segments[1];
+      return { view: 'overview', org, project: null, identifier, taskId: identifier };
+    } else if (segments.length === 1) {
+      // /tasks/:identifier or /tasks/:id
+      const identifier = segments[0];
+      return { view: 'overview', org: null, project: null, identifier, taskId: identifier };
+    }
+    return { view: 'recent-tasks', org: null, taskId: null };
   }
-  if (p.startsWith('/issues/')) {
-    const taskId = decodeURIComponent(p.slice(8));
-    return { view: 'overview', org: null, taskId };
+  if (p === '/tasks' || p === '/issues') {
+    return { view: 'recent-tasks', org: null, taskId: null };
   }
   const clean = p.replace(/^\//, '');
   return { view: clean, org: null, taskId: null };
@@ -481,9 +607,9 @@ document.querySelectorAll('.sidebar-item').forEach(btn => {
 
 window.addEventListener('popstate', () => {
   const route = pathToRoute();
-  if (route.taskId) {
+  if (route.taskId || route.identifier) {
     navigateTo(route.view, route.org, false);
-    openDetail(route.taskId, false);
+    openDetail(route, false);
   } else {
     document.getElementById('detail-panel')?.classList.add('hidden');
     stopChatPoll();
@@ -6039,32 +6165,54 @@ function renderDetailContent(content, task) {
 }
 
 function isFleetTaskId(id) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id);
+  if (!id) return false;
+  if (id.startsWith('task-')) return false;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return true;
+  if (/^[A-Za-z]+-\d+$/i.test(id)) return true;
+  return false;
 }
 
 let lastDetailOpenTime = 0;
 
-async function openDetail(taskId, pushHistory = true) {
+async function openDetail(target, pushHistory = true, orgHint = null, projectHint = null) {
   const panel   = document.getElementById('detail-panel');
   const content = document.getElementById('panel-content');
 
   stopChatPoll();
-  state.openDetailTaskId = taskId;
   lastDetailOpenTime = Date.now();
-  panel.classList.remove('hidden');
-  content.innerHTML = '<p style="color:var(--muted)">Loading…</p>';
+  if (panel) panel.classList.remove('hidden');
+  if (content) content.innerHTML = '<p style="color:var(--muted)">Loading…</p>';
 
-  if (pushHistory && !window.location.pathname.startsWith('/tasks/' + taskId) && !window.location.pathname.startsWith('/issues/' + taskId)) {
-    history.pushState({ taskId }, '', '/tasks/' + taskId);
+  let targetId = target;
+  if (typeof target === 'object' && target !== null) {
+    orgHint = target.org || target.organization || orgHint;
+    projectHint = target.project || projectHint;
+    targetId = target.identifier || target.taskId || target.id;
   }
 
-  const isFleet = isFleetTaskId(taskId);
+  // Attempt resolution from in-memory tasks
+  const matchedTask = findTask(targetId, orgHint, projectHint);
+  const resolvedId = matchedTask ? matchedTask.id : targetId;
+  state.openDetailTaskId = resolvedId;
+
+  // Determine canonical hierarchical path
+  const canonicalPath = matchedTask
+    ? taskToPath(matchedTask)
+    : `/tasks/${encodeURIComponent(orgHint || 'STA')}/${encodeURIComponent(projectHint || 'default')}/${encodeURIComponent(targetId)}`;
+
+  if (pushHistory && window.location.pathname !== canonicalPath) {
+    history.pushState({ taskId: resolvedId, canonicalPath }, '', canonicalPath);
+  } else if (!pushHistory && (window.location.pathname.startsWith('/tasks/') || window.location.pathname.startsWith('/issues/')) && window.location.pathname !== canonicalPath) {
+    history.replaceState({ taskId: resolvedId, canonicalPath }, '', canonicalPath);
+  }
+
+  const isFleet = isFleetTaskId(resolvedId);
   const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
 
   try {
     const [taskResp, commentsResp] = await Promise.all([
-      apiFetch(`${apiBase}/${taskId}`),
-      apiFetch(`${apiBase}/${taskId}/comments`).catch(() => ({ comments: [] }))
+      apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}`),
+      apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}/comments`).catch(() => ({ comments: [] }))
     ]);
     const task = taskResp.task || taskResp;
     if (taskResp.dependencies) {
@@ -6075,33 +6223,47 @@ async function openDetail(taskId, pushHistory = true) {
       : (commentsResp?.comments || (Array.isArray(commentsResp) ? commentsResp : []));
     task.comments = comments;
 
+    // Use robust UUID for internal state
+    if (task.id) {
+      state.openDetailTaskId = task.id;
+    }
+
+    // Ensure browser URL displays the fully resolved canonical hierarchical path
+    const finalCanonicalPath = taskToPath(task);
+    if (window.location.pathname !== finalCanonicalPath && (window.location.pathname.startsWith('/tasks/') || window.location.pathname.startsWith('/issues/'))) {
+      history.replaceState({ taskId: task.id, canonicalPath: finalCanonicalPath }, '', finalCanonicalPath);
+    }
+
     // Also fetch native StayPoint governance snapshot if available
     try {
-      const govResp = await apiFetch(`/api/tasks/${taskId}/governance`);
+      const govResp = await apiFetch(`/api/tasks/${encodeURIComponent(task.id || resolvedId)}/governance`);
       if (govResp && !govResp.error) {
         task.governance = govResp;
       }
     } catch { /* governance optional */ }
 
     renderDetailContent(content, task);
-    if (task.description) state.taskDescriptions[taskId] = task.description;
-    state.taskComments[taskId] = comments;
-    if (state.tasks[taskId]) {
-      state.tasks[taskId] = { ...state.tasks[taskId], ...task };
-    }
-    buildChatSection(content, taskId, comments);
-    startChatPoll(taskId);
-  } catch {
-    const cached = state.tasks[taskId];
+    const detailKey = task.id || resolvedId;
+    if (task.description) state.taskDescriptions[detailKey] = task.description;
+    state.taskComments[detailKey] = comments;
+    state.tasks[detailKey] = { ...(state.tasks[detailKey] || {}), ...task };
+
+    buildChatSection(content, task.id || resolvedId, comments);
+    startChatPoll(task.id || resolvedId);
+  } catch (err) {
+    const cached = matchedTask || state.tasks[resolvedId] || state.tasks[targetId];
     if (cached) {
+      if (cached.id) state.openDetailTaskId = cached.id;
       renderDetailContent(content, cached);
-      buildChatSection(content, taskId, cached.comments || []);
-      startChatPoll(taskId);
+      buildChatSection(content, cached.id || resolvedId, cached.comments || []);
+      startChatPoll(cached.id || resolvedId);
     } else {
       const p = el('p', null, 'Task not found or failed to load.');
       p.style.color = 'var(--red)';
-      content.innerHTML = '';
-      content.appendChild(p);
+      if (content) {
+        content.innerHTML = '';
+        content.appendChild(p);
+      }
     }
   }
 }
@@ -7257,8 +7419,8 @@ document.getElementById('projects-org-filter')?.addEventListener('change', (e) =
 loadAll().then(() => {
   const initialRoute = pathToRoute();
   navigateTo(initialRoute.view, initialRoute.org, false);
-  if (initialRoute.taskId) {
-    openDetail(initialRoute.taskId, false);
+  if (initialRoute.taskId || initialRoute.identifier) {
+    openDetail(initialRoute, false);
   }
   connectSSE();
   updateDevTourToggleUI();

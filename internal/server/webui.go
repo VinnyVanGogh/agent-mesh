@@ -36,6 +36,8 @@ var validSPARoutes = map[string]bool{
 	"skills":       true,
 	"connectors":   true,
 	"audit":        true,
+	"tasks":        true,
+	"issues":       true,
 }
 
 func isSPARoute(p string) bool {
@@ -43,7 +45,7 @@ func isSPARoute(p string) bool {
 		return true
 	}
 	clean := strings.Trim(p, "/")
-	if strings.HasPrefix(clean, "org/") || strings.HasPrefix(clean, "tasks/") || strings.HasPrefix(clean, "issues/") {
+	if strings.HasPrefix(clean, "org/") || strings.HasPrefix(clean, "tasks/") || strings.HasPrefix(clean, "issues/") || clean == "tasks" || clean == "issues" {
 		return true
 	}
 	return validSPARoutes[clean]
