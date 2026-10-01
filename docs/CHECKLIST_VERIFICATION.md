@@ -28,6 +28,16 @@ When StayPoint serves (`GET /api/checklist`) or evaluates (`POST /api/checklist/
    - `git merge-base --is-ancestor <commit> <running_binary_commit>`.
    - If false: The running `staypointd` binary does not contain the commit (stale/unrebuilt binary). Gate blocks completion.
 
+### C. Build Manifest (`~/.staypoint/build-manifest.json`, `internal/checklist/build_manifest.go`)
+The daemon runs under launchd, and macOS blocks launchd processes from reading `~/Documents` (where the repo lives) until `staypointd` is granted Documents access. A blocked `git` does not fail: it hangs until the timeout kills it. Before the manifest existed, every commit was reported as "does not exist" and the checklist page took ~25s to load.
+
+`scripts/reinstall-daemon.sh` therefore records, at build time:
+- `full_sha` and `ancestors`: every commit reachable from the build (`git rev-list HEAD`).
+- `in_main`: whether the build commit was in `origin/main` when built.
+- `dirty`: whether tracked files had uncommitted changes. A dirty build is labelled `<sha>-dirty` and keeps the gate closed.
+
+The gate uses the manifest when it describes the running binary's commit, with no repo access at all. Otherwise it falls back to the git checks above, after one 1.5s probe; if the repo cannot be read, items report "cannot verify" with the cause, never "does not exist".
+
 ---
 
 ## 2. Hard UI Notice & Completion Gate

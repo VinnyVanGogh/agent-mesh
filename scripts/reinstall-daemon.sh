@@ -42,14 +42,48 @@ if [ "$(uname)" = "Darwin" ]; then
 fi
 
 COMMIT="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'none')"
-echo "→ Building staypointd from $REPO (commit: $COMMIT) ..."
-go build -ldflags "-X main.GitCommit=$COMMIT -X main.commit=$COMMIT" -o "$BINARY" "$REPO/cmd/staypointd"
+DIRTY=false
+if [ "$COMMIT" != "none" ] && [ -n "$(git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+    DIRTY=true
+    echo "  ! Uncommitted changes to tracked files: labelling this build $COMMIT-dirty."
+    echo "    The checklist commit gate stays closed until the daemon is rebuilt from a clean tree."
+fi
+BUILD_LABEL="$COMMIT"
+[ "$DIRTY" = true ] && BUILD_LABEL="$COMMIT-dirty"
+echo "→ Building staypointd from $REPO (commit: $BUILD_LABEL) ..."
+go build -ldflags "-X main.GitCommit=$BUILD_LABEL -X main.commit=$BUILD_LABEL" -o "$BINARY" "$REPO/cmd/staypointd"
 if [ -n "$SIGN_IDENTITY" ] && [ "$SIGN_IDENTITY" != "-" ]; then
     codesign -s "$SIGN_IDENTITY" -f --timestamp=none -i com.staypoint.daemon "$BINARY"
 else
     codesign -s - -f -i com.staypoint.daemon "$BINARY"
 fi
 echo "  Built: $BINARY ($(staypointd -version 2>/dev/null || echo 'ok'))"
+
+# Record which commits this binary contains. The checklist commit gate reads
+# this instead of running git: under launchd, macOS blocks the daemon from the
+# repo in ~/Documents until it has Documents access, and git hangs rather than
+# failing, so every commit looked missing.
+MANIFEST="$HOME/.staypoint/build-manifest.json"
+mkdir -p "$HOME/.staypoint"
+if [ "$COMMIT" = "none" ]; then
+    rm -f "$MANIFEST"
+else
+    git -C "$REPO" fetch -q origin main 2>/dev/null || echo "  ! Could not fetch origin/main; checking against the local ref."
+    MAIN_REF=origin/main
+    git -C "$REPO" rev-parse -q --verify "$MAIN_REF^{commit}" >/dev/null || MAIN_REF=main
+    IN_MAIN=false
+    git -C "$REPO" merge-base --is-ancestor HEAD "$MAIN_REF" 2>/dev/null && IN_MAIN=true
+    [ "$IN_MAIN" = true ] || echo "  ! $COMMIT is not in $MAIN_REF: the checklist commit gate will stay closed."
+    {
+        printf '{"commit":"%s","full_sha":"%s","in_main":%s,"main_sha":"%s","dirty":%s,"built_at":"%s","ancestors":[' \
+            "$COMMIT" "$(git -C "$REPO" rev-parse HEAD)" "$IN_MAIN" \
+            "$(git -C "$REPO" rev-parse --short "$MAIN_REF" 2>/dev/null)" "$DIRTY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        git -C "$REPO" rev-list HEAD | sed 's/.*/"&"/' | paste -sd, -
+        printf ']}\n'
+    } > "$MANIFEST.tmp"
+    mv "$MANIFEST.tmp" "$MANIFEST"
+    echo "  Build manifest: $MANIFEST (in main: $IN_MAIN, dirty: $DIRTY)"
+fi
 
 cat <<EOF > "$PLIST"
 <?xml version="1.0" encoding="UTF-8"?>

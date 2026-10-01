@@ -81,6 +81,8 @@ func setupTestGitRepo(t *testing.T) (string, string, string) {
 }
 
 func TestVerifyCommits(t *testing.T) {
+	// Exercise the git path; never pick up the developer's installed manifest.
+	t.Setenv("STAYPOINT_BUILD_MANIFEST", filepath.Join(t.TempDir(), "absent.json"))
 	ctx := context.Background()
 	repoDir, c1, c2 := setupTestGitRepo(t)
 
