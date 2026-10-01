@@ -853,3 +853,33 @@ func TestServer_REST_FleetOverview(t *testing.T) {
 	}
 }
 
+func TestServer_REST_ReportHTMLPreview(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	client := &http.Client{}
+
+	types := []string{"work", "combined", "personal", "gemini"}
+	for _, rType := range types {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL()+"/api/report?type="+rType+"&format=html", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("get report html failed for %s: %v", rType, err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 for %s report html, got %d", rType, resp.StatusCode)
+		}
+		ct := resp.Header.Get("Content-Type")
+		if !strings.Contains(ct, "text/html") {
+			t.Errorf("expected Content-Type text/html for %s, got %s", rType, ct)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if !strings.Contains(string(body), "<html") {
+			t.Errorf("expected valid HTML body for %s report, got %s", rType, string(body))
+		}
+	}
+}
+
+
