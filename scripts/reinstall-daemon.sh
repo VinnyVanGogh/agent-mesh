@@ -4,6 +4,8 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+# go build resolves the module from the cwd, so build from the repo root.
+cd "$REPO"
 BINARY="$HOME/.local/bin/staypointd"
 PLIST="$HOME/Library/LaunchAgents/com.staypoint.daemon.plist"
 LABEL="com.staypoint.daemon"
