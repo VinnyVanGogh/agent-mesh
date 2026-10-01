@@ -1758,21 +1758,35 @@ function createProjectCard(p, globalStatusFilter) {
 }
 
 // ── Agents Filter Helpers ─────────────────────────────────
+function orgMatches(itemOrg, targetOrg) {
+  if (!targetOrg || targetOrg === 'all') return true;
+  if (!itemOrg) return false;
+  const a = String(itemOrg).trim().toLowerCase();
+  const b = String(targetOrg).trim().toLowerCase();
+  return a === b || a.startsWith(b) || b.startsWith(a);
+}
+
 function getProjectsForOrg(orgName = 'all') {
   const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
   const projects = new Set();
 
   for (const t of allTasks) {
     const tOrg = t.organization || 'StayPoint';
-    if (orgName !== 'all' && tOrg !== orgName) continue;
+    if (!orgMatches(tOrg, orgName)) continue;
     if (t.project && t.project !== '(No Project)') {
       projects.add(t.project);
     }
   }
 
-  // Also check fleet organizations if they contain explicit project lists or tasks
+  // Also check fleet organizations if they contain explicit project lists, tasks, or agents
   for (const org of (state.fleet?.organizations || [])) {
-    if (orgName !== 'all' && org.name !== orgName) continue;
+    if (!orgMatches(org.name, orgName)) continue;
+    if (Array.isArray(org.projects)) {
+      for (const p of org.projects) {
+        const name = typeof p === 'string' ? p : p?.name;
+        if (name && name !== '(No Project)') projects.add(name);
+      }
+    }
     for (const t of (org.tasks || [])) {
       if (t.project && t.project !== '(No Project)') {
         projects.add(t.project);
@@ -1782,12 +1796,6 @@ function getProjectsForOrg(orgName = 'all') {
       if (a.project && a.project !== '(No Project)') projects.add(a.project);
       if (Array.isArray(a.projects)) {
         for (const p of a.projects) if (p && p !== '(No Project)') projects.add(p);
-      }
-    }
-    if (Array.isArray(org.projects)) {
-      for (const p of org.projects) {
-        const name = typeof p === 'string' ? p : p.name;
-        if (name && name !== '(No Project)') projects.add(name);
       }
     }
   }
@@ -1805,16 +1813,28 @@ function getAgentProjects(agent) {
       if (p && p !== '(No Project)') projects.add(p);
     }
   }
+  if (agent.runningTask?.project && agent.runningTask.project !== '(No Project)') {
+    projects.add(agent.runningTask.project);
+  }
+  if (Array.isArray(agent.agentTasks)) {
+    for (const t of agent.agentTasks) {
+      if (t.project && t.project !== '(No Project)') {
+        projects.add(t.project);
+      }
+    }
+  }
 
-  // Also check tasks checked out by or assigned to this agent
+  // Also check tasks checked out by or assigned to this agent across all tasks
   const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
   for (const t of allTasks) {
     const matchesAgent =
       (t.checkout_agent_id && t.checkout_agent_id === agent.id) ||
+      (t.assignee_agent_id && t.assignee_agent_id === agent.id) ||
       (t.assignee_id && t.assignee_id === agent.id) ||
       (t.assigneeAgentId && t.assigneeAgentId === agent.id) ||
+      (t.assigned_agent && (t.assigned_agent === agent.name || t.assigned_agent === agent.id)) ||
       (t.assignee_name && t.assignee_name === agent.name) ||
-      (t.assigneeRole && t.assigneeRole === agent.role);
+      (t.assigneeRole && agent.role && t.assigneeRole === agent.role);
     if (matchesAgent && t.project && t.project !== '(No Project)') {
       projects.add(t.project);
     }
@@ -1906,13 +1926,17 @@ function resetAgentFilters() {
   state.agentsFilter.search = '';
   state.agentsFilter.provider = 'all';
   state.agentsFilter.org = 'all';
+  state.agentsFilter.project = 'all';
   state.agentsFilter.status = 'all';
   const searchInput = document.getElementById('agents-search');
   const provSelect = document.getElementById('agents-provider-filter');
   const orgSelect = document.getElementById('agents-org-filter');
+  const projSelect = document.getElementById('agents-project-filter');
   if (searchInput) searchInput.value = '';
   if (provSelect) provSelect.value = 'all';
   if (orgSelect) orgSelect.value = 'all';
+  if (projSelect) projSelect.value = 'all';
+  populateAgentsProjectFilter();
   document.querySelectorAll('.agent-filter-pill').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.status === 'all');
   });
@@ -2054,6 +2078,8 @@ function renderAgentsPage() {
     const agentTasks = allTasks.filter(t =>
       (t.checkout_agent_id && t.checkout_agent_id === a.id) ||
       (t.assignee_agent_id && t.assignee_agent_id === a.id) ||
+      (t.assignee_id && t.assignee_id === a.id) ||
+      (t.assigneeAgentId && t.assigneeAgentId === a.id) ||
       (t.assigned_agent && (t.assigned_agent === a.name || t.assigned_agent === a.id)) ||
       (t.assignee_name && t.assignee_name === a.name)
     );
@@ -2092,20 +2118,8 @@ function renderAgentsPage() {
   if (countIdleEl) countIdleEl.textContent = idleCount;
   if (countPausedEl) countPausedEl.textContent = pausedCount;
 
-  // Populate Org filter dropdown
-  const orgSelect = document.getElementById('agents-org-filter');
-  if (orgSelect) {
-    const curOrg = state.agentsFilter.org || 'all';
-    const uniqueOrgs = Array.from(new Set(enrichedAgents.map(a => a.org).filter(Boolean))).sort();
-    orgSelect.innerHTML = '<option value="all">All Organizations</option>';
-    for (const orgName of uniqueOrgs) {
-      const opt = document.createElement('option');
-      opt.value = orgName;
-      opt.textContent = orgName;
-      orgSelect.appendChild(opt);
-    }
-    orgSelect.value = curOrg;
-  }
+  // Synchronize cascading filters
+  populateAgentsFilters();
 
   // Populate summary metrics chip
   const metricsContainer = document.getElementById('agents-summary-metrics');
@@ -2122,12 +2136,6 @@ function renderAgentsPage() {
     }
   }
 
-  // Ensure cascading filters are populated
-  const orgSel = document.getElementById('agents-org-filter');
-  if (orgSel && orgSel.options.length <= 1) {
-    populateAgentsFilters();
-  }
-
   // Filter agents
   const searchTerm = (state.agentsFilter.search || '').toLowerCase();
   const provFilter = state.agentsFilter.provider || 'all';
@@ -2138,7 +2146,7 @@ function renderAgentsPage() {
   const filtered = enrichedAgents.filter(a => {
     if (statusFilter !== 'all' && a.normalizedStatus !== statusFilter) return false;
     if (provFilter !== 'all' && (a.provider || '').toLowerCase() !== provFilter.toLowerCase()) return false;
-    if (orgFilter !== 'all' && (a.org || a.organization || '') !== orgFilter) return false;
+    if (orgFilter !== 'all' && !orgMatches(a.org || a.organization, orgFilter)) return false;
 
     // Project filter (cascading dependency)
     if (projFilter !== 'all') {
@@ -6087,6 +6095,7 @@ document.getElementById('agents-search')?.addEventListener('input', (e) => {
 });
 document.getElementById('agents-org-filter')?.addEventListener('change', (e) => {
   state.agentsFilter.org = e.target.value;
+  state.agentsFilter.project = 'all';
   populateAgentsProjectFilter();
   renderAgentsPage();
 });

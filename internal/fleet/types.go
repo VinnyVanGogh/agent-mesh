@@ -30,9 +30,11 @@ type TaskItem struct {
 	ParentID       string    `json:"parent_id,omitempty"`
 	SpentUSD       float64   `json:"spent_usd"`
 	SpentTokens    int64     `json:"spent_tokens"`
-	IsBlocked      bool      `json:"is_blocked"`
-	BlockReason    string    `json:"block_reason,omitempty"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	IsBlocked       bool      `json:"is_blocked"`
+	BlockReason     string    `json:"block_reason,omitempty"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	AssigneeAgentID string    `json:"assignee_agent_id,omitempty"`
+	CheckoutAgentID string    `json:"checkout_agent_id,omitempty"`
 }
 
 // AgentItem represents an active or registered agent in an organization.
@@ -125,6 +127,7 @@ type OrgFleetSummary struct {
 	ProviderQuotas         map[string]*ProviderQuotaGauge `json:"provider_quotas,omitempty"`
 	Tasks                  []TaskItem                     `json:"tasks,omitempty"`
 	Agents                 []AgentItem                    `json:"agents,omitempty"`
+	Projects               []string                       `json:"projects,omitempty"`
 }
 
 // FleetOverview is the unified root response for the All Organizations overview screen.

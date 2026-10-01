@@ -26,18 +26,21 @@ type CreateIssueRequest struct {
 
 // IssueResponse represents the issue returned by the Paperclip API.
 type IssueResponse struct {
-	ID          string   `json:"id"`
-	Identifier  string   `json:"identifier"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Status      string   `json:"status"`
-	Priority    string   `json:"priority"`
-	CompanyID   string   `json:"companyId"`
-	ProjectID   string   `json:"projectId"`
-	ParentID    string   `json:"parentId,omitempty"`
-	IssueNumber int      `json:"issueNumber"`
-	Labels      []string `json:"labels"`
-	CreatedAt   string   `json:"createdAt"`
+	ID              string `json:"id"`
+	Identifier      string `json:"identifier"`
+	Title           string `json:"title"`
+	Description     string `json:"description"`
+	Status          string `json:"status"`
+	Priority        string `json:"priority"`
+	CompanyID       string `json:"companyId"`
+	ProjectID       string `json:"projectId"`
+	AssigneeAgentID string `json:"assigneeAgentId,omitempty"`
+	CheckoutAgentID string `json:"checkoutAgentId,omitempty"`
+	CheckoutRunID   string `json:"checkoutRunId,omitempty"`
+	ParentID        string `json:"parentId,omitempty"`
+	IssueNumber     int    `json:"issueNumber"`
+	Labels          any    `json:"labels"`
+	CreatedAt       string `json:"createdAt"`
 }
 
 // CompanyResponse represents company metadata returned by /api/companies/:id.
@@ -321,7 +324,19 @@ func (c *Client) ListProjects(ctx context.Context, companyID string) ([]ProjectR
 	if err != nil {
 		return nil, fmt.Errorf("paperclip connection error: %w", err)
 	}
-	defer resp.Body.Close()
+	if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized) && c.APIKey != "" {
+		// Retry without agent key (local board mode)
+		retryReq, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if retryResp, errRetry := c.HTTPClient.Do(retryReq); errRetry == nil {
+			defer retryResp.Body.Close()
+			if retryResp.StatusCode == http.StatusOK {
+				var projects []ProjectResponse
+				if errDec := json.NewDecoder(retryResp.Body).Decode(&projects); errDec == nil {
+					return projects, nil
+				}
+			}
+		}
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -490,7 +505,19 @@ func (c *Client) ListAgents(ctx context.Context, companyID string) ([]AgentRespo
 	if err != nil {
 		return nil, fmt.Errorf("paperclip connection error: %w", err)
 	}
-	defer resp.Body.Close()
+	if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized) && c.APIKey != "" {
+		// Retry without agent key (local board mode)
+		retryReq, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if retryResp, errRetry := c.HTTPClient.Do(retryReq); errRetry == nil {
+			defer retryResp.Body.Close()
+			if retryResp.StatusCode == http.StatusOK {
+				var agents []AgentResponse
+				if errDec := json.NewDecoder(retryResp.Body).Decode(&agents); errDec == nil {
+					return agents, nil
+				}
+			}
+		}
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

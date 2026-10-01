@@ -442,3 +442,55 @@ func TestRegisterUIRoutes_TableSortingAndSearchElements(t *testing.T) {
 		}
 	}
 }
+
+func TestRegisterUIRoutes_AgentsCascadingProjectFilter(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterUIRoutes(mux, "test-tok")
+
+	// 1. Verify index.html contains the necessary filter elements
+	reqHTML := httptest.NewRequest("GET", "/", nil)
+	wHTML := httptest.NewRecorder()
+	mux.ServeHTTP(wHTML, reqHTML)
+	if wHTML.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", wHTML.Code)
+	}
+	html := wHTML.Body.String()
+	if !strings.Contains(html, `id="agents-org-filter"`) {
+		t.Error("index.html missing agents-org-filter")
+	}
+	if !strings.Contains(html, `id="agents-project-filter"`) {
+		t.Error("index.html missing agents-project-filter")
+	}
+
+	// 2. Verify app.js contains cascading filter functions and state logic
+	reqJS := httptest.NewRequest("GET", "/ui/app.js", nil)
+	wJS := httptest.NewRecorder()
+	mux.ServeHTTP(wJS, reqJS)
+	if wJS.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", wJS.Code)
+	}
+	js := wJS.Body.String()
+
+	requiredFuncs := []string{
+		"populateAgentsFilters",
+		"populateAgentsOrgFilter",
+		"populateAgentsProjectFilter",
+		"getProjectsForOrg",
+		"getAgentProjects",
+		"resetAgentFilters",
+		"orgMatches",
+	}
+	for _, fn := range requiredFuncs {
+		if !strings.Contains(js, fn) {
+			t.Errorf("app.js missing expected function: %s", fn)
+		}
+	}
+
+	// Verify project filter reset logic exists on org change and filter reset
+	if !strings.Contains(js, "state.agentsFilter.project = 'all'") {
+		t.Error("app.js missing state.agentsFilter.project = 'all' reset assignment")
+	}
+	if !strings.Contains(js, "populateAgentsProjectFilter()") {
+		t.Error("app.js missing populateAgentsProjectFilter() calls")
+	}
+}

@@ -3,11 +3,16 @@ package fleet
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/paperclip"
 	_ "modernc.org/sqlite"
 )
 
@@ -386,5 +391,105 @@ func TestAgentQuotaBinding(t *testing.T) {
 				t.Errorf("agent %s provider %q mismatched with quota %q", ag.Name, ag.Provider, ag.Quota.Provider)
 			}
 		}
+	}
+}
+
+func TestAggregatorGather_PaperclipProjectsAndAssignees(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/companies":
+			_ = json.NewEncoder(w).Encode([]paperclip.CompanyResponse{
+				{ID: "comp-1", Name: "StayPoint", IssuePrefix: "STA", Status: "active"},
+			})
+		case r.URL.Path == "/api/companies/comp-1/projects":
+			_ = json.NewEncoder(w).Encode([]paperclip.ProjectResponse{
+				{ID: "proj-10", Name: "Core Engine & Telemetry Fleet"},
+				{ID: "proj-20", Name: "Native Orchestrator"},
+			})
+		case strings.HasPrefix(r.URL.Path, "/api/companies/comp-1/issues"):
+			rawJSON := `[
+				{
+					"id": "iss-1",
+					"identifier": "STA-212",
+					"title": "Fix: Cascading Project Filter",
+					"status": "in_progress",
+					"priority": "high",
+					"projectId": "proj-10",
+					"assigneeAgentId": "agent-cto-1",
+					"labels": [{"id": "lbl-1", "name": "Bug"}]
+				},
+				{
+					"id": "iss-2",
+					"identifier": "STA-213",
+					"title": "Boss Card Caching",
+					"status": "todo",
+					"priority": "medium",
+					"projectId": "proj-20",
+					"assigneeAgentId": "agent-dev-2"
+				}
+			]`
+			_, _ = w.Write([]byte(rawJSON))
+		case r.URL.Path == "/api/companies/comp-1/agents":
+			_ = json.NewEncoder(w).Encode([]paperclip.AgentResponse{
+				{ID: "agent-cto-1", Name: "Chief Technology Officer", Role: "cto", AdapterType: "claude_local"},
+				{ID: "agent-dev-2", Name: "Core Platform Engineer", Role: "engineer", AdapterType: "gemini_local"},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer ts.Close()
+
+	pClient := paperclip.NewClient(ts.URL, "test-key")
+	agg := &Aggregator{
+		PaperclipClient: pClient,
+		Now: func() time.Time {
+			return time.Date(2026, 9, 30, 8, 0, 0, 0, time.UTC)
+		},
+	}
+
+	overview, err := agg.Gather(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error gathering fleet: %v", err)
+	}
+
+	var stayPointOrg *OrgFleetSummary
+	for i := range overview.Organizations {
+		if overview.Organizations[i].Name == "StayPoint" {
+			stayPointOrg = &overview.Organizations[i]
+			break
+		}
+	}
+	if stayPointOrg == nil {
+		t.Fatalf("expected StayPoint organization, got %+v", overview.Organizations)
+	}
+
+	org := *stayPointOrg
+	if len(org.Projects) != 2 {
+		t.Fatalf("expected 2 projects on org, got %d: %+v", len(org.Projects), org.Projects)
+	}
+	if org.Projects[0] != "Core Engine & Telemetry Fleet" || org.Projects[1] != "Native Orchestrator" {
+		t.Errorf("unexpected org projects: %+v", org.Projects)
+	}
+
+	if len(org.Tasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(org.Tasks))
+	}
+
+	t1 := org.Tasks[0]
+	if t1.Project != "Core Engine & Telemetry Fleet" {
+		t.Errorf("expected t1 project 'Core Engine & Telemetry Fleet', got %q", t1.Project)
+	}
+	if t1.AssigneeAgentID != "agent-cto-1" {
+		t.Errorf("expected t1 AssigneeAgentID 'agent-cto-1', got %q", t1.AssigneeAgentID)
+	}
+
+	t2 := org.Tasks[1]
+	if t2.Project != "Native Orchestrator" {
+		t.Errorf("expected t2 project 'Native Orchestrator', got %q", t2.Project)
+	}
+	if t2.AssigneeAgentID != "agent-dev-2" {
+		t.Errorf("expected t2 AssigneeAgentID 'agent-dev-2', got %q", t2.AssigneeAgentID)
 	}
 }
