@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "staypoint": {
+      "command": "/Users/vincevasile/Documents/dev/agent-mesh/bin/staypoint",
+      "args": ["mcp"]
+    }
+  }
+}

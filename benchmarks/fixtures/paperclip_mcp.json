@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "Paperclip projects": {
+      "type": "http",
+      "url": "http://127.0.0.1:3100/api/mcp/project-tools",
+      "headers": {
+        "Authorization": "Bearer mock-paperclip-token"
+      }
+    }
+  }
+}
