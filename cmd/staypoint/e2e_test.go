@@ -18,6 +18,21 @@ func TestMain(m *testing.M) {
 	}
 	defer os.RemoveAll(tmpDir)
 
+	// Tests point HOME at temp dirs. A real agent CLI run under a fake HOME
+	// tries to store credentials, finds no keychain, and macOS pops a blocking
+	// "Keychain Not Found" modal on the user's screen. Shadow them with no-op
+	// stubs so no test can ever launch the real ones.
+	stubDir := filepath.Join(tmpDir, "stub-bin")
+	if err := os.MkdirAll(stubDir, 0755); err != nil {
+		panic(err)
+	}
+	for _, name := range []string{"claude", "agy", "gemini", "codex"} {
+		if err := os.WriteFile(filepath.Join(stubDir, name), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+			panic(err)
+		}
+	}
+	os.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
 	testBinaryPath = filepath.Join(tmpDir, "staypoint")
 	buildCmd := exec.Command("go", "build", "-o", testBinaryPath, ".")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
