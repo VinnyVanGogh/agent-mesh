@@ -208,14 +208,42 @@
     <!-- Projects view -->
     <section id="view-projects" class="view">
       <div class="view-header">
-        <h1 class="view-title">Projects</h1>
+        <div class="view-title-group">
+          <h1 class="view-title">Projects</h1>
+          <span class="refresh-indicator">Workspace initiatives &amp; grouped organization deliverables</span>
+        </div>
         <div class="table-controls">
-          <select id="projects-org-filter" class="select-filter">
+          <div class="multiselect-dropdown" id="projects-org-multiselect">
+            <button type="button" class="multiselect-btn select-filter" id="projects-org-multiselect-btn" aria-haspopup="true" aria-expanded="false">
+              <span class="multiselect-btn-text" id="projects-org-btn-label">All Organizations</span>
+              <span class="multiselect-badge" id="projects-org-btn-badge" style="display:none;"></span>
+              <span class="multiselect-arrow">▾</span>
+            </button>
+            <div class="multiselect-menu hidden" id="projects-org-menu">
+              <div class="multiselect-header">
+                <span class="multiselect-title">Organizations</span>
+                <div class="multiselect-actions">
+                  <button type="button" class="multiselect-action-link" id="projects-org-select-all">All</button>
+                  <span class="multiselect-divider">·</span>
+                  <button type="button" class="multiselect-action-link" id="projects-org-clear-all">Clear</button>
+                </div>
+              </div>
+              <div class="multiselect-options" id="projects-org-options"></div>
+            </div>
+          </div>
+          <select id="projects-status-filter" class="select-filter">
+            <option value="all">All Statuses</option>
+            <option value="active">Active</option>
+            <option value="running">Running</option>
+            <option value="done">Done</option>
+            <option value="blocked">Blocked</option>
+          </select>
+          <select id="projects-org-filter" class="select-filter" style="display:none;" aria-hidden="true">
             <option value="all">All Organizations</option>
           </select>
         </div>
       </div>
-      <div id="projects-grid" class="projects-grid"></div>
+      <div id="projects-grid" class="projects-container"></div>
     </section>
 
     <!-- Agents view (full dedicated page) -->
