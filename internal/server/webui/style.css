@@ -688,14 +688,72 @@ html, body {
   position: fixed; right: 0; top: 0; bottom: 0; width: 440px;
   background: var(--surface); border-left: 1px solid var(--border);
   padding: 20px; overflow-y: auto; z-index: 300;
-  box-shadow: var(--shadow); transition: transform .2s;
+  box-shadow: var(--shadow); transition: transform .2s, left .2s, width .2s;
 }
 .detail-panel.hidden { transform: translateX(100%); }
-.panel-close {
+
+.panel-header-actions {
   position: absolute; top: 12px; right: 14px;
+  display: flex; align-items: center; gap: 8px; z-index: 10;
+}
+.panel-expand {
+  background: none; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--muted); font-size: 14px; padding: 2px 6px; cursor: pointer;
+  line-height: 1.2; display: inline-flex; align-items: center; justify-content: center;
+  transition: color .15s, background .15s, border-color .15s;
+}
+.panel-expand:hover {
+  color: var(--text); background: var(--surface2); border-color: var(--accent);
+}
+.panel-expand.active {
+  color: var(--accent-light); background: rgba(139, 92, 246, 0.15); border-color: var(--accent);
+}
+.panel-close {
   background: none; border: none; font-size: 22px; color: var(--muted); cursor: pointer;
+  line-height: 1; padding: 0 4px;
 }
 .panel-close:hover { color: var(--text); }
+
+/* Full-Page Mode (main viewport minus sidebar) */
+.detail-panel.full-page {
+  position: fixed;
+  left: var(--sidebar-w);
+  right: 0;
+  top: var(--header-h);
+  bottom: 0;
+  width: auto;
+  max-width: none;
+  border-left: 1px solid var(--border);
+  box-shadow: none;
+  z-index: 300;
+  transition: left .2s ease, transform .2s ease;
+}
+
+body.sidebar-collapsed .detail-panel.full-page,
+body:has(#sidebar.collapsed) .detail-panel.full-page {
+  left: 0;
+}
+
+.detail-panel.full-page #panel-content {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 10px 24px 60px;
+}
+
+.detail-panel.full-page .panel-title {
+  font-size: 22px;
+  margin-top: 8px;
+  margin-bottom: 16px;
+}
+
+.detail-panel.full-page .panel-meta-row {
+  margin-bottom: 20px;
+  gap: 12px;
+}
+
+.detail-panel.full-page .panel-gov-section {
+  max-width: 800px;
+}
 
 .panel-title { font-size: 16px; font-weight: 700; margin-bottom: 12px; margin-top: 8px; line-height: 1.4; }
 .panel-meta-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
@@ -2140,6 +2198,141 @@ html, body {
 .checklist-history-entry strong { color: var(--fg); }
 .checklist-progress-bar { height: 4px; border-radius: 2px; background: var(--border); margin-bottom: 20px; overflow: hidden; }
 .checklist-progress-fill { height: 100%; background: var(--green); transition: width .3s; }
+
+/* ── Toast Notifications ─────────────────────────────────── */
+.toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 400px;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.4;
+  animation: toastIn 0.2s ease forwards;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.toast-fadeout {
+  opacity: 0;
+  transform: translateY(8px);
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.toast-icon { font-size: 15px; flex-shrink: 0; }
+.toast-message { flex: 1; word-break: break-word; }
+.toast-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  line-height: 1;
+}
+.toast-close:hover { color: var(--text); background: rgba(255,255,255,0.08); }
+.toast-info { border-left: 4px solid var(--cyan); }
+.toast-success { border-left: 4px solid var(--green); }
+.toast-warning { border-left: 4px solid var(--amber); }
+.toast-error { border-left: 4px solid var(--red); }
+
+/* ── Checklist Summary Banner ────────────────────────────── */
+#checklist-banner-area {
+  margin-bottom: 16px;
+}
+.checklist-summary-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  animation: toastIn 0.2s ease;
+  position: relative;
+}
+.checklist-summary-banner .banner-icon {
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.checklist-summary-banner .banner-content {
+  flex: 1;
+}
+.checklist-summary-banner .banner-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+.checklist-summary-banner .banner-desc {
+  font-size: 12px;
+  color: var(--muted);
+}
+.checklist-summary-banner .banner-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-left: 8px;
+}
+.checklist-summary-banner .banner-close:hover {
+  color: var(--text);
+  background: rgba(255,255,255,0.08);
+}
+.checklist-summary-banner.banner-loading {
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: var(--cyan);
+}
+.checklist-summary-banner.banner-loading .banner-desc {
+  color: var(--cyan);
+  opacity: 0.85;
+}
+.checklist-summary-banner.banner-success {
+  background: rgba(63, 185, 80, 0.1);
+  border: 1px solid rgba(63, 185, 80, 0.35);
+  color: var(--text);
+}
+.checklist-summary-banner.banner-success .banner-title {
+  color: var(--green);
+}
+.checklist-summary-banner.banner-warning {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: var(--text);
+}
+.checklist-summary-banner.banner-warning .banner-title {
+  color: var(--amber);
+}
+.checklist-summary-banner.banner-divergence {
+  background: rgba(248, 81, 73, 0.12);
+  border: 1px solid rgba(248, 81, 73, 0.4);
+  color: var(--text);
+}
+.checklist-summary-banner.banner-divergence .banner-title {
+  color: var(--red);
+}
 
 /* ── Fleet Drill-Down Modal ──────────────────────────────── */
 .modal-overlay {

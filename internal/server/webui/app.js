@@ -34,6 +34,11 @@ const state = {
   currentOrgDetail: null,
   openDetailTaskId: null,
   chatPollTimer:    null,
+  bossReportCache:           {},   // reportId -> html string
+  bossReportCacheTimestamps: {},   // reportId -> epoch ms
+  bossReportLastRenderedAt:  0,    // epoch ms of last full render/refresh
+  bossReportPreloading:      false,
+  taskDetailFullPage:        false,
 };
 
 // ── Projects Filter Persistence (STA-192) ────────────────
@@ -395,6 +400,7 @@ function renderSidebarOrgTree() {
 document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
   const sidebar = document.getElementById('sidebar');
   sidebar?.classList.toggle('collapsed');
+  document.body.classList.toggle('sidebar-collapsed', Boolean(sidebar?.classList.contains('collapsed')));
 });
 
 // ── SPA URL Routing ──────────────────────────────────────
@@ -458,7 +464,10 @@ function navigateTo(viewName, orgName = null, pushHistory = true) {
     if (viewName === 'checklist')    loadChecklistSprints().then(() => loadChecklist());
     if (viewName === 'overview')     renderOverview();
     if (viewName === 'kanban')       renderKanban();
-    if (viewName === 'boss')         renderBoss();
+    if (viewName === 'boss') {
+      renderBoss();
+      preloadBossReports(true);
+    }
   }
 
   if (typeof updateWalkthroughSidebarHighlight === 'function') {
@@ -5042,6 +5051,89 @@ const BOSS_REPORTS = [
   { id: 'gemini',   label: 'Gemini / AGY',     desc: 'Antigravity Agent Velocity',  icon: '⚡' },
 ];
 
+const BOSS_REPORT_CACHE_KEY = 'staypoint_boss_reports_cache';
+const BOSS_REPORT_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes TTL
+
+function loadBossReportCache() {
+  try {
+    const raw = localStorage.getItem(BOSS_REPORT_CACHE_KEY);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.reports || typeof parsed.reports !== 'object') return false;
+    const now = Date.now();
+    const today = new Date().toISOString().slice(0, 10);
+    const isToday = parsed.date === today;
+    const isWithinTTL = (now - (parsed.timestamp || 0)) < BOSS_REPORT_CACHE_TTL_MS;
+    if (isToday && isWithinTTL) {
+      state.bossReportCache = Object.assign({}, parsed.reports);
+      state.bossReportLastRenderedAt = parsed.timestamp || now;
+      return true;
+    }
+  } catch { /* ignore storage errors */ }
+  return false;
+}
+
+function saveBossReportCache() {
+  try {
+    const payload = {
+      timestamp: Date.now(),
+      date: new Date().toISOString().slice(0, 10),
+      reports: state.bossReportCache || {},
+    };
+    localStorage.setItem(BOSS_REPORT_CACHE_KEY, JSON.stringify(payload));
+    state.bossReportLastRenderedAt = payload.timestamp;
+  } catch { /* ignore storage errors */ }
+}
+
+async function preloadBossReports(force = false) {
+  if (state.bossReportPreloading) return;
+  state.bossReportPreloading = true;
+
+  try {
+    if (!force) {
+      const isFresh = loadBossReportCache();
+      const allCached = BOSS_REPORTS.every(r => Boolean(state.bossReportCache && state.bossReportCache[r.id]));
+      if (isFresh && allCached) {
+        state.bossReportPreloading = false;
+        return;
+      }
+    }
+
+    const fetches = BOSS_REPORTS.map(async (rep) => {
+      try {
+        const url = `/api/report?type=${encodeURIComponent(rep.id)}&format=html${TOKEN ? `&token=${encodeURIComponent(TOKEN)}` : ''}`;
+        const res = await fetch(url, { headers: authHeader() });
+        if (res.ok) {
+          const html = await res.text();
+          if (!state.bossReportCache) state.bossReportCache = {};
+          state.bossReportCache[rep.id] = html;
+          state.bossReportCacheTimestamps[rep.id] = Date.now();
+        }
+      } catch (err) {
+        console.warn(`[BossCache] Error preloading ${rep.id}:`, err);
+      }
+    });
+
+    await Promise.all(fetches);
+    saveBossReportCache();
+
+    // If an iframe for the current report is in view, ensure it displays the fresh content
+    const activeIframe = document.querySelector('.boss-preview-iframe');
+    const curReport = typeof state.bossReportIndex === 'number' ? BOSS_REPORTS[state.bossReportIndex] : null;
+    if (activeIframe && curReport && state.bossReportCache[curReport.id]) {
+      if (activeIframe.srcdoc !== state.bossReportCache[curReport.id]) {
+        activeIframe.srcdoc = state.bossReportCache[curReport.id];
+      }
+      const loading = document.querySelector('.boss-preview-loading');
+      if (loading) loading.style.display = 'none';
+      const errorOverlay = document.querySelector('.boss-preview-error');
+      if (errorOverlay) errorOverlay.style.display = 'none';
+    }
+  } finally {
+    state.bossReportPreloading = false;
+  }
+}
+
 function buildBossReportCarousel() {
   const card = el('div', 'boss-carousel-card');
 
@@ -5121,6 +5213,7 @@ function buildBossReportCarousel() {
   refreshBtn.addEventListener('click', () => {
     delete state.bossReportCache[currentReport().id];
     loadReport();
+    preloadBossReports(true);
   });
   actions.appendChild(refreshBtn);
 
@@ -5249,6 +5342,8 @@ function buildBossReportCarousel() {
       }
       const html = await res.text();
       state.bossReportCache[rep.id] = html;
+      state.bossReportCacheTimestamps[rep.id] = Date.now();
+      saveBossReportCache();
       iframe.srcdoc = html;
       loadingOverlay.style.display = 'none';
     } catch (err) {
@@ -5928,6 +6023,16 @@ async function openDetail(taskId, pushHistory = true) {
   state.openDetailTaskId = taskId;
   lastDetailOpenTime = Date.now();
   panel.classList.remove('hidden');
+  panel.classList.toggle('full-page', Boolean(state.taskDetailFullPage));
+  const expandBtn = document.getElementById('panel-expand');
+  if (expandBtn) {
+    expandBtn.classList.toggle('active', Boolean(state.taskDetailFullPage));
+    expandBtn.title = state.taskDetailFullPage
+      ? 'Exit full page (Restore side panel)'
+      : 'Expand to full page (main viewport minus sidebar)';
+    expandBtn.innerHTML = state.taskDetailFullPage ? '🗗' : '&#x26F6;';
+    expandBtn.setAttribute('aria-pressed', String(Boolean(state.taskDetailFullPage)));
+  }
   content.innerHTML = '<p style="color:var(--muted)">Loading…</p>';
 
   if (pushHistory && !window.location.pathname.startsWith('/tasks/' + taskId) && !window.location.pathname.startsWith('/issues/' + taskId)) {
@@ -5997,10 +6102,43 @@ function appendComments(container, comments) {
   }
 }
 
+function toggleDetailFullPage() {
+  const panel = document.getElementById('detail-panel');
+  const btn = document.getElementById('panel-expand');
+  if (!panel) return;
+  state.taskDetailFullPage = !state.taskDetailFullPage;
+  panel.classList.toggle('full-page', Boolean(state.taskDetailFullPage));
+  if (btn) {
+    btn.classList.toggle('active', Boolean(state.taskDetailFullPage));
+    btn.setAttribute('aria-pressed', String(Boolean(state.taskDetailFullPage)));
+    if (state.taskDetailFullPage) {
+      btn.title = 'Exit full page (Restore side panel)';
+      btn.innerHTML = '🗗';
+      btn.setAttribute('aria-label', 'Exit full page');
+    } else {
+      btn.title = 'Expand to full page (main viewport minus sidebar)';
+      btn.innerHTML = '&#x26F6;';
+      btn.setAttribute('aria-label', 'Expand to full page');
+    }
+  }
+}
+
 function closeDetailPanel() {
   const panel = document.getElementById('detail-panel');
   if (!panel || panel.classList.contains('hidden')) return;
   panel.classList.add('hidden');
+  if (state.taskDetailFullPage) {
+    state.taskDetailFullPage = false;
+    panel.classList.remove('full-page');
+    const expandBtn = document.getElementById('panel-expand');
+    if (expandBtn) {
+      expandBtn.classList.remove('active');
+      expandBtn.setAttribute('aria-pressed', 'false');
+      expandBtn.title = 'Expand to full page (main viewport minus sidebar)';
+      expandBtn.innerHTML = '&#x26F6;';
+      expandBtn.setAttribute('aria-label', 'Expand to full page');
+    }
+  }
   stopChatPoll();
   state.openDetailTaskId = null;
   if (window.location.pathname.startsWith('/tasks/') || window.location.pathname.startsWith('/issues/')) {
@@ -6010,7 +6148,8 @@ function closeDetailPanel() {
   }
 }
 
-document.getElementById('panel-close').addEventListener('click', closeDetailPanel);
+document.getElementById('panel-close')?.addEventListener('click', closeDetailPanel);
+document.getElementById('panel-expand')?.addEventListener('click', toggleDetailFullPage);
 
 document.addEventListener('click', (e) => {
   const panel = document.getElementById('detail-panel');
@@ -6019,8 +6158,8 @@ document.addEventListener('click', (e) => {
   if (Date.now() - lastDetailOpenTime < 150) return;
   // If clicked inside the detail panel, do not close
   if (panel.contains(e.target)) return;
-  // If clicked on the close button, it has its own handler
-  if (e.target.closest('#panel-close')) return;
+  // If clicked on close or expand button, ignore
+  if (e.target.closest('#panel-close') || e.target.closest('#panel-expand')) return;
   closeDetailPanel();
 });
 
@@ -6610,30 +6749,128 @@ document.getElementById('checklist-sprint-filter')?.addEventListener('change', (
   loadChecklist(e.target.value);
 });
 
+function showToast(message, type = 'info', duration = 4500) {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    container.className = 'toast-container';
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+
+  let icon = 'ℹ️';
+  if (type === 'success') icon = '✅';
+  else if (type === 'warning') icon = '⚠️';
+  else if (type === 'error') icon = '❌';
+
+  toast.innerHTML = `
+    <span class="toast-icon">${icon}</span>
+    <span class="toast-message">${escapeHtml(message)}</span>
+    <button class="toast-close" title="Dismiss">✕</button>
+  `;
+
+  const closeBtn = toast.querySelector('.toast-close');
+  const dismiss = () => {
+    toast.classList.add('toast-fadeout');
+    setTimeout(() => toast.remove(), 250);
+  };
+  closeBtn?.addEventListener('click', dismiss);
+
+  container.appendChild(toast);
+
+  if (duration > 0) {
+    setTimeout(dismiss, duration);
+  }
+}
+
 async function verifyChecklistContracts() {
   const sprint = document.getElementById('checklist-sprint-filter')?.value || 'STA-168-2';
   const btn = document.getElementById('checklist-verify-btn');
+  const bannerArea = document.getElementById('checklist-banner-area');
+
   if (btn) {
     btn.disabled = true;
-    btn.textContent = 'Verifying…';
+    btn.innerHTML = '<span class="dl-spinner"></span> Verifying…';
   }
+
+  if (bannerArea) {
+    bannerArea.innerHTML = `
+      <div class="checklist-summary-banner banner-loading">
+        <span class="dl-spinner"></span>
+        <div class="banner-content">
+          <div class="banner-title">Evaluating Machine Contracts…</div>
+          <div class="banner-desc">Executing assertions for ${escapeHtml(sprint)}…</div>
+        </div>
+      </div>
+    `;
+  }
+  showToast(`Evaluating machine contracts for ${sprint}…`, 'info', 2500);
+
   try {
     const res = await fetch(`/api/checklist/evaluate?sprint=${encodeURIComponent(sprint)}&downgrade=true`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${window.__STAYPOINT_TOKEN__ || ''}` }
     });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    }
     const summary = await res.json();
+
+    if (bannerArea) {
+      let bannerCls = 'banner-success';
+      let icon = '✅';
+      let title = `All Machine Contracts Verified (${summary.commit_sha || 'HEAD'})`;
+      let desc = `All ${summary.total} machine contracts verified successfully with 0 regressions.`;
+
+      if (summary.divergences > 0) {
+        bannerCls = 'banner-divergence';
+        icon = '⚠️';
+        title = `Regression Divergence Detected! (${summary.divergences} regressed)`;
+        desc = `${summary.divergences} previously-verified item(s) regressed and were automatically downgraded to 'fail'. (${summary.passed} passed, ${summary.failed} failed of ${summary.total} total).`;
+      } else if (summary.failed > 0) {
+        bannerCls = 'banner-warning';
+        icon = 'ℹ️';
+        title = `Contract Verification: ${summary.passed}/${summary.total} Passing`;
+        desc = `${summary.passed} contracts passing, ${summary.failed} failing. 0 regressions detected.`;
+      }
+
+      bannerArea.innerHTML = `
+        <div class="checklist-summary-banner ${bannerCls}">
+          <div class="banner-icon">${icon}</div>
+          <div class="banner-content">
+            <div class="banner-title">${escapeHtml(title)}</div>
+            <div class="banner-desc">${escapeHtml(desc)}</div>
+          </div>
+          <button class="banner-close" title="Dismiss" onclick="this.parentElement.remove()">✕</button>
+        </div>
+      `;
+    }
+
     if (summary.divergences > 0) {
-      alert(`⚠️ Divergence Detected!\n\n${summary.divergences} previously-verified item(s) regressed and were automatically downgraded to 'fail'.`);
+      showToast(`⚠️ Divergence Detected: ${summary.divergences} regressed! (${summary.passed}/${summary.total} passed)`, 'error', 7000);
     } else if (summary.failed > 0) {
-      alert(`Checklist Evaluation:\n\n${summary.passed}/${summary.total} contracts passing, ${summary.failed} failing.`);
+      showToast(`Evaluation: ${summary.passed}/${summary.total} contracts passing, ${summary.failed} failing.`, 'warning', 5000);
     } else {
-      alert(`✅ All ${summary.total} machine contracts verified successfully!`);
+      showToast(`✅ All ${summary.total} machine contracts verified!`, 'success', 5000);
     }
     await loadChecklist(sprint);
   } catch (err) {
     console.error('Failed to verify contracts:', err);
-    alert('Failed to evaluate checklist contracts: ' + err.message);
+    if (bannerArea) {
+      bannerArea.innerHTML = `
+        <div class="checklist-summary-banner banner-divergence">
+          <div class="banner-icon">❌</div>
+          <div class="banner-content">
+            <div class="banner-title">Contract Evaluation Failed</div>
+            <div class="banner-desc">${escapeHtml(err.message)}</div>
+          </div>
+          <button class="banner-close" title="Dismiss" onclick="this.parentElement.remove()">✕</button>
+        </div>
+      `;
+    }
+    showToast(`Evaluation failed: ${err.message}`, 'error', 6000);
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -7128,6 +7365,10 @@ document.getElementById('projects-org-filter')?.addEventListener('change', (e) =
 
 // ── Boot ──────────────────────────────────────────────────
 loadAll().then(() => {
+  // Pre-render and cache Boss Cards on initial load / first daily access
+  loadBossReportCache();
+  preloadBossReports(false);
+
   const initialRoute = pathToRoute();
   navigateTo(initialRoute.view, initialRoute.org, false);
   if (initialRoute.taskId) {
@@ -7139,3 +7380,8 @@ loadAll().then(() => {
     renderWalkthroughHUD();
   }
 });
+
+// Periodic Boss Card re-render (every 30 minutes)
+setInterval(() => {
+  preloadBossReports(true);
+}, BOSS_REPORT_CACHE_TTL_MS);
