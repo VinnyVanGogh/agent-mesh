@@ -32,7 +32,7 @@ var (
 		"05. Cascading Project Filter & Agents Modernization (STA-212, STA-179)":      "aa1c1ff",
 		"06. Full-Page Task View Mode & Boss Card Cache (STA-213, STA-194)":           "a4d3bc9",
 		"07. Verify Contracts Visual Feedback & Gemini Telemetry (STA-214, STA-170, STA-175)": "fd25533",
-		"08. Checklist Commit-Hash Gate & DoD Enforcement (STA-236)":                 "c81ce5b",
+		"08. Checklist Commit-Hash Gate & DoD Enforcement (STA-236)":                 "7254abb",
 	}
 
 	commitHashRegex = regexp.MustCompile(`\b([0-9a-f]{7,40})\b`)
