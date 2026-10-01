@@ -6578,6 +6578,23 @@ document.querySelectorAll('.agent-filter-pill').forEach(btn => {
 // ── Checklist View ────────────────────────────────────────
 
 let checklistItems = [];   // local cache
+let checklistCommitVerification = null;
+
+function isItemCommitBlocked(itemId) {
+  if (!checklistCommitVerification) return false;
+  return checklistCommitVerification.blocked_item_ids?.includes(itemId) || false;
+}
+
+function getItemCommitBlockReason(itemId) {
+  if (!checklistCommitVerification?.missing_commits) return 'Required commit missing from main or running daemon';
+  const itemWarn = checklistCommitVerification.missing_commits.find(w => w.item_id === itemId);
+  return itemWarn ? itemWarn.reason : 'Required commit missing from main or running daemon';
+}
+
+function isSectionCommitBlocked(sectionName) {
+  if (!checklistCommitVerification) return false;
+  return checklistCommitVerification.blocked_sections?.includes(sectionName) || false;
+}
 
 async function loadChecklist(sprint) {
   const urlParams = new URLSearchParams(window.location.search);
@@ -6590,6 +6607,7 @@ async function loadChecklist(sprint) {
   try {
     const r = await apiFetch(`/api/checklist?sprint=${encodeURIComponent(s)}`);
     checklistItems = r.items || [];
+    checklistCommitVerification = r.commit_verification || null;
     renderChecklist();
     updateChecklistProgress();
     if (typeof updateDevTourToggleUI === 'function') updateDevTourToggleUI();
@@ -6673,6 +6691,61 @@ function renderChecklist() {
     sections[item.section].push(item);
   }
 
+  // Commit-Hash Gate Warning Banner & Log
+  if (checklistCommitVerification && (!checklistCommitVerification.verified || (checklistCommitVerification.missing_commits && checklistCommitVerification.missing_commits.length > 0))) {
+    const missing = checklistCommitVerification.missing_commits || [];
+    const blockedItems = checklistCommitVerification.blocked_item_ids || [];
+    const blockedSections = checklistCommitVerification.blocked_sections || [];
+
+    const banner = el('div', 'checklist-commit-gate-banner');
+    const header = el('div', 'cl-gate-header');
+    const icon = el('div', 'cl-gate-icon', '⛔');
+    const content = el('div', 'cl-gate-content');
+    const title = el('div', 'cl-gate-title', 'Checklist Commit-Hash Gate: Missing or Unmerged Commits Detected');
+    const desc = el('div', 'cl-gate-desc', `${blockedItems.length} item(s) across ${blockedSections.length} section(s) are blocked from being marked "done". Referenced commits must exist in main and be compiled into the running staypointd daemon.`);
+
+    const meta = el('div', 'cl-gate-meta');
+    meta.innerHTML = `<span>Running Daemon: <code>${escapeHtml(checklistCommitVerification.running_commit || 'unrebuilt / none')}</code></span> <span>Main Branch: <code>${escapeHtml(checklistCommitVerification.main_commit || 'unknown')}</code></span>`;
+    content.appendChild(title);
+    content.appendChild(desc);
+    content.appendChild(meta);
+
+    const toggleBtn = el('button', 'cl-gate-toggle-btn', `Show Warning Log (${missing.length})`);
+    header.appendChild(icon);
+    header.appendChild(content);
+    header.appendChild(toggleBtn);
+    banner.appendChild(header);
+
+    const logContainer = el('div', 'cl-gate-log-container');
+    logContainer.style.display = 'none';
+
+    const table = el('table', 'cl-gate-log-table');
+    table.innerHTML = `<thead><tr><th>Commit</th><th>Section / Item</th><th>Status in main</th><th>Status in daemon</th><th>Reason</th></tr></thead>`;
+    const tbody = el('tbody');
+    for (const m of missing) {
+      const tr = el('tr');
+      tr.innerHTML = `
+        <td><code>${escapeHtml(m.commit)}</code></td>
+        <td><strong>${escapeHtml(m.section)}</strong><br/><span class="muted-text">${escapeHtml(m.item_title || '')}</span></td>
+        <td>${m.missing_from_main ? '<span style="color:var(--red)">✗ Missing</span>' : '<span style="color:var(--green)">✓ Present</span>'}</td>
+        <td>${m.missing_from_binary ? '<span style="color:var(--red)">✗ Unrebuilt / Missing</span>' : '<span style="color:var(--green)">✓ Present</span>'}</td>
+        <td style="color:var(--muted)">${escapeHtml(m.reason || '')}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    logContainer.appendChild(table);
+    banner.appendChild(logContainer);
+
+    toggleBtn.addEventListener('click', () => {
+      const isHidden = logContainer.style.display === 'none';
+      logContainer.style.display = isHidden ? 'block' : 'none';
+      toggleBtn.textContent = isHidden ? `Hide Warning Log (${missing.length})` : `Show Warning Log (${missing.length})`;
+    });
+
+    container.appendChild(banner);
+  }
+
   // Progress bar
   const total = checklistItems.length;
   const done  = checklistItems.filter(i => i.status !== 'pending').length;
@@ -6734,6 +6807,11 @@ function renderChecklist() {
     const titleText = el('span', 'checklist-section-name', sectionName);
     titleLeft.appendChild(chevron);
     titleLeft.appendChild(titleText);
+    if (isSectionCommitBlocked(sectionName)) {
+      const blockedBadge = el('span', 'badge badge-commit-blocked', '⛔ Commit Gate Active');
+      blockedBadge.title = 'Section contains unmerged or uncompiled commits';
+      titleLeft.appendChild(blockedBadge);
+    }
 
     const passCount = items.filter(i => i.status === 'pass').length;
     const partialCount = items.filter(i => i.status === 'partial').length;
@@ -6796,6 +6874,8 @@ function buildChecklistItem(item) {
   row.dataset.id = item.id;
 
   // Status buttons column
+  const isBlocked = isItemCommitBlocked(item.id);
+  const blockReason = isBlocked ? getItemCommitBlockReason(item.id) : '';
   const btnCol = el('div', 'checklist-status-btns');
   for (const [status, icon, label] of [
     ['pass',     '✓', 'Pass'],
@@ -6804,9 +6884,15 @@ function buildChecklistItem(item) {
     ['skip',     '–', 'Skip'],
     ['not_done', '!', 'Not Done'],
   ]) {
-    const btn = el('button', `cl-btn${item.status === status ? ' active-' + status : ''}`, icon);
+    const isPass = status === 'pass';
+    const btn = el('button', `cl-btn${item.status === status ? ' active-' + status : ''}${isPass && isBlocked ? ' cl-btn-blocked' : ''}`, icon);
     btn.dataset.status = status;
-    btn.title = label;
+    if (isPass && isBlocked) {
+      btn.disabled = true;
+      btn.title = `⛔ Blocked by Commit Gate: ${blockReason}`;
+    } else {
+      btn.title = label;
+    }
     btn.addEventListener('click', () => updateChecklistStatus(item.id, status));
     btnCol.appendChild(btn);
   }
@@ -6815,6 +6901,16 @@ function buildChecklistItem(item) {
   // Body
   const body = el('div', 'checklist-body');
   const titleEl = el('div', `checklist-title${item.status !== 'pending' ? ' status-' + item.status : ''}`, item.title);
+  if (item.commit_hash) {
+    const commitBadge = el('span', 'checklist-commit-badge', `git:${item.commit_hash}`);
+    commitBadge.title = `Bound commit: ${item.commit_hash}`;
+    titleEl.appendChild(commitBadge);
+  }
+  if (isBlocked) {
+    const blockedTag = el('span', 'badge badge-commit-blocked', '⛔ Commit Gate');
+    blockedTag.title = `Blocked: ${blockReason}`;
+    titleEl.appendChild(blockedTag);
+  }
   if (item.contract) {
     const contractTag = el('span', 'checklist-contract-tag', '⚙ contract');
     contractTag.title = 'Machine-verifiable contract: ' + item.contract;
@@ -6946,6 +7042,13 @@ function updateSectionCounts(sectionName) {
 async function updateChecklistStatus(id, status, explicitNotes = null) {
   const idx = checklistItems.findIndex(i => i.id === id);
   if (idx === -1) return;
+
+  if (status === 'pass' && isItemCommitBlocked(id)) {
+    const reason = getItemCommitBlockReason(id);
+    alert(`⛔ Commit Gate Block: This checklist item cannot be marked "done" / "pass".\n\nReason: ${reason}\n\nRequired commits must be merged into main and compiled into the running staypointd daemon.`);
+    return;
+  }
+
   const row = document.querySelector(`.checklist-item[data-id="${id}"]`);
   const currentNotesInput = row?.querySelector('.checklist-notes-input');
   const draftKey = 'staypoint_cl_draft_' + id;
@@ -6973,7 +7076,15 @@ async function updateChecklistStatus(id, status, explicitNotes = null) {
       headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify({ status, notes }),
     });
-    if (!r.ok) throw new Error(await r.text());
+    if (!r.ok) {
+      const errText = await r.text();
+      let errMsg = errText;
+      try {
+        const parsed = JSON.parse(errText);
+        if (parsed.error) errMsg = parsed.error;
+      } catch {}
+      throw new Error(errMsg);
+    }
     const updated = await r.json();
     checklistItems[idx] = updated;
     localStorage.removeItem(draftKey);
@@ -7506,10 +7617,25 @@ function updateHUDStatusButtons(currentStatus) {
   const item = checklistItems[state.index];
   if (!item) return;
 
+  const isBlocked = isItemCommitBlocked(item.id);
+  const blockReason = isBlocked ? getItemCommitBlockReason(item.id) : '';
+
   document.querySelectorAll('.hud-status-btn').forEach(btn => {
     const st = btn.dataset.status;
-    btn.className = `hud-status-btn${item.status === st ? ' active-' + st : ''}`;
+    const isPass = st === 'pass';
+    btn.className = `hud-status-btn${item.status === st ? ' active-' + st : ''}${isPass && isBlocked ? ' cl-btn-blocked' : ''}`;
+    if (isPass && isBlocked) {
+      btn.disabled = true;
+      btn.title = `⛔ Blocked by Commit Gate: ${blockReason}`;
+    } else {
+      btn.disabled = false;
+      btn.title = '';
+    }
     btn.onclick = async () => {
+      if (isPass && isBlocked) {
+        alert(`⛔ Commit Gate Block: This checklist item cannot be marked "done" / "pass".\n\nReason: ${blockReason}\n\nRequired commits must be merged into main and compiled into the running staypointd daemon.`);
+        return;
+      }
       const notesInput = document.getElementById('hud-notes-input');
       const val = notesInput ? notesInput.value : item.notes;
       await updateChecklistStatus(item.id, st, val);

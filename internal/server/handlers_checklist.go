@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -14,13 +15,18 @@ import (
 
 // ChecklistHandler serves the /api/checklist endpoints.
 type ChecklistHandler struct {
-	db  *sql.DB
-	hub *EventHub
+	db            *sql.DB
+	hub           *EventHub
+	runningCommit string
 }
 
-func NewChecklistHandler(db *sql.DB, hub *EventHub) *ChecklistHandler {
+func NewChecklistHandler(db *sql.DB, hub *EventHub, runningCommit ...string) *ChecklistHandler {
 	_ = ensureChecklistTables(db)
-	return &ChecklistHandler{db: db, hub: hub}
+	rc := ""
+	if len(runningCommit) > 0 {
+		rc = runningCommit[0]
+	}
+	return &ChecklistHandler{db: db, hub: hub, runningCommit: rc}
 }
 
 func ensureChecklistTables(db *sql.DB) error {
@@ -36,6 +42,7 @@ func ensureChecklistTables(db *sql.DB) error {
 		description TEXT,
 		how_to_test TEXT,
 		contract    TEXT,
+		commit_hash TEXT,
 		status      TEXT NOT NULL DEFAULT 'pending'
 		            CHECK (status IN ('pending','pass','partial','fail','skip','not_done')),
 		notes       TEXT,
@@ -63,6 +70,13 @@ func ensureChecklistTables(db *sql.DB) error {
 	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('checklist_items') WHERE name='contract'").Scan(&contractColCount)
 	if contractColCount == 0 {
 		_, _ = db.Exec("ALTER TABLE checklist_items ADD COLUMN contract TEXT;")
+	}
+
+	// Idempotently add commit_hash column if missing
+	var commitColCount int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('checklist_items') WHERE name='commit_hash'").Scan(&commitColCount)
+	if commitColCount == 0 {
+		_, _ = db.Exec("ALTER TABLE checklist_items ADD COLUMN commit_hash TEXT;")
 	}
 
 	// Idempotently check and migrate CHECK constraint if partial is missing
@@ -106,6 +120,7 @@ type ChecklistItem struct {
 	Description string `json:"description,omitempty"`
 	HowToTest   string `json:"how_to_test,omitempty"`
 	Contract    string `json:"contract,omitempty"`
+	CommitHash  string `json:"commit_hash,omitempty"`
 	Status      string `json:"status"` // pending | pass | fail | skip | not_done
 	Notes       string `json:"notes"`
 	Version     int    `json:"version"`
@@ -130,7 +145,7 @@ func (h *ChecklistHandler) ListItems(w http.ResponseWriter, r *http.Request) {
 	if sprint == "" {
 		sprint = "STA-168-2"
 	}
-	query := `SELECT id, sprint, section, title, description, how_to_test, contract, status, notes, version, created_at, updated_at
+	query := `SELECT id, sprint, section, title, description, how_to_test, contract, commit_hash, status, notes, version, created_at, updated_at
 		FROM checklist_items`
 	args := []any{}
 	if sprint != "" {
@@ -147,11 +162,12 @@ func (h *ChecklistHandler) ListItems(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	items := []ChecklistItem{}
+	clItems := []checklist.Item{}
 	for rows.Next() {
 		var it ChecklistItem
-		var desc, howTo, contract, notes sql.NullString
+		var desc, howTo, contract, commitHash, notes sql.NullString
 		if err := rows.Scan(&it.ID, &it.Sprint, &it.Section, &it.Title,
-			&desc, &howTo, &contract, &it.Status, &notes, &it.Version,
+			&desc, &howTo, &contract, &commitHash, &it.Status, &notes, &it.Version,
 			&it.CreatedAt, &it.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -159,10 +175,41 @@ func (h *ChecklistHandler) ListItems(w http.ResponseWriter, r *http.Request) {
 		it.Description = desc.String
 		it.HowToTest = howTo.String
 		it.Contract = contract.String
+		it.CommitHash = commitHash.String
 		it.Notes = notes.String
 		items = append(items, it)
+
+		clItems = append(clItems, checklist.Item{
+			ID:         it.ID,
+			Sprint:     it.Sprint,
+			Section:    it.Section,
+			Title:      it.Title,
+			Contract:   it.Contract,
+			CommitHash: it.CommitHash,
+			Status:     it.Status,
+		})
 	}
-	writeJSON(w, map[string]any{"items": items})
+
+	repoRoot := r.URL.Query().Get("repo_root")
+	if repoRoot == "" {
+		repoRoot = os.Getenv("STAYPOINT_REPO_ROOT")
+	}
+	if repoRoot == "" {
+		if _, err := os.Stat("go.mod"); err == nil {
+			repoRoot = "."
+		} else if _, err := os.Stat("/Users/vincevasile/Documents/dev/agent-mesh/go.mod"); err == nil {
+			repoRoot = "/Users/vincevasile/Documents/dev/agent-mesh"
+		} else {
+			repoRoot = "."
+		}
+	}
+
+	verSummary, _ := checklist.VerifyCommits(r.Context(), repoRoot, h.runningCommit, clItems)
+
+	writeJSON(w, map[string]any{
+		"items":               items,
+		"commit_verification": verSummary,
+	})
 }
 
 // GET /api/checklist/sprints — list distinct sprint identifiers
@@ -192,9 +239,10 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Status   string  `json:"status"`
-		Notes    *string `json:"notes"`
-		Contract *string `json:"contract"`
+		Status     string  `json:"status"`
+		Notes      *string `json:"notes"`
+		Contract   *string `json:"contract"`
+		CommitHash *string `json:"commit_hash"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid json: "+err.Error())
@@ -214,11 +262,11 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch current item to bump version
 	var current ChecklistItem
-	var desc, howTo, contract, notes sql.NullString
+	var desc, howTo, contract, commitHash, notes sql.NullString
 	err := h.db.QueryRowContext(r.Context(),
-		`SELECT id, sprint, section, title, description, how_to_test, contract, status, notes, version, created_at, updated_at FROM checklist_items WHERE id = ?`, id).
+		`SELECT id, sprint, section, title, description, how_to_test, contract, commit_hash, status, notes, version, created_at, updated_at FROM checklist_items WHERE id = ?`, id).
 		Scan(&current.ID, &current.Sprint, &current.Section, &current.Title,
-			&desc, &howTo, &contract, &current.Status, &notes, &current.Version,
+			&desc, &howTo, &contract, &commitHash, &current.Status, &notes, &current.Version,
 			&current.CreatedAt, &current.UpdatedAt)
 	if err == sql.ErrNoRows {
 		writeError(w, http.StatusNotFound, "item not found")
@@ -231,6 +279,7 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	current.Description = desc.String
 	current.HowToTest = howTo.String
 	current.Contract = contract.String
+	current.CommitHash = commitHash.String
 	current.Notes = notes.String
 
 	newStatus := current.Status
@@ -245,6 +294,44 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	if body.Contract != nil {
 		newContract = *body.Contract
 	}
+	newCommitHash := current.CommitHash
+	if body.CommitHash != nil {
+		newCommitHash = *body.CommitHash
+	}
+
+	// Commit-hash verification gate: prevent marking 'pass' if commit is missing from main or active binary
+	if newStatus == "pass" {
+		targetCommit := newCommitHash
+		if targetCommit == "" {
+			targetCommit = checklist.ResolveItemCommit(checklist.Item{
+				Section:    current.Section,
+				Contract:   newContract,
+				CommitHash: newCommitHash,
+			})
+		}
+		if targetCommit != "" {
+			repoRoot := os.Getenv("STAYPOINT_REPO_ROOT")
+			if repoRoot == "" {
+				if _, err := os.Stat("go.mod"); err == nil {
+					repoRoot = "."
+				} else if _, err := os.Stat("/Users/vincevasile/Documents/dev/agent-mesh/go.mod"); err == nil {
+					repoRoot = "/Users/vincevasile/Documents/dev/agent-mesh"
+				} else {
+					repoRoot = "."
+				}
+			}
+			ver, _ := checklist.VerifyCommits(r.Context(), repoRoot, h.runningCommit, []checklist.Item{{
+				ID:         current.ID,
+				Section:    current.Section,
+				Contract:   newContract,
+				CommitHash: targetCommit,
+			}})
+			if ver != nil && !ver.Verified && len(ver.MissingCommits) > 0 {
+				writeError(w, http.StatusConflict, fmt.Sprintf("cannot mark checklist item as pass: %s", ver.MissingCommits[0].Reason))
+				return
+			}
+		}
+	}
 
 	tx, err := h.db.BeginTx(r.Context(), nil)
 	if err != nil {
@@ -255,8 +342,8 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 
 	newVersion := current.Version + 1
 	if _, err := tx.ExecContext(r.Context(),
-		`UPDATE checklist_items SET status=?, notes=?, contract=?, version=?, updated_at=? WHERE id=?`,
-		newStatus, newNotes, newContract, newVersion, now, id); err != nil {
+		`UPDATE checklist_items SET status=?, notes=?, contract=?, commit_hash=?, version=?, updated_at=? WHERE id=?`,
+		newStatus, newNotes, newContract, newCommitHash, newVersion, now, id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -274,7 +361,7 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 	current.Status = newStatus
 	current.Notes = newNotes
 	current.Contract = newContract
-	current.Notes = newNotes
+	current.CommitHash = newCommitHash
 	current.Version = newVersion
 	current.UpdatedAt = now
 	writeJSON(w, current)
@@ -356,6 +443,7 @@ func (h *ChecklistHandler) Evaluate(w http.ResponseWriter, r *http.Request) {
 
 	opts := checklist.EvaluateOptions{
 		RepoRoot:        repoRoot,
+		RunningCommit:   h.runningCommit,
 		BaseURL:         "http://" + r.Host,
 		HTTPClient:      &http.Client{Timeout: 10 * time.Second},
 		Downgrade:       downgrade,
