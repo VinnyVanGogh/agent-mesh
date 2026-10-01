@@ -11,7 +11,19 @@ LABEL="com.staypoint.daemon"
 COMMIT="$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo 'none')"
 echo "→ Building staypointd from $REPO (commit: $COMMIT) ..."
 go build -ldflags "-X main.GitCommit=$COMMIT -X main.commit=$COMMIT" -o "$BINARY" "$REPO/cmd/staypointd"
-codesign -s - -f -i com.staypoint.daemon "$BINARY"
+# macOS privacy grants (TCC, e.g. "access files in your Documents folder") are
+# keyed to the binary's designated requirement. An ad-hoc signature's
+# requirement is its cdhash, which changes on every rebuild, so each rebuild
+# re-prompts. Signing with a real certificate makes the requirement
+# "identifier + certificate", which survives rebuilds. Override with
+# STAYPOINT_SIGN_IDENTITY; falls back to ad-hoc when no identity exists.
+SIGN_IDENTITY="${STAYPOINT_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk 'NR==1 && $2 ~ /^[0-9A-F]{40}$/ {print $2}')}"
+if [ -n "$SIGN_IDENTITY" ]; then
+    codesign -s "$SIGN_IDENTITY" -f --timestamp=none -i com.staypoint.daemon "$BINARY"
+else
+    echo "  ! No codesigning identity found; ad-hoc signing. macOS will re-prompt for permissions after every rebuild."
+    codesign -s - -f -i com.staypoint.daemon "$BINARY"
+fi
 echo "  Built: $BINARY ($(staypointd -version 2>/dev/null || echo 'ok'))"
 
 cat <<EOF > "$PLIST"
