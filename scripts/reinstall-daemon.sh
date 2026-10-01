@@ -25,7 +25,7 @@ cat <<EOF > "$PLIST"
         <string>$BINARY</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>$REPO</string>
+    <string>$HOME</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
@@ -55,7 +55,7 @@ fi
 echo "→ Starting $LABEL ..."
 launchctl load "$PLIST"
 
-sleep 1
+sleep 2
 if launchctl list | grep -q "$LABEL"; then
     echo "✓ $LABEL is running."
 else
