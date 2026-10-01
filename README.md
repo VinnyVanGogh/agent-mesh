@@ -309,9 +309,12 @@ cd staypoint
 go build -o ~/.local/bin/staypoint ./cmd/staypoint
 go build -o ~/.local/bin/staypointd ./cmd/staypointd
 
-# On macOS, ad-hoc codesign the binaries:
-codesign -s - -f ~/.local/bin/staypoint
-codesign -s - -f ~/.local/bin/staypointd
+# On macOS, codesign the binaries. Use a real identity (see
+# `security find-identity -v -p codesigning`) so privacy permissions survive
+# rebuilds; ad-hoc (`-s -`) works but re-prompts after every rebuild.
+codesign -s "<identity>" -f --timestamp=none -i com.staypoint.cli ~/.local/bin/staypoint
+codesign -s "<identity>" -f --timestamp=none -i com.staypoint.daemon ~/.local/bin/staypointd
+# Or just run: scripts/reinstall-daemon.sh
 ```
 
 Verify the installation:
