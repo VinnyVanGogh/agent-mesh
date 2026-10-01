@@ -73,6 +73,11 @@ function fmtDateTime(ts) {
   catch { return ''; }
 }
 
+function titleCase(s) {
+  if (!s) return '';
+  return String(s).charAt(0).toUpperCase() + String(s).slice(1);
+}
+
 function fmtRelTime(ts) {
   if (!ts) return '';
   const diffMs = Date.now() - new Date(ts).getTime();
@@ -462,6 +467,13 @@ function renderOverview() {
   renderOrganizationsGrid(f.organizations);
   renderTokenTelemetrySection(f.token_telemetry, f.model_spend, f.org_spend);
   renderGlobalTaskTable();
+  if (document.getElementById('view-settings')?.classList.contains('active')) {
+    renderSettings();
+  }
+  const modalEl = document.getElementById('fleet-modal');
+  if (modalEl && !modalEl.classList.contains('hidden')) {
+    switchFleetModalTab(fleetModalState.activeTab);
+  }
 }
 
 function updateFleetPacingBadge(quotas) {
@@ -1085,11 +1097,6 @@ function resetAgentFilters() {
   renderAgentsPage();
 }
 
-function renderAgentsPage() {
-  const grid = document.getElementById('agents-grid');
-  if (!grid) return;
-  grid.innerHTML = '';
-
 // ── Provider Resolution & Quota Helpers ───────────────────
 function detectProviderStr(s) {
   if (!s || typeof s !== 'string') return '';
@@ -1185,6 +1192,11 @@ function getAgentQuota(providerQuotas, provider) {
   }
   return providerQuotas['gemini'] || null;
 }
+
+function renderAgentsPage() {
+  const grid = document.getElementById('agents-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
 
   const f = state.fleet;
   const allAgents = [];
@@ -2407,27 +2419,160 @@ function renderSettings() {
   const provSec = el('div', 'settings-section');
   const provHdr = el('div', 'settings-section-header');
   provHdr.appendChild(el('div', 'settings-section-title', 'Provider Accounts'));
-  provHdr.appendChild(el('div', 'settings-section-desc', 'Detected quota pools and account seat status.'));
+  provHdr.appendChild(el('div', 'settings-section-desc', 'Detailed quota pool headroom breakdown, reset times, and limits.'));
   provSec.appendChild(provHdr);
 
   const quotas = f?.provider_quotas || {};
-  if (Object.keys(quotas).length === 0) {
+  const preferredOrder = ['gemini', 'claude_work', 'claude_personal', 'claude', 'openai'];
+  const quotaKeys = [];
+  for (const k of preferredOrder) {
+    if (quotas[k]) quotaKeys.push(k);
+  }
+  for (const k of Object.keys(quotas)) {
+    if (!quotaKeys.includes(k)) quotaKeys.push(k);
+  }
+
+  const validKeys = quotaKeys.filter(k => !(k === 'claude' && (quotas['claude_work'] || quotas['claude_personal'])));
+
+  if (validKeys.length === 0) {
     const row = el('div', 'settings-row');
-    row.appendChild(el('span', 'muted-text', 'No quota data available.'));
+    row.appendChild(el('span', 'muted-text', 'No quota telemetry available.'));
     provSec.appendChild(row);
   } else {
-    for (const [key, q] of Object.entries(quotas)) {
-      if (key === 'claude' && (quotas['claude_work'] || quotas['claude_personal'])) continue;
-      const row = el('div', 'settings-row');
-      const lbl = el('div');
-      lbl.appendChild(el('div', 'settings-row-label', q.display_name || key));
-      lbl.appendChild(el('div', 'settings-row-sub', q.projection_status || 'unknown'));
-      row.appendChild(lbl);
-      const statusEl = el('span', null,
-        q.is_locked ? '🔒 Locked' :
-        q.projection_status === 'overpaced' ? '⚠️ Overpaced' : '✅ Active');
-      row.appendChild(statusEl);
-      provSec.appendChild(row);
+    for (const key of validKeys) {
+      const q = quotas[key];
+      const card = el('div', 'settings-provider-card');
+
+      // Card Header
+      const cardHdr = el('div', 'settings-provider-header');
+      const titleWrap = el('div');
+      titleWrap.appendChild(el('div', 'settings-provider-name', q.display_name || key));
+      titleWrap.appendChild(el('div', 'settings-provider-sub', q.projection_message || (q.projection_status ? `Pacing: ${q.projection_status}` : 'Standard allocation')));
+      cardHdr.appendChild(titleWrap);
+
+      let sCls = 'pill-green', sTxt = '✔ Active · On Track';
+      if (q.is_locked || q.projection_status === 'locked_out') {
+        sCls = 'pill-red';
+        sTxt = '🔒 Locked Out';
+      } else if (q.projection_status === 'overpaced') {
+        sCls = 'pill-amber';
+        sTxt = '⚠️ Overpaced';
+      }
+      cardHdr.appendChild(el('span', `pill ${sCls}`, sTxt));
+      card.appendChild(cardHdr);
+
+      // Lockout Alert Banner if locked
+      if (q.is_locked || q.lockout_reason) {
+        const lockBanner = el('div', 'settings-lockout-banner');
+        let lockMsg = q.lockout_reason || 'Quota threshold exceeded; requests paused.';
+        if (q.lockout_until) {
+          const untilCountdown = formatCountdown(q.lockout_until);
+          lockMsg += ` · Resets ${untilCountdown || ''} (${fmtDateTime(q.lockout_until)})`;
+        }
+        lockBanner.textContent = `🔒 ${lockMsg}`;
+        card.appendChild(lockBanner);
+      }
+
+      // Card Telemetry Body
+      const body = el('div', 'settings-provider-body');
+
+      // ── 5-Hour Rolling Pool ──
+      const rem5h = Math.max(0, Math.min(100, q.five_hour_remaining_pct ?? 100));
+      const used5h = Math.max(0, Math.min(100, 100 - rem5h));
+      const count5h = formatCountdown(q.five_hour_resets_at);
+      const time5h = formatResetTime(q.five_hour_resets_at, false);
+      const limit5h = q.lockout_threshold_pct || 100;
+
+      const pool5h = el('div', 'settings-pool-box');
+      const pool5hHdr = el('div', 'settings-pool-hdr');
+      pool5hHdr.appendChild(el('span', 'settings-pool-title', '5-Hour Rolling Window'));
+      const badge5h = el('span', `headroom-badge ${rem5h <= 10 ? 'badge-red' : rem5h <= 25 ? 'badge-amber' : 'badge-green'}`,
+        `${rem5h.toFixed(1)}% Headroom`);
+      pool5hHdr.appendChild(badge5h);
+      pool5h.appendChild(pool5hHdr);
+
+      const bar5hOuter = el('div', 'gauge-bar-outer');
+      const bar5hInner = el('div', 'gauge-bar-inner');
+      bar5hInner.style.width = `${used5h}%`;
+      bar5hInner.className = `gauge-bar-inner ${(q.is_locked || used5h >= 95) ? 'gauge-bar-red' : used5h >= 75 ? 'gauge-bar-amber' : 'gauge-bar-green'}`;
+      bar5hOuter.appendChild(bar5hInner);
+      pool5h.appendChild(bar5hOuter);
+
+      const metrics5h = el('div', 'settings-metrics-grid');
+
+      const m5hHeadroom = el('div', 'settings-metric-item');
+      m5hHeadroom.appendChild(el('span', 'settings-metric-lbl', 'Pool Headroom'));
+      m5hHeadroom.appendChild(el('span', 'settings-metric-val', `${rem5h.toFixed(1)}% remaining (${used5h.toFixed(1)}% used)`));
+      metrics5h.appendChild(m5hHeadroom);
+
+      const m5hReset = el('div', 'settings-metric-item');
+      m5hReset.appendChild(el('span', 'settings-metric-lbl', 'Reset Time'));
+      const resetText5h = count5h ? `${count5h}${time5h ? ' · ' + time5h : ''}` : 'Rolling window';
+      m5hReset.appendChild(el('span', 'settings-metric-val', resetText5h));
+      metrics5h.appendChild(m5hReset);
+
+      const m5hLimit = el('div', 'settings-metric-item');
+      m5hLimit.appendChild(el('span', 'settings-metric-lbl', 'Lockout Limit'));
+      m5hLimit.appendChild(el('span', 'settings-metric-val', `${limit5h}% threshold`));
+      metrics5h.appendChild(m5hLimit);
+
+      const m5hBurn = el('div', 'settings-metric-item');
+      m5hBurn.appendChild(el('span', 'settings-metric-lbl', 'Current Burn'));
+      m5hBurn.appendChild(el('span', 'settings-metric-val', q.burn_rate_5h ? `${q.burn_rate_5h.toFixed(2)}%/turn` : '—'));
+      metrics5h.appendChild(m5hBurn);
+
+      pool5h.appendChild(metrics5h);
+      body.appendChild(pool5h);
+
+      // ── Weekly Budget Pool ──
+      const remWk = Math.max(0, Math.min(100, q.weekly_remaining_pct ?? 100));
+      const usedWk = Math.max(0, Math.min(100, 100 - remWk));
+      const countWk = formatCountdown(q.weekly_resets_at);
+      const timeWk = formatResetTime(q.weekly_resets_at, true);
+
+      const poolWk = el('div', 'settings-pool-box');
+      const poolWkHdr = el('div', 'settings-pool-hdr');
+      poolWkHdr.appendChild(el('span', 'settings-pool-title', 'Weekly Budget Window'));
+      const badgeWk = el('span', `headroom-badge ${remWk <= 15 ? 'badge-red' : remWk <= 30 ? 'badge-amber' : 'badge-green'}`,
+        `${remWk.toFixed(1)}% Headroom`);
+      poolWkHdr.appendChild(badgeWk);
+      poolWk.appendChild(poolWkHdr);
+
+      const barWkOuter = el('div', 'gauge-bar-outer');
+      const barWkInner = el('div', 'gauge-bar-inner');
+      barWkInner.style.width = `${usedWk}%`;
+      barWkInner.className = `gauge-bar-inner ${usedWk >= 90 ? 'gauge-bar-red' : usedWk >= 70 ? 'gauge-bar-amber' : 'gauge-bar-green'}`;
+      barWkOuter.appendChild(barWkInner);
+      poolWk.appendChild(barWkOuter);
+
+      const metricsWk = el('div', 'settings-metrics-grid');
+
+      const mWkHeadroom = el('div', 'settings-metric-item');
+      mWkHeadroom.appendChild(el('span', 'settings-metric-lbl', 'Weekly Headroom'));
+      mWkHeadroom.appendChild(el('span', 'settings-metric-val', `${remWk.toFixed(1)}% remaining (${usedWk.toFixed(1)}% used)`));
+      metricsWk.appendChild(mWkHeadroom);
+
+      const mWkReset = el('div', 'settings-metric-item');
+      mWkReset.appendChild(el('span', 'settings-metric-lbl', 'Reset Time'));
+      const resetTextWk = countWk ? `${countWk}${timeWk ? ' · ' + timeWk : ''}` : '—';
+      mWkReset.appendChild(el('span', 'settings-metric-val', resetTextWk));
+      metricsWk.appendChild(mWkReset);
+
+      const mWkBurn = el('div', 'settings-metric-item');
+      mWkBurn.appendChild(el('span', 'settings-metric-lbl', 'Weekly Burn'));
+      mWkBurn.appendChild(el('span', 'settings-metric-val', q.burn_rate_weekly ? `${q.burn_rate_weekly.toFixed(2)}%/turn` : '—'));
+      metricsWk.appendChild(mWkBurn);
+
+      const mWkRunway = el('div', 'settings-metric-item');
+      mWkRunway.appendChild(el('span', 'settings-metric-lbl', 'Runway Limit'));
+      mWkRunway.appendChild(el('span', 'settings-metric-val', q.runway_turns ? `${q.runway_turns} turns left` : 'Sustainable'));
+      metricsWk.appendChild(mWkRunway);
+
+      poolWk.appendChild(metricsWk);
+      body.appendChild(poolWk);
+
+      card.appendChild(body);
+      provSec.appendChild(card);
     }
   }
   container.appendChild(provSec);
@@ -2436,24 +2581,718 @@ function renderSettings() {
   const fleetSec = el('div', 'settings-section');
   const fleetHdr = el('div', 'settings-section-header');
   fleetHdr.appendChild(el('div', 'settings-section-title', 'Fleet Info'));
+  fleetHdr.appendChild(el('div', 'settings-section-desc', 'Global overview statistics. Click any count to open the interactive drill-down modal.'));
   fleetSec.appendChild(fleetHdr);
 
-  for (const { label, sub, val } of [
-    { label: 'Organizations', sub: '', val: String((f?.organizations || []).length) },
-    { label: 'Total Tasks', sub: '', val: String(f?.global_tasks?.total || 0) },
-    { label: 'Active Agents', sub: '', val: String(f?.global_agents?.active_running || 0) },
-    { label: 'Last Update', sub: '', val: f?.timestamp ? fmtDateTime(f.timestamp) : '—' },
+  const orgCount = (f?.organizations || []).length;
+  const totalTasks = f?.global_tasks?.total || 0;
+  const activeAgents = f?.global_agents?.active_running || 0;
+
+  for (const m of [
+    {
+      id: 'organizations',
+      label: 'Organizations',
+      sub: `${orgCount} tenant workspaces · Click to view breakdown`,
+      val: String(orgCount),
+      clickable: true,
+      onClick: () => openFleetInfoModal('organizations'),
+    },
+    {
+      id: 'tasks',
+      label: 'Total Tasks',
+      sub: `${f?.global_tasks?.running || 0} running, ${f?.global_tasks?.blocked || 0} blocked · Click to view breakdown`,
+      val: String(totalTasks),
+      clickable: true,
+      onClick: () => openFleetInfoModal('tasks'),
+    },
+    {
+      id: 'agents',
+      label: 'Active Agents',
+      sub: `${activeAgents} running across provider pools · Click to view breakdown`,
+      val: String(activeAgents),
+      clickable: true,
+      onClick: () => openFleetInfoModal('agents'),
+    },
+    {
+      id: 'last_update',
+      label: 'Last Update',
+      sub: 'Most recent telemetry sync timestamp',
+      val: f?.timestamp ? fmtDateTime(f.timestamp) : '—',
+      clickable: false,
+    },
   ]) {
-    const row = el('div', 'settings-row');
+    const row = el('div', m.clickable ? 'settings-row settings-row-clickable' : 'settings-row');
     const lbl = el('div');
-    lbl.appendChild(el('div', 'settings-row-label', label));
-    if (sub) lbl.appendChild(el('div', 'settings-row-sub', sub));
+    lbl.appendChild(el('div', 'settings-row-label', m.label));
+    if (m.sub) lbl.appendChild(el('div', 'settings-row-sub', m.sub));
     row.appendChild(lbl);
-    row.appendChild(el('span', 'settings-val', val));
+
+    const valEl = el('span', m.clickable ? 'settings-val settings-val-interactive' : 'settings-val', m.val);
+    if (m.clickable) {
+      valEl.appendChild(el('span', 'drilldown-arrow', ' →'));
+      row.title = `Click to drill down into ${m.label}`;
+      row.addEventListener('click', m.onClick);
+    }
+    row.appendChild(valEl);
     fleetSec.appendChild(row);
   }
   container.appendChild(fleetSec);
 }
+
+// ── Fleet Info Modal Drill-Down ────────────────────────────
+const fleetModalState = {
+  activeTab: 'organizations',
+  taskSearch: '',
+  taskStatus: 'all',
+  taskOrg: 'all',
+  agentSearch: '',
+  agentProvider: 'all',
+  agentStatus: 'all',
+  orgSearch: '',
+};
+
+function getFleetTasks() {
+  const taskMap = new Map();
+  for (const t of (state.fleet?.tasks || [])) {
+    if (t && t.id) taskMap.set(t.id, t);
+  }
+  for (const t of Object.values(state.tasks || {})) {
+    if (t && t.id) {
+      if (!taskMap.has(t.id)) taskMap.set(t.id, t);
+      else Object.assign(taskMap.get(t.id), t);
+    }
+  }
+  return Array.from(taskMap.values());
+}
+
+function getFleetAgents() {
+  const f = state.fleet;
+  const allAgents = [];
+
+  for (const org of (f?.organizations || [])) {
+    for (const a of (org.agents || [])) {
+      const prov = resolveProvider(a);
+      allAgents.push({ ...a, provider: prov, org: org.name });
+    }
+  }
+
+  for (const s of Object.values(state.sessions || {})) {
+    const exists = allAgents.find(a => a.id === s.id);
+    if (!exists) {
+      const prov = resolveProvider(s);
+      allAgents.push({
+        id: s.id,
+        name: s.agent_type ? `${titleCase(prov)} Session` : 'Local Agent',
+        role: 'Local Session',
+        provider: prov,
+        status: s.status || 'active',
+        last_heartbeat: s.last_heartbeat_at,
+        org: 'StayPoint',
+      });
+    }
+  }
+
+  const allTasks = getFleetTasks();
+  return allAgents.map(a => {
+    const agentTasks = allTasks.filter(t =>
+      (t.checkout_agent_id && t.checkout_agent_id === a.id) ||
+      (t.assignee_agent_id && t.assignee_agent_id === a.id) ||
+      (t.assigned_agent && (t.assigned_agent === a.name || t.assigned_agent === a.id)) ||
+      (t.assignee_name && t.assignee_name === a.name)
+    );
+    const runningTask = agentTasks.find(t => t.status === 'running' || t.status === 'in_progress');
+    let st = (a.status || 'idle').toLowerCase();
+    if (runningTask || st === 'running' || st === 'in_progress') {
+      st = 'running';
+    } else if (st === 'paused' || st === 'stopped' || a.pause_reason) {
+      st = 'paused';
+    } else {
+      st = 'idle';
+    }
+    return {
+      ...a,
+      normalizedStatus: st,
+      agentTasks,
+      runningTask,
+    };
+  });
+}
+
+function openFleetInfoModal(tab = 'organizations') {
+  const modal = document.getElementById('fleet-modal');
+  if (!modal) return;
+  fleetModalState.activeTab = tab;
+  modal.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  switchFleetModalTab(tab);
+}
+
+function closeFleetInfoModal() {
+  const modal = document.getElementById('fleet-modal');
+  if (!modal) return;
+  modal.classList.add('hidden');
+  document.body.style.overflow = '';
+}
+
+function switchFleetModalTab(tab) {
+  fleetModalState.activeTab = tab;
+  document.querySelectorAll('#fleet-modal .modal-tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+
+  const body = document.getElementById('fleet-modal-body');
+  const footerInfo = document.getElementById('fleet-modal-footer-info');
+  const modalTitle = document.getElementById('fleet-modal-title');
+  const modalSubtitle = document.getElementById('fleet-modal-subtitle');
+  if (!body) return;
+  body.innerHTML = '';
+
+  if (tab === 'organizations') {
+    if (modalTitle) modalTitle.textContent = '🏢 Fleet Organizations';
+    if (modalSubtitle) modalSubtitle.textContent = 'Tenant workspace distribution, task counts, and financial spend.';
+    renderFleetModalOrganizations(body, footerInfo);
+  } else if (tab === 'tasks') {
+    if (modalTitle) modalTitle.textContent = '📋 Fleet Tasks Breakdown';
+    if (modalSubtitle) modalSubtitle.textContent = 'Global task registry with live statuses, assignments, and priorities.';
+    renderFleetModalTasks(body, footerInfo);
+  } else if (tab === 'agents') {
+    if (modalTitle) modalTitle.textContent = '🤖 Active Fleet Agents';
+    if (modalSubtitle) modalSubtitle.textContent = 'Autonomous agents and sessions across all providers and tenant orgs.';
+    renderFleetModalAgents(body, footerInfo);
+  }
+}
+
+function renderFleetModalOrganizations(body, footerInfo) {
+  const orgs = state.fleet?.organizations || [];
+  const totalSpend = orgs.reduce((sum, o) => sum + (o.spent_usd || 0), 0);
+  const totalAgents = orgs.reduce((sum, o) => sum + (o.active_agents || 0), 0);
+  const totalTasks = orgs.reduce((sum, o) => sum + (o.task_counts?.total || 0), 0);
+
+  // Summary Grid
+  const summaryGrid = el('div', 'modal-summary-grid');
+  for (const { val, lbl } of [
+    { val: String(orgs.length), lbl: 'Organizations' },
+    { val: fmtCurrency(totalSpend), lbl: 'Total Spend' },
+    { val: String(totalAgents), lbl: 'Active Agents' },
+    { val: String(totalTasks), lbl: 'Total Tasks' },
+  ]) {
+    const card = el('div', 'modal-summary-card');
+    card.appendChild(el('div', 'modal-summary-val', val));
+    card.appendChild(el('div', 'modal-summary-lbl', lbl));
+    summaryGrid.appendChild(card);
+  }
+  body.appendChild(summaryGrid);
+
+  // Filter Row
+  const filterRow = el('div', 'modal-filter-row');
+  const searchInput = el('input', 'modal-filter-input');
+  searchInput.type = 'text';
+  searchInput.placeholder = 'Search organizations or prefix...';
+  searchInput.value = fleetModalState.orgSearch || '';
+  filterRow.appendChild(searchInput);
+  body.appendChild(filterRow);
+
+  const tableWrap = el('div', 'modal-table-wrap');
+  const table = el('table', 'modal-table');
+  const thead = el('thead');
+  const thr = el('tr');
+  for (const h of ['Organization', 'Prefix', 'Active Agents', 'Task Status Breakdown', 'Spend', 'Action']) {
+    thr.appendChild(el('th', null, h));
+  }
+  thead.appendChild(thr);
+  table.appendChild(thead);
+
+  const tbody = el('tbody');
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  body.appendChild(tableWrap);
+
+  function updateRows() {
+    tbody.innerHTML = '';
+    const q = (fleetModalState.orgSearch || '').toLowerCase().trim();
+    const filtered = orgs.filter(o =>
+      !q || (o.name && o.name.toLowerCase().includes(q)) ||
+      (o.issue_prefix && o.issue_prefix.toLowerCase().includes(q))
+    );
+
+    if (filtered.length === 0) {
+      const tr = el('tr');
+      const td = el('td', 'muted-text', 'No organizations match the filter.');
+      td.colSpan = 6;
+      td.style.textAlign = 'center';
+      td.style.padding = '24px';
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    } else {
+      for (const org of filtered) {
+        const tr = el('tr');
+
+        // Name
+        const tdName = el('td');
+        tdName.appendChild(el('strong', null, org.name || 'Unnamed'));
+        tr.appendChild(tdName);
+
+        // Prefix
+        const tdPrefix = el('td');
+        tdPrefix.appendChild(el('span', 'chip-sm chip-purple', org.issue_prefix || 'ORG'));
+        tr.appendChild(tdPrefix);
+
+        // Active Agents
+        const tdAgents = el('td');
+        tdAgents.appendChild(el('span', 'chip-sm chip-green', `${org.active_agents || 0} agents`));
+        tr.appendChild(tdAgents);
+
+        // Task Breakdown
+        const tdTasks = el('td');
+        const tc = org.task_counts || {};
+        const group = el('div', 'chip-group');
+        if (tc.running) group.appendChild(el('span', 'chip-sm chip-cyan', `${tc.running} running`));
+        if (tc.active) group.appendChild(el('span', 'chip-sm chip-blue', `${tc.active} active`));
+        if (tc.blocked) group.appendChild(el('span', 'chip-sm chip-red', `${tc.blocked} blocked`));
+        if (tc.done) group.appendChild(el('span', 'chip-sm chip-green', `${tc.done} done`));
+        group.appendChild(el('span', 'chip-sm chip-gray', `${tc.total || 0} total`));
+        tdTasks.appendChild(group);
+        tr.appendChild(tdTasks);
+
+        // Spend
+        const tdSpend = el('td', null, fmtCurrency(org.spent_usd));
+        tr.appendChild(tdSpend);
+
+        // Action
+        const tdAction = el('td');
+        const viewBtn = el('button', 'modal-action-btn', 'View Org →');
+        viewBtn.addEventListener('click', () => {
+          closeFleetInfoModal();
+          openOrgDetail(org.name);
+        });
+        tdAction.appendChild(viewBtn);
+        tr.appendChild(tdAction);
+
+        tbody.appendChild(tr);
+      }
+    }
+
+    if (footerInfo) {
+      footerInfo.textContent = `Showing ${filtered.length} of ${orgs.length} organizations`;
+    }
+  }
+
+  searchInput.addEventListener('input', (e) => {
+    fleetModalState.orgSearch = e.target.value;
+    updateRows();
+  });
+
+  updateRows();
+}
+
+function renderFleetModalTasks(body, footerInfo) {
+  const allTasks = getFleetTasks();
+  const orgs = state.fleet?.organizations || [];
+
+  const counts = { running: 0, in_progress: 0, blocked: 0, in_review: 0, todo: 0, done: 0 };
+  for (const t of allTasks) {
+    const rawSt = (t.status || '').toLowerCase();
+    let st = normalizeFleetStatus(t.status);
+    if (rawSt === 'running') st = 'running';
+    else if (rawSt === 'in_review') st = 'in_review';
+    if (counts[st] !== undefined) counts[st]++;
+  }
+
+  // Summary Grid
+  const summaryGrid = el('div', 'modal-summary-grid');
+  for (const { val, lbl, cls } of [
+    { val: String(counts.running), lbl: 'Running', cls: 'chip-cyan' },
+    { val: String(counts.in_progress), lbl: 'In Progress', cls: 'chip-blue' },
+    { val: String(counts.blocked), lbl: 'Blocked', cls: 'chip-red' },
+    { val: String(counts.in_review), lbl: 'In Review', cls: 'chip-purple' },
+    { val: String(counts.todo), lbl: 'Todo', cls: 'chip-gray' },
+    { val: String(counts.done), lbl: 'Done', cls: 'chip-green' },
+    { val: String(allTasks.length), lbl: 'Total Tasks' },
+  ]) {
+    const card = el('div', 'modal-summary-card');
+    card.appendChild(el('div', 'modal-summary-val' + (cls ? ` ${cls}` : ''), val));
+    card.appendChild(el('div', 'modal-summary-lbl', lbl));
+    summaryGrid.appendChild(card);
+  }
+  body.appendChild(summaryGrid);
+
+  // Filter Row
+  const filterRow = el('div', 'modal-filter-row');
+
+  const searchInput = el('input', 'modal-filter-input');
+  searchInput.type = 'text';
+  searchInput.placeholder = 'Search tasks by title or ID...';
+  searchInput.value = fleetModalState.taskSearch || '';
+  filterRow.appendChild(searchInput);
+
+  const statusSelect = el('select', 'modal-filter-select');
+  for (const [sVal, sLbl] of [
+    ['all', 'All Statuses'],
+    ['running', 'Running'],
+    ['in_progress', 'In Progress'],
+    ['blocked', 'Blocked'],
+    ['in_review', 'In Review'],
+    ['todo', 'Todo'],
+    ['done', 'Done'],
+  ]) {
+    const opt = el('option', null, sLbl);
+    opt.value = sVal;
+    if (fleetModalState.taskStatus === sVal) opt.selected = true;
+    statusSelect.appendChild(opt);
+  }
+  filterRow.appendChild(statusSelect);
+
+  const orgSelect = el('select', 'modal-filter-select');
+  const allOrgOpt = el('option', null, 'All Organizations');
+  allOrgOpt.value = 'all';
+  orgSelect.appendChild(allOrgOpt);
+  for (const org of orgs) {
+    const opt = el('option', null, org.name);
+    opt.value = org.name;
+    if (fleetModalState.taskOrg === org.name) opt.selected = true;
+    orgSelect.appendChild(opt);
+  }
+  filterRow.appendChild(orgSelect);
+  body.appendChild(filterRow);
+
+  const tableWrap = el('div', 'modal-table-wrap');
+  const table = el('table', 'modal-table');
+  const thead = el('thead');
+  const thr = el('tr');
+  for (const h of ['ID', 'Title', 'Organization', 'Status', 'Assignee', 'Priority', 'Action']) {
+    thr.appendChild(el('th', null, h));
+  }
+  thead.appendChild(thr);
+  table.appendChild(thead);
+
+  const tbody = el('tbody');
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  body.appendChild(tableWrap);
+
+  function updateRows() {
+    tbody.innerHTML = '';
+    const q = (fleetModalState.taskSearch || '').toLowerCase().trim();
+    const stFilter = fleetModalState.taskStatus || 'all';
+    const orgFilter = fleetModalState.taskOrg || 'all';
+
+    const filtered = allTasks.filter(t => {
+      const rawSt = (t.status || '').toLowerCase();
+      let st = normalizeFleetStatus(t.status);
+      if (rawSt === 'running') st = 'running';
+      else if (rawSt === 'in_review') st = 'in_review';
+
+      if (stFilter !== 'all' && st !== stFilter) return false;
+      const orgName = t.organization || t.org || '';
+      if (orgFilter !== 'all' && orgName.toLowerCase() !== orgFilter.toLowerCase()) return false;
+      if (q) {
+        const idMatch = (t.id || '').toLowerCase().includes(q) || (t.identifier || '').toLowerCase().includes(q);
+        const titleMatch = (t.title || '').toLowerCase().includes(q);
+        if (!idMatch && !titleMatch) return false;
+      }
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      const tr = el('tr');
+      const td = el('td', 'muted-text', 'No tasks match the filter criteria.');
+      td.colSpan = 7;
+      td.style.textAlign = 'center';
+      td.style.padding = '24px';
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    } else {
+      for (const t of filtered) {
+        const tr = el('tr');
+
+        // ID
+        const tdId = el('td');
+        tdId.appendChild(el('strong', 'settings-val', t.identifier || (t.id ? t.id.slice(0, 8) : '—')));
+        tr.appendChild(tdId);
+
+        // Title
+        const tdTitle = el('td');
+        const titleSpan = el('span', null, t.title || 'Untitled task');
+        titleSpan.title = t.title || '';
+        tdTitle.appendChild(titleSpan);
+        tr.appendChild(tdTitle);
+
+        // Org
+        const tdOrg = el('td', 'muted-text', t.organization || t.org || 'StayPoint');
+        tr.appendChild(tdOrg);
+
+        // Status
+        const tdStatus = el('td');
+        const rawSt = (t.status || '').toLowerCase();
+        let st = normalizeFleetStatus(t.status);
+        if (rawSt === 'running') st = 'running';
+        else if (rawSt === 'in_review') st = 'in_review';
+
+        let pillCls = 'pill-gray';
+        if (st === 'running') pillCls = 'pill-cyan';
+        else if (st === 'in_progress') pillCls = 'pill-blue';
+        else if (st === 'blocked') pillCls = 'pill-red';
+        else if (st === 'in_review') pillCls = 'pill-purple';
+        else if (st === 'done') pillCls = 'pill-green';
+        tdStatus.appendChild(el('span', `pill ${pillCls}`, st.replace('_', ' ')));
+        tr.appendChild(tdStatus);
+
+        // Assignee
+        const tdAssignee = el('td', 'muted-text', t.assigned_agent || t.assignee_name || 'Unassigned');
+        tr.appendChild(tdAssignee);
+
+        // Priority
+        const tdPrio = el('td', 'muted-text', t.priority || 'standard');
+        tr.appendChild(tdPrio);
+
+        // Action
+        const tdAction = el('td');
+        const viewBtn = el('button', 'modal-action-btn', 'View Task →');
+        viewBtn.addEventListener('click', () => {
+          closeFleetInfoModal();
+          openDetail(t.id);
+        });
+        tdAction.appendChild(viewBtn);
+        tr.appendChild(tdAction);
+
+        tbody.appendChild(tr);
+      }
+    }
+
+    if (footerInfo) {
+      footerInfo.textContent = `Showing ${filtered.length} of ${allTasks.length} tasks`;
+    }
+  }
+
+  searchInput.addEventListener('input', (e) => {
+    fleetModalState.taskSearch = e.target.value;
+    updateRows();
+  });
+  statusSelect.addEventListener('change', (e) => {
+    fleetModalState.taskStatus = e.target.value;
+    updateRows();
+  });
+  orgSelect.addEventListener('change', (e) => {
+    fleetModalState.taskOrg = e.target.value;
+    updateRows();
+  });
+
+  updateRows();
+}
+
+function renderFleetModalAgents(body, footerInfo) {
+  const agents = getFleetAgents();
+
+  const total = agents.length;
+  const running = agents.filter(a => a.normalizedStatus === 'running').length;
+  const idle = agents.filter(a => a.normalizedStatus === 'idle').length;
+  const paused = agents.filter(a => a.normalizedStatus === 'paused').length;
+
+  const claudeCount = agents.filter(a => a.provider === 'claude').length;
+  const geminiCount = agents.filter(a => a.provider === 'gemini').length;
+  const openaiCount = agents.filter(a => a.provider === 'openai').length;
+
+  // Summary Grid
+  const summaryGrid = el('div', 'modal-summary-grid');
+  for (const { val, lbl, cls } of [
+    { val: String(running), lbl: 'Running', cls: 'chip-cyan' },
+    { val: String(idle), lbl: 'Idle', cls: 'chip-gray' },
+    { val: String(paused), lbl: 'Paused', cls: 'chip-amber' },
+    { val: String(claudeCount), lbl: 'Claude Pool', cls: 'chip-purple' },
+    { val: String(geminiCount), lbl: 'Gemini Pool', cls: 'chip-blue' },
+    { val: String(openaiCount), lbl: 'OpenAI Pool', cls: 'chip-green' },
+    { val: String(total), lbl: 'Total Agents' },
+  ]) {
+    const card = el('div', 'modal-summary-card');
+    card.appendChild(el('div', 'modal-summary-val' + (cls ? ` ${cls}` : ''), val));
+    card.appendChild(el('div', 'modal-summary-lbl', lbl));
+    summaryGrid.appendChild(card);
+  }
+  body.appendChild(summaryGrid);
+
+  // Filter Row
+  const filterRow = el('div', 'modal-filter-row');
+
+  const searchInput = el('input', 'modal-filter-input');
+  searchInput.type = 'text';
+  searchInput.placeholder = 'Search agents by name or role...';
+  searchInput.value = fleetModalState.agentSearch || '';
+  filterRow.appendChild(searchInput);
+
+  const providerSelect = el('select', 'modal-filter-select');
+  for (const [pVal, pLbl] of [
+    ['all', 'All Providers'],
+    ['claude', 'Claude'],
+    ['gemini', 'Gemini'],
+    ['openai', 'OpenAI'],
+  ]) {
+    const opt = el('option', null, pLbl);
+    opt.value = pVal;
+    if (fleetModalState.agentProvider === pVal) opt.selected = true;
+    providerSelect.appendChild(opt);
+  }
+  filterRow.appendChild(providerSelect);
+
+  const statusSelect = el('select', 'modal-filter-select');
+  for (const [sVal, sLbl] of [
+    ['all', 'All Statuses'],
+    ['running', 'Running'],
+    ['idle', 'Idle'],
+    ['paused', 'Paused'],
+  ]) {
+    const opt = el('option', null, sLbl);
+    opt.value = sVal;
+    if (fleetModalState.agentStatus === sVal) opt.selected = true;
+    statusSelect.appendChild(opt);
+  }
+  filterRow.appendChild(statusSelect);
+  body.appendChild(filterRow);
+
+  const tableWrap = el('div', 'modal-table-wrap');
+  const table = el('table', 'modal-table');
+  const thead = el('thead');
+  const thr = el('tr');
+  for (const h of ['Agent Name', 'Role', 'Provider', 'Organization', 'Status', 'Current Task', 'Action']) {
+    thr.appendChild(el('th', null, h));
+  }
+  thead.appendChild(thr);
+  table.appendChild(thead);
+
+  const tbody = el('tbody');
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  body.appendChild(tableWrap);
+
+  function updateRows() {
+    tbody.innerHTML = '';
+    const q = (fleetModalState.agentSearch || '').toLowerCase().trim();
+    const provFilter = fleetModalState.agentProvider || 'all';
+    const stFilter = fleetModalState.agentStatus || 'all';
+
+    const filtered = agents.filter(a => {
+      if (provFilter !== 'all' && a.provider !== provFilter) return false;
+      if (stFilter !== 'all' && a.normalizedStatus !== stFilter) return false;
+      if (q) {
+        const nameMatch = (a.name || '').toLowerCase().includes(q);
+        const roleMatch = (a.role || '').toLowerCase().includes(q);
+        if (!nameMatch && !roleMatch) return false;
+      }
+      return true;
+    });
+
+    if (filtered.length === 0) {
+      const tr = el('tr');
+      const td = el('td', 'muted-text', 'No agents match the filter criteria.');
+      td.colSpan = 7;
+      td.style.textAlign = 'center';
+      td.style.padding = '24px';
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    } else {
+      for (const a of filtered) {
+        const tr = el('tr');
+
+        // Name
+        const tdName = el('td');
+        tdName.appendChild(el('strong', null, a.name || 'Agent'));
+        tr.appendChild(tdName);
+
+        // Role
+        const tdRole = el('td', 'muted-text', a.role || 'Worker');
+        tr.appendChild(tdRole);
+
+        // Provider
+        const tdProv = el('td');
+        let provChip = 'chip-blue';
+        if (a.provider === 'claude') provChip = 'chip-purple';
+        else if (a.provider === 'openai') provChip = 'chip-green';
+        tdProv.appendChild(el('span', `chip-sm ${provChip}`, titleCase(a.provider || 'gemini')));
+        tr.appendChild(tdProv);
+
+        // Org
+        const tdOrg = el('td', 'muted-text', a.org || 'StayPoint');
+        tr.appendChild(tdOrg);
+
+        // Status
+        const tdStatus = el('td');
+        let stChip = 'chip-gray';
+        if (a.normalizedStatus === 'running') stChip = 'chip-cyan';
+        else if (a.normalizedStatus === 'paused') stChip = 'chip-amber';
+        tdStatus.appendChild(el('span', `chip-sm ${stChip}`, titleCase(a.normalizedStatus)));
+        tr.appendChild(tdStatus);
+
+        // Current Task
+        const tdTask = el('td');
+        if (a.runningTask) {
+          const taskLink = el('a', 'settings-val-interactive', a.runningTask.title || a.runningTask.id);
+          taskLink.style.cursor = 'pointer';
+          taskLink.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            closeFleetInfoModal();
+            openDetail(a.runningTask.id);
+          });
+          tdTask.appendChild(taskLink);
+        } else {
+          tdTask.appendChild(el('span', 'muted-text', 'Idle'));
+        }
+        tr.appendChild(tdTask);
+
+        // Action
+        const tdAction = el('td');
+        const viewBtn = el('button', 'modal-action-btn', 'View Agents →');
+        viewBtn.addEventListener('click', () => {
+          closeFleetInfoModal();
+          navigateTo('agents');
+        });
+        tdAction.appendChild(viewBtn);
+        tr.appendChild(tdAction);
+
+        tbody.appendChild(tr);
+      }
+    }
+
+    if (footerInfo) {
+      footerInfo.textContent = `Showing ${filtered.length} of ${agents.length} agents`;
+    }
+  }
+
+  searchInput.addEventListener('input', (e) => {
+    fleetModalState.agentSearch = e.target.value;
+    updateRows();
+  });
+  providerSelect.addEventListener('change', (e) => {
+    fleetModalState.agentProvider = e.target.value;
+    updateRows();
+  });
+  statusSelect.addEventListener('change', (e) => {
+    fleetModalState.agentStatus = e.target.value;
+    updateRows();
+  });
+
+  updateRows();
+}
+
+// Wire modal event listeners
+document.getElementById('fleet-modal-close')?.addEventListener('click', closeFleetInfoModal);
+document.getElementById('fleet-modal-footer-close')?.addEventListener('click', closeFleetInfoModal);
+document.getElementById('fleet-modal')?.addEventListener('click', (e) => {
+  if (e.target === document.getElementById('fleet-modal')) {
+    closeFleetInfoModal();
+  }
+});
+document.querySelectorAll('#fleet-modal .modal-tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    switchFleetModalTab(btn.dataset.tab);
+  });
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const m = document.getElementById('fleet-modal');
+    if (m && !m.classList.contains('hidden')) {
+      closeFleetInfoModal();
+    }
+  }
+});
 
 // ── Org Detail View ────────────────────────────────────────
 function openOrgDetail(orgName) {

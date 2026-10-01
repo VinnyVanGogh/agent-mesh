@@ -461,6 +461,31 @@
   <div id="panel-content"></div>
 </aside>
 
+<!-- Fleet drill-down modal -->
+<div id="fleet-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="fleet-modal-title">
+  <div class="modal-container">
+    <div class="modal-header">
+      <div class="modal-header-left">
+        <h2 id="fleet-modal-title" class="modal-title">Fleet Drill-Down</h2>
+        <div id="fleet-modal-subtitle" class="modal-subtitle">Detailed telemetry breakdown</div>
+      </div>
+      <div class="modal-header-right">
+        <button id="fleet-modal-close" class="modal-close-btn" aria-label="Close modal">&times;</button>
+      </div>
+    </div>
+    <div class="modal-tabs">
+      <button class="modal-tab-btn active" data-tab="organizations" id="modal-tab-orgs">Organizations</button>
+      <button class="modal-tab-btn" data-tab="tasks" id="modal-tab-tasks">Total Tasks</button>
+      <button class="modal-tab-btn" data-tab="agents" id="modal-tab-agents">Active Agents</button>
+    </div>
+    <div id="fleet-modal-body" class="modal-body"></div>
+    <div class="modal-footer">
+      <div id="fleet-modal-footer-info" class="modal-footer-info"></div>
+      <button id="fleet-modal-footer-close" class="modal-btn-close">Close</button>
+    </div>
+  </div>
+</div>
+
 <script src="/ui/app.js"></script>
 </body>
 </html>
