@@ -213,3 +213,57 @@ func TestClient_CreateIssue_WithAssigneeAgentId(t *testing.T) {
 		t.Errorf("expected payload assigneeAgentId to be 'agent-cos-1', got %v", capturedPayload["assigneeAgentId"])
 	}
 }
+
+func TestClient_ListProjects(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/companies/comp-123/projects" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		projs := []ProjectResponse{
+			{ID: "proj-1", Name: "StayPoint Core Engine"},
+			{ID: "proj-2", Name: "StayPoint Orchestrator"},
+		}
+		_ = json.NewEncoder(w).Encode(projs)
+	}))
+	defer ts.Close()
+
+	client := NewClient(ts.URL, "test-key")
+	projs, err := client.ListProjects(context.Background(), "comp-123")
+	if err != nil {
+		t.Fatalf("unexpected error listing projects: %v", err)
+	}
+	if len(projs) != 2 || projs[0].Name != "StayPoint Core Engine" {
+		t.Errorf("unexpected projects: %+v", projs)
+	}
+}
+
+func TestClient_ListActiveIssues_ComplexLabelsAndProject(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Real Paperclip payload with object labels and projectId
+		rawJSON := `[
+			{
+				"id": "iss-1",
+				"identifier": "STA-101",
+				"title": "Complex Issue",
+				"status": "in_progress",
+				"priority": "high",
+				"projectId": "proj-1",
+				"assigneeAgentId": "ag-1",
+				"labels": [{"id": "lbl-1", "name": "Critical", "color": "#red"}]
+			}
+		]`
+		_, _ = w.Write([]byte(rawJSON))
+	}))
+	defer ts.Close()
+
+	client := NewClient(ts.URL, "test-key")
+	issues, err := client.ListActiveIssues(context.Background(), "comp-123")
+	if err != nil {
+		t.Fatalf("unexpected error listing issues with object labels: %v", err)
+	}
+	if len(issues) != 1 || issues[0].ProjectID != "proj-1" || issues[0].AssigneeAgentID != "ag-1" {
+		t.Errorf("unexpected issue decoded: %+v", issues[0])
+	}
+}

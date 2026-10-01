@@ -500,18 +500,36 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 			for _, c := range companies {
 				orgSummary := ensureOrg(c.Name, c.ID, c.IssuePrefix)
 
+				// Fetch projects for this company to resolve project names
+				projMap := make(map[string]string)
+				if projs, err := a.PaperclipClient.ListProjects(ctx, c.ID); err == nil {
+					for _, p := range projs {
+						projMap[p.ID] = p.Name
+						orgSummary.Projects = append(orgSummary.Projects, p.Name)
+					}
+				}
+
 				// Fetch active issues
 				if issues, err := a.PaperclipClient.ListActiveIssues(ctx, c.ID); err == nil {
 					for _, iss := range issues {
+						projectName := ""
+						if iss.ProjectID != "" {
+							if pName, ok := projMap[iss.ProjectID]; ok {
+								projectName = pName
+							}
+						}
 						tItem := TaskItem{
-							ID:           iss.ID,
-							Identifier:   iss.Identifier,
-							Title:        iss.Title,
-							Description:  iss.Description,
-							Organization: c.Name,
-							Priority:     iss.Priority,
-							ParentID:     iss.ParentID,
-							UpdatedAt:    now,
+							ID:              iss.ID,
+							Identifier:      iss.Identifier,
+							Title:           iss.Title,
+							Description:     iss.Description,
+							Organization:    c.Name,
+							Project:         projectName,
+							AssigneeAgentID: iss.AssigneeAgentID,
+							CheckoutAgentID: iss.CheckoutAgentID,
+							Priority:        iss.Priority,
+							ParentID:        iss.ParentID,
+							UpdatedAt:       now,
 						}
 						switch iss.Status {
 						case "in_progress", "running":
@@ -630,22 +648,36 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 		tRows, err := a.DB.Query(`
 			SELECT id, name, COALESCE(organization, ''), COALESCE(project, ''),
 			       status, execution_stage, is_blocked, COALESCE(block_reason, ''),
-			       spent_usd, spent_tokens, updated_at, COALESCE(parent_id, '')
+			       spent_usd, spent_tokens, updated_at, COALESCE(parent_id, ''),
+			       COALESCE(checkout_agent_id, '')
 			FROM tasks
 			WHERE status != 'soft_deleted';
 		`)
 		if err == nil {
 			defer tRows.Close()
 			for tRows.Next() {
-				var id, name, org, proj, st, stage, bReason, upAt, parentID string
+				var id, name, org, proj, st, stage, bReason, upAt, parentID, checkoutAgentID string
 				var isBlockedInt int
 				var spentUSD float64
 				var spentTokens int64
-				if err := tRows.Scan(&id, &name, &org, &proj, &st, &stage, &isBlockedInt, &bReason, &spentUSD, &spentTokens, &upAt, &parentID); err == nil {
+				if err := tRows.Scan(&id, &name, &org, &proj, &st, &stage, &isBlockedInt, &bReason, &spentUSD, &spentTokens, &upAt, &parentID, &checkoutAgentID); err == nil {
 					if org == "" {
 						org = "StayPoint"
 					}
 					orgSummary := ensureOrg(org, "", "")
+
+					if proj != "" && proj != "(No Project)" {
+						foundProj := false
+						for _, ep := range orgSummary.Projects {
+							if ep == proj {
+								foundProj = true
+								break
+							}
+						}
+						if !foundProj {
+							orgSummary.Projects = append(orgSummary.Projects, proj)
+						}
+					}
 
 					// Deduplicate if already present from Paperclip
 					found := false
@@ -706,21 +738,22 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 					}
 
 					item := TaskItem{
-						ID:             id,
-						Identifier:     fmt.Sprintf("%s-%s", orgSummary.IssuePrefix, shortID(id)),
-						Title:          name,
-						Description:    desc,
-						Comments:       cmts,
-						Organization:   org,
-						Project:        proj,
-						ParentID:       parentID,
-						Status:         taskStatus,
-						ExecutionStage: stage,
-						SpentUSD:       spentUSD,
-						SpentTokens:    spentTokens,
-						IsBlocked:      isBlockedInt != 0,
-						BlockReason:    normalizeBlockReason(bReason),
-						UpdatedAt:      parsedUp,
+						ID:              id,
+						Identifier:      fmt.Sprintf("%s-%s", orgSummary.IssuePrefix, shortID(id)),
+						Title:           name,
+						Description:     desc,
+						Comments:        cmts,
+						Organization:    org,
+						Project:         proj,
+						ParentID:        parentID,
+						Status:          taskStatus,
+						ExecutionStage:  stage,
+						SpentUSD:        spentUSD,
+						SpentTokens:     spentTokens,
+						IsBlocked:       isBlockedInt != 0,
+						BlockReason:     normalizeBlockReason(bReason),
+						UpdatedAt:       parsedUp,
+						CheckoutAgentID: checkoutAgentID,
 					}
 					orgSummary.Tasks = append(orgSummary.Tasks, item)
 					overview.Tasks = append(overview.Tasks, item)
