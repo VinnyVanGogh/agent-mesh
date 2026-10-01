@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -272,6 +274,9 @@ func NewFleetDoctor(opts DoctorOptions) *FleetDoctor {
 		start := time.Now()
 		cmdCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 		defer cancel()
+		if !loginKeychainReachable(getHome()) {
+			return "", time.Since(start), errKeychainUnreachable
+		}
 		cmd := exec.CommandContext(cmdCtx, "claude", "doctor")
 		out, err := cmd.CombinedOutput()
 		dur := time.Since(start)
@@ -322,6 +327,20 @@ func (d *FleetDoctor) execSSH(ctx context.Context, host string, remoteCmd string
 		return string(out), fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return string(out), nil
+}
+
+// errKeychainUnreachable means HOME has no login keychain, so running claude
+// would make it shell out to `security` to store credentials and macOS would
+// pop a blocking "Keychain Not Found" modal. Seen when tests point HOME at a
+// temp dir.
+var errKeychainUnreachable = errors.New("login keychain not found under HOME")
+
+func loginKeychainReachable(home string) bool {
+	if runtime.GOOS != "darwin" {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(home, "Library", "Keychains", "login.keychain-db"))
+	return err == nil
 }
 
 func getHome() string {
@@ -563,7 +582,10 @@ func (d *FleetDoctor) checkClaudeCode(ctx context.Context) SectionResult {
 	} else {
 		docOut, lat, docErr := d.ClaudeDoctorFunc(ctx)
 		chkDoctor.Latency = lat
-		if docErr == nil || strings.Contains(docOut, "No installation issues found") {
+		if errors.Is(docErr, errKeychainUnreachable) {
+			chkDoctor.Status = StatusSkipped
+			chkDoctor.Message = "Skipped (no login keychain under HOME)"
+		} else if docErr == nil || strings.Contains(docOut, "No installation issues found") {
 			chkDoctor.Status = StatusOK
 			chkDoctor.Message = "Installation health checks passed"
 		} else {

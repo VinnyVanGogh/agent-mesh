@@ -501,3 +501,14 @@ func TestDoctor_JSONOutput(t *testing.T) {
 		t.Errorf("expected %d passed in unmarshaled JSON, got %d", report.Summary.Passed, parsed.Summary.Passed)
 	}
 }
+
+func TestClaudeDoctorSkipsWithoutLoginKeychain(t *testing.T) {
+	if !loginKeychainReachable(t.TempDir()) {
+		t.Setenv("HOME", t.TempDir())
+		d := NewFleetDoctor(DoctorOptions{})
+		_, _, err := d.ClaudeDoctorFunc(context.Background())
+		if !errors.Is(err, errKeychainUnreachable) {
+			t.Fatalf("expected errKeychainUnreachable with temp HOME, got %v", err)
+		}
+	}
+}
