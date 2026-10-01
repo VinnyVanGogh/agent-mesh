@@ -39,18 +39,26 @@ var statusCmd = &cobra.Command{
 			geminiPool := pacerState.Pools[router.PoolGeminiNative]
 			pool3p := pacerState.Pools[router.Pool3PClaude]
 
+			isWork := decision != nil && decision.IsWorkRepo
+
 			if workPool != nil {
 				workName := "Enterprise (Work)"
 				if cfg != nil && cfg.CompanyName != "" {
 					workName = fmt.Sprintf("%s (Work)", cfg.CompanyName)
 				}
-				fmt.Printf("  • %-26s \033[1;32m✔ Highest Priority\033[0m (routes via %s | Week Left: %.0f%% | 5h Left: %.0f%%)\n",
-					workName+":", remoteHost, workPool.Weekly.RemainingPct, workPool.FiveHour.RemainingPct)
+				workBadge := "\033[1;32m✔ Highest Priority\033[0m"
+				if !isWork {
+					workBadge = "\033[1;32m✔ Available (Work Seat)\033[0m"
+				}
+				fmt.Printf("  • %-26s %s (routes via %s | Week Left: %.0f%% | 5h Left: %.0f%%)\n",
+					workName+":", workBadge, remoteHost, workPool.Weekly.RemainingPct, workPool.FiveHour.RemainingPct)
 			}
 			if persPool != nil {
 				persColor := "\033[1;32m✔ Available\033[0m"
 				if persPool.IsLocked {
 					persColor = "\033[1;31m✖ Locked\033[0m"
+				} else if !isWork {
+					persColor = "\033[1;32m✔ Highest Priority\033[0m"
 				} else if persPool.Weekly.Known && persPool.Weekly.RemainingPct < 10 {
 					persColor = fmt.Sprintf("\033[1;33m⚠ %s Used\033[0m", persPool.Weekly.FormatPct(false, 0))
 				}

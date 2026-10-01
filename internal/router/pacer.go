@@ -153,6 +153,10 @@ func LoadPacerState() (*PacerState, error) {
 	samplesPath := filepath.Join(home, ".config", "token-telemetry", "statusline-samples.ndjson")
 	readSamplesTail(samplesPath, state)
 
+	// 2b. Overlay from ~/.config/rate-limits/state.json if available
+	stateJSONPath := filepath.Join(home, ".config", "rate-limits", "state.json")
+	applyStateJSON(stateJSONPath, state)
+
 	// 3. Evaluate lockouts from window thresholds
 	now := time.Now()
 	for _, pool := range state.Pools {
@@ -409,4 +413,103 @@ func (p *QuotaPool) OnWeeklyPace(now time.Time) bool {
 	burn := used / daysElapsed
 	budget := remaining / daysLeft
 	return burn <= budget || remaining/burn >= daysLeft
+}
+
+type rawStateJSON struct {
+	Quotas map[string]struct {
+		FiveHourRemaining float64 `json:"five_hour_remaining"`
+		FiveHourUsed      float64 `json:"five_hour_used"`
+		FiveHourResetsAt  float64 `json:"five_hour_resets_at"`
+		WeeklyRemaining   float64 `json:"weekly_remaining"`
+		WeeklyUsed        float64 `json:"weekly_used"`
+		WeeklyResetsAt    float64 `json:"weekly_resets_at"`
+		LastUpdated       string  `json:"last_updated"`
+	} `json:"quotas"`
+	Lockouts map[string]struct {
+		Locked       bool   `json:"locked"`
+		ResetsAt     int64  `json:"resets_at"`
+		ResetTimeStr string `json:"reset_time_str"`
+	} `json:"lockouts"`
+}
+
+func applyStateJSON(path string, state *PacerState) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var sj rawStateJSON
+	if err := json.Unmarshal(data, &sj); err != nil {
+		return
+	}
+
+	for qName, qVal := range sj.Quotas {
+		lower := strings.ToLower(qName)
+		var targetPoolID PoolID
+		switch {
+		case strings.Contains(lower, "3p") || strings.Contains(lower, "antigravity"):
+			targetPoolID = Pool3PClaude
+		case strings.Contains(lower, "work") && strings.Contains(lower, "claude"):
+			targetPoolID = PoolWorkClaude
+		case strings.Contains(lower, "personal") && strings.Contains(lower, "claude"):
+			targetPoolID = PoolPersonalClaude
+		case strings.Contains(lower, "claude"):
+			targetPoolID = PoolPersonalClaude
+		case strings.Contains(lower, "gemini"):
+			targetPoolID = PoolGeminiNative
+		default:
+			continue
+		}
+
+		p := state.Pools[targetPoolID]
+		if p == nil {
+			continue
+		}
+
+		p.FiveHour.UsedPct = qVal.FiveHourUsed
+		p.FiveHour.RemainingPct = qVal.FiveHourRemaining
+		p.FiveHour.Known = true
+		if qVal.FiveHourResetsAt > 0 {
+			p.FiveHour.ResetsAt = time.Unix(int64(qVal.FiveHourResetsAt), 0)
+		}
+
+		p.Weekly.UsedPct = qVal.WeeklyUsed
+		p.Weekly.RemainingPct = qVal.WeeklyRemaining
+		p.Weekly.Known = true
+		if qVal.WeeklyResetsAt > 0 {
+			p.Weekly.ResetsAt = time.Unix(int64(qVal.WeeklyResetsAt), 0)
+		}
+
+		if qVal.LastUpdated != "" {
+			if t, err := time.Parse(time.RFC3339, qVal.LastUpdated); err == nil {
+				if t.After(p.LastUpdated) {
+					p.LastUpdated = t
+				}
+			}
+		}
+	}
+
+	for lName, lVal := range sj.Lockouts {
+		lower := strings.ToLower(lName)
+		var targetPoolID PoolID
+		switch {
+		case strings.Contains(lower, "3p") || strings.Contains(lower, "antigravity"):
+			targetPoolID = Pool3PClaude
+		case strings.Contains(lower, "work") && strings.Contains(lower, "claude"):
+			targetPoolID = PoolWorkClaude
+		case strings.Contains(lower, "personal") || strings.Contains(lower, "claude"):
+			targetPoolID = PoolPersonalClaude
+		case strings.Contains(lower, "gemini"):
+			targetPoolID = PoolGeminiNative
+		default:
+			continue
+		}
+
+		if p := state.Pools[targetPoolID]; p != nil && lVal.Locked {
+			p.IsLocked = true
+			p.LockoutReason = "Rate limit lockout triggered"
+			if lVal.ResetsAt > 0 {
+				p.LockoutUntil = time.Unix(lVal.ResetsAt, 0)
+			}
+		}
+	}
 }

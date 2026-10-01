@@ -736,8 +736,15 @@ function buildGaugeCard(key, q) {
   card.appendChild(hdr);
 
   // 5-Hour Rolling
-  const remaining5h = Math.max(0, Math.min(100, q.five_hour_remaining_pct ?? 100));
-  const used5h = 100 - remaining5h;
+  let remaining5h = q.five_hour_remaining_pct;
+  let used5h = q.five_hour_used_pct;
+  if (remaining5h == null && used5h != null) remaining5h = Math.max(0, 100 - used5h);
+  if (used5h == null && remaining5h != null) used5h = Math.max(0, 100 - remaining5h);
+  if (remaining5h == null && used5h == null) { remaining5h = 100; used5h = 0; }
+  if (remaining5h === 100 && used5h > 0) remaining5h = Math.max(0, 100 - used5h);
+  remaining5h = Math.max(0, Math.min(100, remaining5h));
+  used5h = Math.max(0, Math.min(100, used5h));
+
   const bar5hOuter = el('div', 'gauge-bar-outer');
   const bar5hInner = el('div', 'gauge-bar-inner');
   bar5hInner.style.width = `${used5h}%`;
@@ -768,8 +775,15 @@ function buildGaugeCard(key, q) {
   card.appendChild(b5Row);
 
   // Weekly Budget
-  const remainingWk = Math.max(0, Math.min(100, q.weekly_remaining_pct ?? 100));
-  const usedWk = 100 - remainingWk;
+  let remainingWk = q.weekly_remaining_pct;
+  let usedWk = q.weekly_used_pct;
+  if (remainingWk == null && usedWk != null) remainingWk = Math.max(0, 100 - usedWk);
+  if (usedWk == null && remainingWk != null) usedWk = Math.max(0, 100 - remainingWk);
+  if (remainingWk == null && usedWk == null) { remainingWk = 100; usedWk = 0; }
+  if (remainingWk === 100 && usedWk > 0) remainingWk = Math.max(0, 100 - usedWk);
+  remainingWk = Math.max(0, Math.min(100, remainingWk));
+  usedWk = Math.max(0, Math.min(100, usedWk));
+
   const labelWk = el('div', 'gauge-window-label', 'Weekly Budget');
   labelWk.style.marginTop = '10px';
   card.appendChild(labelWk);
@@ -871,6 +885,10 @@ function renderOrganizationsGrid(orgs) {
         const workQ = orgQuotas['claude_work'];
         if (workQ && !workQ.is_locked) return false;
       }
+      if (!isManagedSol && (q.provider === 'claude_work' || q.provider === 'claude')) {
+        const persQ = orgQuotas['claude_personal'];
+        if (persQ && !persQ.is_locked) return false;
+      }
       return true;
     });
     if (lockouts.length) {
@@ -879,7 +897,9 @@ function renderOrganizationsGrid(orgs) {
       lockRow.textContent = `🔒 Locked: ${lockouts.map(l => l.display_name).join(', ')}`;
       card.appendChild(lockRow);
     } else {
-      const quotaKeys = ['gemini', 'claude_work', 'claude_personal', 'openai'].filter(k => orgQuotas[k]);
+      const quotaKeys = isManagedSol
+        ? ['gemini', 'claude_work', 'openai'].filter(k => orgQuotas[k])
+        : ['gemini', 'claude_personal', 'openai'].filter(k => orgQuotas[k]);
       if (quotaKeys.length) {
         const qWrap = el('div', 'org-quota-mini-strip');
         qWrap.style.cssText = 'margin-top:8px;display:flex;flex-direction:column;gap:4px;';
@@ -2128,13 +2148,23 @@ function resolveProvider(val) {
   return detectProviderStr(String(val)) || 'gemini';
 }
 
-function getAgentQuota(providerQuotas, provider) {
+function getAgentQuota(providerQuotas, provider, orgName) {
   if (!providerQuotas) return null;
   const p = (provider || '').toLowerCase();
-  if (providerQuotas[p]) return providerQuotas[p];
+  const org = (orgName || '').toLowerCase();
+  const isWork = org.includes('managed') || org.includes('mansol');
+
+  if (p === 'claude_personal') return providerQuotas['claude_personal'] || providerQuotas['claude'] || null;
+  if (p === 'claude_work') return providerQuotas['claude_work'] || providerQuotas['claude'] || null;
+
   if (p.includes('claude') || p.includes('anthropic') || p.includes('fable')) {
-    return providerQuotas['claude'] || providerQuotas['claude_personal'] || providerQuotas['claude_work'] || null;
+    if (isWork) {
+      return providerQuotas['claude_work'] || providerQuotas['claude'] || providerQuotas['claude_personal'] || null;
+    } else {
+      return providerQuotas['claude_personal'] || providerQuotas['claude'] || providerQuotas['claude_work'] || null;
+    }
   }
+  if (providerQuotas[p]) return providerQuotas[p];
   if (p.includes('gemini') || p.includes('google')) {
     return providerQuotas['gemini'] || null;
   }
@@ -2402,7 +2432,7 @@ function renderAgentsPage() {
     card.appendChild(hbRow);
 
     // ── Quota Consumption Headroom Gauge ──────────────────
-    const quota = a.quota || getAgentQuota(f?.provider_quotas, a.provider);
+    const quota = a.quota || getAgentQuota(f?.provider_quotas, a.provider, a.org || a.organization);
     if (quota) {
       const remaining = quota.five_hour_remaining_pct ?? (100 - (quota.five_hour_used_pct ?? 0));
       const used = 100 - remaining;
@@ -3889,8 +3919,14 @@ function renderSettings() {
       const body = el('div', 'settings-provider-body');
 
       // ── 5-Hour Rolling Pool ──
-      const rem5h = Math.max(0, Math.min(100, q.five_hour_remaining_pct ?? 100));
-      const used5h = Math.max(0, Math.min(100, 100 - rem5h));
+      let rem5h = q.five_hour_remaining_pct;
+      let used5h = q.five_hour_used_pct;
+      if (rem5h == null && used5h != null) rem5h = Math.max(0, 100 - used5h);
+      if (used5h == null && rem5h != null) used5h = Math.max(0, 100 - rem5h);
+      if (rem5h == null && used5h == null) { rem5h = 100; used5h = 0; }
+      if (rem5h === 100 && used5h > 0) rem5h = Math.max(0, 100 - used5h);
+      rem5h = Math.max(0, Math.min(100, rem5h));
+      used5h = Math.max(0, Math.min(100, used5h));
       const count5h = formatCountdown(q.five_hour_resets_at);
       const time5h = formatResetTime(q.five_hour_resets_at, false);
       const limit5h = q.lockout_threshold_pct || 100;
@@ -3937,8 +3973,14 @@ function renderSettings() {
       body.appendChild(pool5h);
 
       // ── Weekly Budget Pool ──
-      const remWk = Math.max(0, Math.min(100, q.weekly_remaining_pct ?? 100));
-      const usedWk = Math.max(0, Math.min(100, 100 - remWk));
+      let remWk = q.weekly_remaining_pct;
+      let usedWk = q.weekly_used_pct;
+      if (remWk == null && usedWk != null) remWk = Math.max(0, 100 - usedWk);
+      if (usedWk == null && remWk != null) usedWk = Math.max(0, 100 - remWk);
+      if (remWk == null && usedWk == null) { remWk = 100; usedWk = 0; }
+      if (remWk === 100 && usedWk > 0) remWk = Math.max(0, 100 - usedWk);
+      remWk = Math.max(0, Math.min(100, remWk));
+      usedWk = Math.max(0, Math.min(100, usedWk));
       const countWk = formatCountdown(q.weekly_resets_at);
       const timeWk = formatResetTime(q.weekly_resets_at, true);
 
@@ -4785,12 +4827,16 @@ function renderOrgDetailView(org) {
   if (Object.keys(orgQuotas).length) {
     const quotaSec = el('div', 'org-detail-section');
     quotaSec.appendChild(el('div', 'org-detail-section-title', '5-Hour Rolling Quotas & Lockout Status'));
-    const quotaGrid = el('div', 'quota-gauges-grid');
-    const order = ['gemini', 'claude_work', 'claude_personal', 'claude', 'openai'];
+    const isManagedSol = (org.name || '').toLowerCase().includes('managed');
+    const order = isManagedSol
+      ? ['gemini', 'claude_work', 'claude_personal', 'claude', 'openai']
+      : ['gemini', 'claude_personal', 'claude_work', 'claude', 'openai'];
     for (const key of order) {
       const q = orgQuotas[key];
       if (!q) continue;
       if (key === 'claude' && (orgQuotas['claude_work'] || orgQuotas['claude_personal'])) continue;
+      if (!isManagedSol && key === 'claude_work' && orgQuotas['claude_personal'] && q.five_hour_used_pct === 0 && q.weekly_used_pct === 0) continue;
+      if (isManagedSol && key === 'claude_personal' && orgQuotas['claude_work'] && q.five_hour_used_pct === 0 && q.weekly_used_pct === 0) continue;
       quotaGrid.appendChild(buildGaugeCard(key, q));
     }
     quotaSec.appendChild(quotaGrid);

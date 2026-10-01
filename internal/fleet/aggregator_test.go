@@ -388,3 +388,118 @@ func TestAgentQuotaBinding(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudePersonalQuotaAndOrgPrioritization(t *testing.T) {
+	testDB := setupTestDB(t)
+	defer testDB.Close()
+
+	// Seed work and personal quotas
+	_, err := testDB.Exec(`
+		DELETE FROM quota_windows WHERE pool_key IN ('claude', 'claude_work', 'claude_personal');
+		INSERT INTO quota_windows (pool_key, window_type, used_percent, remaining_pct, is_locked, resets_at)
+		VALUES
+		('claude_work', 'rolling_5h', 15.0, 85.0, 0, '2026-09-30T10:00:00Z'),
+		('claude_work', 'weekly_7d', 20.0, 80.0, 0, '2026-10-04T00:00:00Z'),
+		('claude', 'rolling_5h', 54.0, 46.0, 0, '2026-09-30T10:00:00Z'),
+		('claude', 'weekly_7d', 31.0, 69.0, 0, '2026-10-04T00:00:00Z');
+	`)
+	if err != nil {
+		t.Fatalf("failed to seed quota windows: %v", err)
+	}
+
+	agg := &Aggregator{
+		DB: testDB,
+		Now: func() time.Time {
+			return time.Date(2026, 9, 30, 8, 0, 0, 0, time.UTC)
+		},
+	}
+
+	overview, err := agg.Gather(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error gathering overview: %v", err)
+	}
+
+	// 1. Verify global fleet provider quotas
+	persQ := overview.ProviderQuotas["claude_personal"]
+	if persQ == nil {
+		t.Fatalf("missing claude_personal in ProviderQuotas")
+	}
+	if persQ.FiveHourUsedPct != 54.0 || persQ.FiveHourRemainingPct != 46.0 {
+		t.Errorf("expected claude_personal 54%% used / 46%% left, got %.1f%% used / %.1f%% left",
+			persQ.FiveHourUsedPct, persQ.FiveHourRemainingPct)
+	}
+	if persQ.WeeklyUsedPct != 31.0 || persQ.WeeklyRemainingPct != 69.0 {
+		t.Errorf("expected claude_personal weekly 31%% used / 69%% left, got %.1f%% used / %.1f%% left",
+			persQ.WeeklyUsedPct, persQ.WeeklyRemainingPct)
+	}
+
+	workQ := overview.ProviderQuotas["claude_work"]
+	if workQ == nil {
+		t.Fatalf("missing claude_work in ProviderQuotas")
+	}
+	if workQ.FiveHourUsedPct != 15.0 || workQ.FiveHourRemainingPct != 85.0 {
+		t.Errorf("expected claude_work 15%% used / 85%% left, got %.1f%% used / %.1f%% left",
+			workQ.FiveHourUsedPct, workQ.FiveHourRemainingPct)
+	}
+
+	// 2. Verify organization-specific prioritization and headroom
+	var stayPointOrg, managedOrg *OrgFleetSummary
+	for i := range overview.Organizations {
+		if overview.Organizations[i].Name == "StayPoint" {
+			stayPointOrg = &overview.Organizations[i]
+		} else if overview.Organizations[i].Name == "Managed Solution" {
+			managedOrg = &overview.Organizations[i]
+		}
+	}
+	if stayPointOrg == nil || managedOrg == nil {
+		t.Fatalf("missing StayPoint or Managed Solution orgs in overview")
+	}
+
+	// StayPoint (Personal org): prioritizes Claude Personal
+	spPers := stayPointOrg.ProviderQuotas["claude_personal"]
+	if spPers == nil {
+		t.Fatalf("missing claude_personal in StayPoint ProviderQuotas")
+	}
+	if spPers.FiveHourRemainingPct != 46.0 || spPers.FiveHourUsedPct != 54.0 {
+		t.Errorf("expected StayPoint claude_personal 46%% headroom, got %.1f%%", spPers.FiveHourRemainingPct)
+	}
+	if spPers.WeeklyRemainingPct != 69.0 || spPers.WeeklyUsedPct != 31.0 {
+		t.Errorf("expected StayPoint claude_personal weekly 69%% headroom, got %.1f%%", spPers.WeeklyRemainingPct)
+	}
+	if spPers.ProjectionMessage != "Claude Personal prioritized (healthy headroom)" {
+		t.Errorf("expected StayPoint claude_personal message 'Claude Personal prioritized (healthy headroom)', got %q", spPers.ProjectionMessage)
+	}
+	spWork := stayPointOrg.ProviderQuotas["claude_work"]
+	if spWork == nil || spWork.FiveHourRemainingPct != 100.0 {
+		t.Errorf("expected StayPoint claude_work 100%% remaining (not used by personal org), got %v", spWork)
+	}
+
+	// Managed Solution (Work org): prioritizes Claude Work
+	msWork := managedOrg.ProviderQuotas["claude_work"]
+	if msWork == nil {
+		t.Fatalf("missing claude_work in Managed Solution ProviderQuotas")
+	}
+	if msWork.FiveHourRemainingPct != 85.0 || msWork.FiveHourUsedPct != 15.0 {
+		t.Errorf("expected Managed Solution claude_work 85%% headroom, got %.1f%%", msWork.FiveHourRemainingPct)
+	}
+	if msWork.WeeklyRemainingPct != 80.0 || msWork.WeeklyUsedPct != 20.0 {
+		t.Errorf("expected Managed Solution claude_work weekly 80%% headroom, got %.1f%%", msWork.WeeklyRemainingPct)
+	}
+	if msWork.ProjectionMessage != "Claude Work prioritized (healthy headroom)" {
+		t.Errorf("expected Managed Solution claude_work message 'Claude Work prioritized (healthy headroom)', got %q", msWork.ProjectionMessage)
+	}
+	msPers := managedOrg.ProviderQuotas["claude_personal"]
+	if msPers == nil || msPers.FiveHourRemainingPct != 100.0 {
+		t.Errorf("expected Managed Solution claude_personal 100%% remaining (retained for personal), got %v", msPers)
+	}
+
+	// 3. Verify getProviderQuotaGauge prioritization per org
+	spClaudeGauge := getProviderQuotaGauge(overview.ProviderQuotas, "claude", "StayPoint")
+	if spClaudeGauge == nil || spClaudeGauge.FiveHourRemainingPct != 46.0 {
+		t.Errorf("expected StayPoint claude gauge to bind to personal (46%% remaining), got %v", spClaudeGauge)
+	}
+	msClaudeGauge := getProviderQuotaGauge(overview.ProviderQuotas, "claude", "Managed Solution")
+	if msClaudeGauge == nil || msClaudeGauge.FiveHourRemainingPct != 85.0 {
+		t.Errorf("expected Managed Solution claude gauge to bind to work (85%% remaining), got %v", msClaudeGauge)
+	}
+}
