@@ -20,6 +20,8 @@ type TaskItem struct {
 	ID             string    `json:"id"`
 	Identifier     string    `json:"identifier"`
 	Title          string    `json:"title"`
+	Description    string    `json:"description,omitempty"`
+	Comments       []string  `json:"comments,omitempty"`
 	Organization   string    `json:"organization"`
 	Project        string    `json:"project,omitempty"`
 	Status         string    `json:"status"` // running, active, stopped, blocked, errored, done

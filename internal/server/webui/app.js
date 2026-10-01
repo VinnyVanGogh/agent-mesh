@@ -26,6 +26,11 @@ const state = {
     priority: 'all',
   },
   expandedRecentSubtasks: new Set(),
+  overviewSort: { column: 'updated', direction: 'desc' },
+  tsSort: { column: 'status', direction: 'asc' },
+  orgSort: { column: 'task', direction: 'asc' },
+  taskComments: {},     // taskId -> array of comments
+  taskDescriptions: {}, // taskId -> description string
   currentOrgDetail: null,
   openDetailTaskId: null,
   chatPollTimer:    null,
@@ -236,14 +241,27 @@ async function loadAll() {
     ]);
 
     if (fleetResp) state.fleet = fleetResp;
-    for (const t of (tasksResp.tasks || [])) state.tasks[t.id] = t;
+    for (const t of (tasksResp.tasks || [])) {
+      state.tasks[t.id] = t;
+      if (t.description) state.taskDescriptions[t.id] = t.description;
+      if (t.comments && t.comments.length) state.taskComments[t.id] = t.comments;
+    }
     for (const s of (sessionsResp.sessions || [])) state.sessions[s.id] = s;
 
     if (fleetResp?.tasks) {
       for (const t of fleetResp.tasks) {
         if (!state.tasks[t.id]) {
           state.tasks[t.id] = { ...t, status: normalizeFleetStatus(t.status) };
+        } else {
+          if (!state.tasks[t.id].description && t.description) {
+            state.tasks[t.id].description = t.description;
+          }
+          if ((!state.tasks[t.id].comments || !state.tasks[t.id].comments.length) && t.comments) {
+            state.tasks[t.id].comments = t.comments;
+          }
         }
+        if (t.description) state.taskDescriptions[t.id] = t.description;
+        if (t.comments && t.comments.length) state.taskComments[t.id] = t.comments;
       }
     }
 
@@ -255,6 +273,7 @@ async function loadAll() {
     populateRecentTasksFilters();
     renderAll();
     renderSidebarOrgTree();
+    prefetchTaskComments();
   } catch (err) {
     console.error('load failed', err);
   }
@@ -318,6 +337,16 @@ async function refreshFleetData() {
     const fleetResp = await apiFetch('/api/fleet/overview');
     if (fleetResp) {
       state.fleet = fleetResp;
+      if (fleetResp.tasks) {
+        for (const t of fleetResp.tasks) {
+          if (t.description) state.taskDescriptions[t.id] = t.description;
+          if (t.comments && t.comments.length) state.taskComments[t.id] = t.comments;
+          if (state.tasks[t.id]) {
+            if (!state.tasks[t.id].description && t.description) state.tasks[t.id].description = t.description;
+            if ((!state.tasks[t.id].comments || !state.tasks[t.id].comments.length) && t.comments) state.tasks[t.id].comments = t.comments;
+          }
+        }
+      }
       populateOrgFilter();
       populateTSOrgFilter();
       populateAgentsFilters();
@@ -906,9 +935,265 @@ function populateTSOrgFilter() {
   select.value = current || 'all';
 }
 
+// ── Table Sorting & Deep Content Search Helpers ───────────
+function getPrioritySeverity(p) {
+  const s = (p || '').toLowerCase().trim();
+  switch (s) {
+    case 'critical':
+    case 'urgent':
+    case 'crit':
+      return 4;
+    case 'high':
+      return 3;
+    case 'medium':
+    case 'med':
+      return 2;
+    case 'low':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function sortTasks(tasks, col, dir) {
+  const mult = dir === 'desc' ? -1 : 1;
+  return [...tasks].sort((a, b) => {
+    switch (col) {
+      case 'identifier':
+      case 'id': {
+        const valA = a.identifier || a.id || '';
+        const valB = b.identifier || b.id || '';
+        return mult * valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' });
+      }
+      case 'task':
+      case 'name':
+      case 'title': {
+        const valA = (a.title || a.name || '').toLowerCase();
+        const valB = (b.title || b.name || '').toLowerCase();
+        return mult * valA.localeCompare(valB, undefined, { sensitivity: 'base' });
+      }
+      case 'organization':
+      case 'org': {
+        const valA = (a.organization || '').toLowerCase();
+        const valB = (b.organization || '').toLowerCase();
+        return mult * valA.localeCompare(valB, undefined, { sensitivity: 'base' });
+      }
+      case 'project': {
+        const valA = (a.project || '').toLowerCase();
+        const valB = (b.project || '').toLowerCase();
+        return mult * valA.localeCompare(valB, undefined, { sensitivity: 'base' });
+      }
+      case 'assignee': {
+        const valA = (a.assignee_name || a.assigned_agent || a.checkout_agent_id || '').toLowerCase();
+        const valB = (b.assignee_name || b.assigned_agent || b.checkout_agent_id || '').toLowerCase();
+        return mult * valA.localeCompare(valB, undefined, { sensitivity: 'base' });
+      }
+      case 'status': {
+        const valA = (a.status || '').toLowerCase();
+        const valB = (b.status || '').toLowerCase();
+        return mult * valA.localeCompare(valB, undefined, { sensitivity: 'base' });
+      }
+      case 'priority': {
+        const rankA = getPrioritySeverity(a.priority);
+        const rankB = getPrioritySeverity(b.priority);
+        if (rankA !== rankB) return mult * (rankA - rankB);
+        return (a.title || a.name || '').localeCompare(b.title || b.name || '');
+      }
+      case 'cost':
+      case 'spend':
+      case 'spent_usd': {
+        const costA = Number(a.spent_usd) || 0;
+        const costB = Number(b.spent_usd) || 0;
+        if (costA !== costB) return mult * (costA - costB);
+        return mult * ((Number(a.spent_tokens) || 0) - (Number(b.spent_tokens) || 0));
+      }
+      case 'updated':
+      case 'updated_at': {
+        const tA = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+        const tB = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+        return mult * (tA - tB);
+      }
+      default:
+        return 0;
+    }
+  });
+}
+
+function renderTableSortHeaders(tableEl, currentSort, onSort) {
+  if (!tableEl) return;
+  const thead = tableEl.querySelector('thead');
+  if (!thead) return;
+
+  const ths = thead.querySelectorAll('th[data-col]');
+  ths.forEach(th => {
+    const col = th.dataset.col;
+    if (!th.dataset.label) {
+      th.dataset.label = th.textContent.trim();
+    }
+    const label = th.dataset.label;
+    const isActive = currentSort.column === col;
+    const dir = isActive ? currentSort.direction : null;
+
+    th.classList.add('sortable-th');
+    th.classList.toggle('sort-active', isActive);
+    th.setAttribute('role', 'columnheader');
+    th.setAttribute('tabindex', '0');
+    th.setAttribute('aria-sort', isActive ? (dir === 'asc' ? 'ascending' : 'descending') : 'none');
+
+    const icon = isActive ? (dir === 'asc' ? '▲' : '▼') : '↕';
+    th.innerHTML = `<span class="th-content"><span class="th-label">${label}</span><span class="sort-icon ${isActive ? 'active' : ''}">${icon}</span></span>`;
+
+    if (!th._hasSortListener) {
+      th._hasSortListener = true;
+      const trigger = () => {
+        let newDir;
+        if (currentSort.column === col) {
+          newDir = currentSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+          newDir = (col === 'priority' || col === 'cost' || col === 'updated') ? 'desc' : 'asc';
+        }
+        onSort(col, newDir);
+      };
+      th.addEventListener('click', trigger);
+      th.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          trigger();
+        }
+      });
+    }
+  });
+}
+
+function extractMatchSnippet(text, matchIdx, matchLen) {
+  if (!text) return '';
+  const start = Math.max(0, matchIdx - 25);
+  const end = Math.min(text.length, matchIdx + matchLen + 40);
+  const prefix = start > 0 ? '…' : '';
+  const suffix = end < text.length ? '…' : '';
+  const snippet = text.slice(start, end).replace(/\s+/g, ' ');
+  return prefix + snippet + suffix;
+}
+
+function getTaskSearchMatch(t, term) {
+  if (!term) return { matches: true, snippet: null };
+  const s = term.toLowerCase();
+
+  // 1. Direct fields: title, identifier, org, project, assignee
+  const title = (t.title || t.name || '').toLowerCase();
+  const id = (t.identifier || t.id || '').toLowerCase();
+  const org = (t.organization || '').toLowerCase();
+  const proj = (t.project || '').toLowerCase();
+  const assignee = (t.assignee_name || t.assigned_agent || t.checkout_agent_id || '').toLowerCase();
+
+  if (title.includes(s) || id.includes(s) || org.includes(s) || proj.includes(s) || assignee.includes(s)) {
+    return { matches: true, snippet: null };
+  }
+
+  // 2. Task Description (deep content search)
+  const taskId = t.id || t.task_id;
+  const desc = t.description || t.desc || (taskId ? state.taskDescriptions?.[taskId] : '') || '';
+  if (desc) {
+    const idx = desc.toLowerCase().indexOf(s);
+    if (idx !== -1) {
+      return {
+        matches: true,
+        snippet: {
+          type: 'description',
+          text: extractMatchSnippet(desc, idx, s.length),
+        },
+      };
+    }
+  }
+
+  // 3. Comments (deep content search inside agent and user comments)
+  const comments = t.comments || (taskId ? state.taskComments?.[taskId] : []) || [];
+  if (Array.isArray(comments)) {
+    for (const c of comments) {
+      if (typeof c === 'string') {
+        const idx = c.toLowerCase().indexOf(s);
+        if (idx !== -1) {
+          return {
+            matches: true,
+            snippet: {
+              type: 'comment',
+              text: extractMatchSnippet(c, idx, s.length),
+            },
+          };
+        }
+      } else if (c && typeof c === 'object') {
+        const body = (c.body || c.message || c.content || '');
+        const author = (c.author || c.user || c.author_name || '');
+        const idxBody = body.toLowerCase().indexOf(s);
+        if (idxBody !== -1) {
+          return {
+            matches: true,
+            snippet: {
+              type: 'comment',
+              author: author,
+              text: extractMatchSnippet(body, idxBody, s.length),
+            },
+          };
+        }
+        if (author.toLowerCase().includes(s)) {
+          return {
+            matches: true,
+            snippet: {
+              type: 'comment',
+              author: author,
+              text: `Comment by ${author}`,
+            },
+          };
+        }
+      }
+    }
+  }
+
+  return { matches: false, snippet: null };
+}
+
+async function prefetchTaskComments() {
+  const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
+  const toFetch = [];
+  const seen = new Set();
+  for (const t of allTasks) {
+    if (!t.id || seen.has(t.id)) continue;
+    seen.add(t.id);
+    if ((!t.comments || !t.comments.length) && (!state.taskComments[t.id] || !state.taskComments[t.id].length)) {
+      toFetch.push(t.id);
+    }
+  }
+
+  const chunk = toFetch.slice(0, 30);
+  for (let i = 0; i < chunk.length; i += 5) {
+    const batch = chunk.slice(i, i + 5);
+    await Promise.all(batch.map(async (taskId) => {
+      try {
+        const isFleet = isFleetTaskId(taskId);
+        const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
+        const cr = await apiFetch(`${apiBase}/${taskId}/comments`);
+        const comments = cr.comments || (Array.isArray(cr) ? cr : []);
+        if (comments.length) {
+          state.taskComments[taskId] = comments;
+          if (state.tasks[taskId]) {
+            state.tasks[taskId].comments = comments;
+          }
+        }
+      } catch { /* optional */ }
+    }));
+  }
+}
+
 function renderGlobalTaskTable() {
+  const table = document.getElementById('overview-task-table');
   const tbody = document.getElementById('global-task-tbody');
   if (!tbody) return;
+
+  renderTableSortHeaders(table, state.overviewSort, (col, dir) => {
+    state.overviewSort = { column: col, direction: dir };
+    renderGlobalTaskTable();
+  });
+
   tbody.innerHTML = '';
 
   let tasks = state.fleet?.tasks || [];
@@ -919,8 +1204,9 @@ function renderGlobalTaskTable() {
   const statusFilter = state.taskFilter.status || 'all';
 
   const filtered = filterTasks(tasks, sTerm, orgFilter, statusFilter);
+  const sorted = sortTasks(filtered, state.overviewSort.column, state.overviewSort.direction);
 
-  if (!filtered.length) {
+  if (!sorted.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
     td.colSpan = 7;
@@ -931,7 +1217,7 @@ function renderGlobalTaskTable() {
     return;
   }
 
-  for (const t of filtered) {
+  for (const t of sorted) {
     const tr = makeTaskTableRow(t, 7);
     tbody.appendChild(tr);
   }
@@ -950,10 +1236,11 @@ function filterTasks(tasks, sTerm, orgFilter, statusFilter) {
       if (statusFilter === 'done'    && st !== 'done')                             return false;
     }
     if (sTerm) {
-      const title = (t.title || t.name || '').toLowerCase();
-      const id    = (t.identifier || t.id || '').toLowerCase();
-      const org   = (t.organization || '').toLowerCase();
-      if (!title.includes(sTerm) && !id.includes(sTerm) && !org.includes(sTerm)) return false;
+      const match = getTaskSearchMatch(t, sTerm);
+      if (!match.matches) return false;
+      t._searchSnippet = match.snippet;
+    } else {
+      t._searchSnippet = null;
     }
     return true;
   });
@@ -965,7 +1252,36 @@ function makeTaskTableRow(t, colCount) {
   const tdId = el('td', null, t.identifier || (t.id ? `#${t.id.slice(0, 8)}` : '—'));
   tdId.style.cssText = 'font-family:monospace;font-weight:600;';
 
-  const tdTitle  = el('td', null, t.title || t.name || '(untitled)');
+  const tdTitle  = el('td');
+  const titleSpan = el('div', 'task-table-title', t.title || t.name || '(untitled)');
+  tdTitle.appendChild(titleSpan);
+
+  if (t._searchSnippet) {
+    const snipEl = el('div', 'task-search-snippet');
+    const badge = el('span', 'snippet-badge', t._searchSnippet.type);
+    snipEl.appendChild(badge);
+    const textNode = document.createElement('span');
+    const sTerm = (state.taskFilter?.search || state.tsFilter?.search || '').trim();
+    if (sTerm) {
+      const raw = t._searchSnippet.text;
+      const lower = raw.toLowerCase();
+      const sLower = sTerm.toLowerCase();
+      const idx = lower.indexOf(sLower);
+      if (idx !== -1) {
+        textNode.appendChild(document.createTextNode(raw.slice(0, idx)));
+        const mark = el('mark', null, raw.slice(idx, idx + sTerm.length));
+        textNode.appendChild(mark);
+        textNode.appendChild(document.createTextNode(raw.slice(idx + sTerm.length)));
+      } else {
+        textNode.textContent = raw;
+      }
+    } else {
+      textNode.textContent = t._searchSnippet.text;
+    }
+    snipEl.appendChild(textNode);
+    tdTitle.appendChild(snipEl);
+  }
+
   const tdOrg    = el('td', null, t.organization || 'StayPoint');
   const tdStat   = el('td'); tdStat.appendChild(statusPill(t.status));
   const tdPri    = el('td', null, t.priority || 'medium');
@@ -2527,8 +2843,15 @@ function renderRecentTasks() {
 
 // ── Task Status Dedicated Page ────────────────────────────
 function renderTaskStatusPage() {
+  const table = document.getElementById('ts-task-table');
   const tbody = document.getElementById('ts-task-tbody');
   if (!tbody) return;
+
+  renderTableSortHeaders(table, state.tsSort, (col, dir) => {
+    state.tsSort = { column: col, direction: dir };
+    renderTaskStatusPage();
+  });
+
   tbody.innerHTML = '';
 
   const allTasks = [...(state.fleet?.tasks || []), ...Object.values(state.tasks)];
@@ -2542,13 +2865,10 @@ function renderTaskStatusPage() {
   const orgFilter = state.tsFilter.org || 'all';
   const stFilter  = state.tsFilter.status || 'all';
 
-  const filtered = filterTasks(dedupTasks, sTerm, orgFilter, stFilter)
-    .sort((a, b) => {
-      const order = { running: 0, in_progress: 0, blocked: 1, active: 2, todo: 2, done: 3, stopped: 4 };
-      return (order[a.status] ?? 5) - (order[b.status] ?? 5);
-    });
+  const filtered = filterTasks(dedupTasks, sTerm, orgFilter, stFilter);
+  const sorted = sortTasks(filtered, state.tsSort.column, state.tsSort.direction);
 
-  if (!filtered.length) {
+  if (!sorted.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td'); td.colSpan = 9;
     td.textContent = 'No tasks match filter.';
@@ -2557,16 +2877,43 @@ function renderTaskStatusPage() {
     return;
   }
 
-  for (const t of filtered) {
+  for (const t of sorted) {
     const tr = document.createElement('tr');
 
     const tdId = el('td', null, t.identifier || (t.id ? `#${t.id.slice(0, 8)}` : '—'));
     tdId.style.cssText = 'font-family:monospace;font-weight:600;';
 
-    const tdTitle    = el('td', null, t.title || t.name || '(untitled)');
+    const tdTitle = el('td');
+    const titleSpan = el('div', 'task-table-title', t.title || t.name || '(untitled)');
+    tdTitle.appendChild(titleSpan);
+
+    if (t._searchSnippet) {
+      const snipEl = el('div', 'task-search-snippet');
+      const badge = el('span', 'snippet-badge', t._searchSnippet.type);
+      snipEl.appendChild(badge);
+      const textNode = document.createElement('span');
+      if (sTerm) {
+        const raw = t._searchSnippet.text;
+        const lower = raw.toLowerCase();
+        const idx = lower.indexOf(sTerm);
+        if (idx !== -1) {
+          textNode.appendChild(document.createTextNode(raw.slice(0, idx)));
+          const mark = el('mark', null, raw.slice(idx, idx + sTerm.length));
+          textNode.appendChild(mark);
+          textNode.appendChild(document.createTextNode(raw.slice(idx + sTerm.length)));
+        } else {
+          textNode.textContent = raw;
+        }
+      } else {
+        textNode.textContent = t._searchSnippet.text;
+      }
+      snipEl.appendChild(textNode);
+      tdTitle.appendChild(snipEl);
+    }
+
     const tdOrg      = el('td', null, t.organization || '—');
     const tdProj     = el('td', null, t.project || '—');
-    const tdAssignee = el('td', null, t.assignee_name || t.checkout_agent_id?.slice(0, 8) || '—');
+    const tdAssignee = el('td', null, t.assignee_name || t.assigned_agent || t.checkout_agent_id?.slice(0, 8) || '—');
     const tdStat     = el('td'); tdStat.appendChild(statusPill(t.status));
     const tdPri      = el('td', null, t.priority || '—');
     const tdSpend    = el('td', null, t.spent_usd > 0 ? fmtCurrency(t.spent_usd) : '—');
@@ -4381,23 +4728,41 @@ function renderOrgDetailView(org) {
     tasksSec.appendChild(el('div', 'org-detail-section-title', `Tasks (${orgTasks.length})`));
     const tbl = document.createElement('table');
     tbl.className = 'global-task-table';
+    tbl.id = 'org-task-table';
     tbl.style.width = '100%';
     const thead = document.createElement('thead');
-    thead.innerHTML = '<tr><th>ID</th><th>Task</th><th>Status</th><th>Priority</th><th>Spend</th></tr>';
+    thead.innerHTML = '<tr>' +
+      '<th data-col="identifier" class="sortable-th" tabindex="0" role="columnheader">ID</th>' +
+      '<th data-col="task" class="sortable-th" tabindex="0" role="columnheader">Task</th>' +
+      '<th data-col="status" class="sortable-th" tabindex="0" role="columnheader">Status</th>' +
+      '<th data-col="priority" class="sortable-th" tabindex="0" role="columnheader">Priority</th>' +
+      '<th data-col="cost" class="sortable-th" tabindex="0" role="columnheader">Spend</th>' +
+      '</tr>';
     tbl.appendChild(thead);
     const tbody = document.createElement('tbody');
-    for (const t of orgTasks) {
-      const tr = document.createElement('tr');
-      const tdId = el('td', null, t.identifier || (t.id ? `#${t.id.slice(0, 8)}` : '—'));
-      tdId.style.cssText = 'font-family:monospace;font-weight:600;';
-      const tdTitle = el('td', null, t.title || t.name || '(untitled)');
-      const tdStat  = el('td'); tdStat.appendChild(statusPill(t.status));
-      const tdPri   = el('td', null, t.priority || '—');
-      const tdSpend = el('td', null, t.spent_usd > 0 ? fmtCurrency(t.spent_usd) : '—');
-      for (const td of [tdId, tdTitle, tdStat, tdPri, tdSpend]) tr.appendChild(td);
-      tr.addEventListener('click', () => openDetail(t.id));
-      tbody.appendChild(tr);
-    }
+
+    const renderOrgRows = () => {
+      renderTableSortHeaders(tbl, state.orgSort, (col, dir) => {
+        state.orgSort = { column: col, direction: dir };
+        renderOrgRows();
+      });
+      tbody.innerHTML = '';
+      const sorted = sortTasks(orgTasks, state.orgSort.column, state.orgSort.direction);
+      for (const t of sorted) {
+        const tr = document.createElement('tr');
+        const tdId = el('td', null, t.identifier || (t.id ? `#${t.id.slice(0, 8)}` : '—'));
+        tdId.style.cssText = 'font-family:monospace;font-weight:600;';
+        const tdTitle = el('td', null, t.title || t.name || '(untitled)');
+        const tdStat  = el('td'); tdStat.appendChild(statusPill(t.status));
+        const tdPri   = el('td', null, t.priority || '—');
+        const tdSpend = el('td', null, t.spent_usd > 0 ? fmtCurrency(t.spent_usd) : '—');
+        for (const td of [tdId, tdTitle, tdStat, tdPri, tdSpend]) tr.appendChild(td);
+        tr.addEventListener('click', () => openDetail(t.id));
+        tbody.appendChild(tr);
+      }
+    };
+    renderOrgRows();
+
     tbl.appendChild(tbody);
     const wrapper = el('div', 'task-table-wrapper');
     wrapper.appendChild(tbl);
@@ -5010,6 +5375,8 @@ async function refreshChatMessages(taskId) {
     const endpoint = isFleet ? `/api/fleet/tasks/${taskId}/comments` : `/api/tasks/${taskId}/comments`;
     const cr = await apiFetch(endpoint);
     const comments = cr.comments || (Array.isArray(cr) ? cr : []);
+    state.taskComments[taskId] = comments;
+    if (state.tasks[taskId]) state.tasks[taskId].comments = comments;
     const messagesDiv = document.getElementById('panel-chat-messages');
     const titleEl = document.querySelector('#panel-chat-section .panel-section-title');
     if (!messagesDiv) return;
@@ -5589,6 +5956,11 @@ async function openDetail(taskId, pushHistory = true) {
     } catch { /* governance optional */ }
 
     renderDetailContent(content, task);
+    if (task.description) state.taskDescriptions[taskId] = task.description;
+    state.taskComments[taskId] = comments;
+    if (state.tasks[taskId]) {
+      state.tasks[taskId] = { ...state.tasks[taskId], ...task };
+    }
     buildChatSection(content, taskId, comments);
     startChatPoll(taskId);
   } catch {

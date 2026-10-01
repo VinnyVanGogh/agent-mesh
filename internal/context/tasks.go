@@ -40,6 +40,8 @@ type Task struct {
 	BlockReason     string            `json:"block_reason"`
 	BlockedBy       []TaskBlockerInfo `json:"blocked_by,omitempty"`
 	Blocks          []TaskBlockerInfo `json:"blocks,omitempty"`
+	Description     string            `json:"description,omitempty"`
+	Comments        []TaskComment     `json:"comments,omitempty"`
 }
 
 // TaskBlockerInfo contains summarized info about an upstream or downstream related task.
@@ -363,7 +365,47 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		tasks = append(tasks, t)
 	}
 
-	return tasks, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(tasks) > 0 {
+		cRows, err := db.Query(`SELECT task_id, id, author, message, created_at FROM task_comments ORDER BY created_at ASC`)
+		if err == nil {
+			defer cRows.Close()
+			commentsMap := make(map[string][]TaskComment)
+			for cRows.Next() {
+				var c TaskComment
+				if err := cRows.Scan(&c.TaskID, &c.ID, &c.Author, &c.Message, &c.CreatedAt); err == nil {
+					commentsMap[c.TaskID] = append(commentsMap[c.TaskID], c)
+				}
+			}
+			for i := range tasks {
+				tasks[i].Comments = commentsMap[tasks[i].ID]
+				if len(tasks[i].Comments) > 0 {
+					tasks[i].Description = tasks[i].Comments[0].Message
+				}
+			}
+		}
+
+		dRows, err := db.Query(`SELECT task_id, content FROM task_documents WHERE doc_key = 'description' ORDER BY version DESC`)
+		if err == nil {
+			defer dRows.Close()
+			for dRows.Next() {
+				var tid, content string
+				if err := dRows.Scan(&tid, &content); err == nil && content != "" {
+					for i := range tasks {
+						if tasks[i].ID == tid {
+							tasks[i].Description = content
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return tasks, nil
 }
 
 // GetTask fetches a single task by exact ID or ID prefix.
@@ -433,6 +475,21 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 	}
 	t.BlockedBy, _ = GetTaskBlockedBy(db, t.ID)
 	t.Blocks, _ = GetTaskBlocks(db, t.ID)
+	if cRows, err := db.Query(`SELECT id, task_id, author, message, created_at FROM task_comments WHERE task_id = ? ORDER BY created_at ASC`, t.ID); err == nil {
+		defer cRows.Close()
+		for cRows.Next() {
+			var c TaskComment
+			if err := cRows.Scan(&c.ID, &c.TaskID, &c.Author, &c.Message, &c.CreatedAt); err == nil {
+				t.Comments = append(t.Comments, c)
+			}
+		}
+	}
+	var content string
+	if err := db.QueryRow(`SELECT content FROM task_documents WHERE task_id = ? AND doc_key = 'description' ORDER BY version DESC LIMIT 1`, t.ID).Scan(&content); err == nil {
+		t.Description = content
+	} else if len(t.Comments) > 0 {
+		t.Description = t.Comments[0].Message
+	}
 	return &t, nil
 }
 
