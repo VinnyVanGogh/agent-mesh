@@ -195,6 +195,17 @@
             <select id="task-org-filter" class="select-filter">
               <option value="all">All Organizations</option>
             </select>
+            <select id="task-project-filter" class="select-filter">
+              <option value="all">All Projects</option>
+            </select>
+            <select id="task-priority-filter" class="select-filter">
+              <option value="all">All Priorities</option>
+              <option value="critical">Critical</option>
+              <option value="urgent">Urgent</option>
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+            </select>
             <select id="task-status-filter" class="select-filter">
               <option value="all">All Statuses</option>
               <option value="running">Running</option>
@@ -352,11 +363,11 @@
           <span class="refresh-indicator">Activity feed — all agents</span>
         </div>
         <div class="table-controls">
-          <select id="recent-tasks-project-filter" class="select-filter">
-            <option value="all">All Projects</option>
-          </select>
           <select id="recent-tasks-org-filter" class="select-filter">
             <option value="all">All Organizations</option>
+          </select>
+          <select id="recent-tasks-project-filter" class="select-filter">
+            <option value="all">All Projects</option>
           </select>
           <select id="recent-tasks-priority-filter" class="select-filter">
             <option value="all">All Priorities</option>
@@ -381,6 +392,17 @@
           <input type="text" id="ts-search-input" placeholder="Search tasks, descriptions, comments, orgs…" class="search-input">
           <select id="ts-org-filter" class="select-filter">
             <option value="all">All Organizations</option>
+          </select>
+          <select id="ts-project-filter" class="select-filter">
+            <option value="all">All Projects</option>
+          </select>
+          <select id="ts-priority-filter" class="select-filter">
+            <option value="all">All Priorities</option>
+            <option value="critical">Critical</option>
+            <option value="urgent">Urgent</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
           </select>
           <select id="ts-status-filter" class="select-filter">
             <option value="all">All Statuses</option>

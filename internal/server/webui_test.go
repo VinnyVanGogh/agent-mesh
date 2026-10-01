@@ -442,3 +442,88 @@ func TestRegisterUIRoutes_TableSortingAndSearchElements(t *testing.T) {
 		}
 	}
 }
+
+func TestRegisterUIRoutes_STA208_TableSortingAndFilterControls(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterUIRoutes(mux, "test-tok")
+
+	// 1. Verify index.html contains standardized filter order across views
+	reqHTML := httptest.NewRequest("GET", "/", nil)
+	wHTML := httptest.NewRecorder()
+	mux.ServeHTTP(wHTML, reqHTML)
+	if wHTML.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", wHTML.Code)
+	}
+	html := wHTML.Body.String()
+
+	// Overview filter order: Organization -> Project -> Priority -> Status
+	idxTaskOrg := strings.Index(html, `id="task-org-filter"`)
+	idxTaskProj := strings.Index(html, `id="task-project-filter"`)
+	idxTaskPri := strings.Index(html, `id="task-priority-filter"`)
+	idxTaskStat := strings.Index(html, `id="task-status-filter"`)
+	if idxTaskOrg == -1 || idxTaskProj == -1 || idxTaskPri == -1 || idxTaskStat == -1 {
+		t.Fatalf("overview filter controls missing in index.html (org=%d, proj=%d, pri=%d, stat=%d)",
+			idxTaskOrg, idxTaskProj, idxTaskPri, idxTaskStat)
+	}
+	if !(idxTaskOrg < idxTaskProj && idxTaskProj < idxTaskPri && idxTaskPri < idxTaskStat) {
+		t.Errorf("overview filter order incorrect: expected Org < Project < Priority < Status, got %d, %d, %d, %d",
+			idxTaskOrg, idxTaskProj, idxTaskPri, idxTaskStat)
+	}
+
+	// Recent Tasks filter order: Organization -> Project -> Priority
+	idxRecentOrg := strings.Index(html, `id="recent-tasks-org-filter"`)
+	idxRecentProj := strings.Index(html, `id="recent-tasks-project-filter"`)
+	idxRecentPri := strings.Index(html, `id="recent-tasks-priority-filter"`)
+	if idxRecentOrg == -1 || idxRecentProj == -1 || idxRecentPri == -1 {
+		t.Fatalf("recent tasks filter controls missing in index.html (org=%d, proj=%d, pri=%d)",
+			idxRecentOrg, idxRecentProj, idxRecentPri)
+	}
+	if !(idxRecentOrg < idxRecentProj && idxRecentProj < idxRecentPri) {
+		t.Errorf("recent tasks filter order incorrect: expected Org < Project < Priority, got %d, %d, %d",
+			idxRecentOrg, idxRecentProj, idxRecentPri)
+	}
+
+	// Task Status page filter order: Organization -> Project -> Priority -> Status
+	idxTSOrg := strings.Index(html, `id="ts-org-filter"`)
+	idxTSProj := strings.Index(html, `id="ts-project-filter"`)
+	idxTSPri := strings.Index(html, `id="ts-priority-filter"`)
+	idxTSStat := strings.Index(html, `id="ts-status-filter"`)
+	if idxTSOrg == -1 || idxTSProj == -1 || idxTSPri == -1 || idxTSStat == -1 {
+		t.Fatalf("task status filter controls missing in index.html (org=%d, proj=%d, pri=%d, stat=%d)",
+			idxTSOrg, idxTSProj, idxTSPri, idxTSStat)
+	}
+	if !(idxTSOrg < idxTSProj && idxTSProj < idxTSPri && idxTSPri < idxTSStat) {
+		t.Errorf("task status filter order incorrect: expected Org < Project < Priority < Status, got %d, %d, %d, %d",
+			idxTSOrg, idxTSProj, idxTSPri, idxTSStat)
+	}
+
+	// 2. Verify app.js sorting and filter behaviors
+	reqJS := httptest.NewRequest("GET", "/ui/app.js", nil)
+	wJS := httptest.NewRecorder()
+	mux.ServeHTTP(wJS, reqJS)
+	if wJS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for /ui/app.js, got %d", wJS.Code)
+	}
+	js := wJS.Body.String()
+
+	requiredSymbols := []string{
+		"getNextSort",
+		"DEFAULT_OVERVIEW_SORT",
+		"DEFAULT_TS_SORT",
+		"DEFAULT_ORG_SORT",
+		"populateOverviewProjectFilter",
+		"populateTSProjectFilter",
+		"tableEl._currentSort = currentSort",
+		"tableEl._defaultSort = defaultSort",
+		"tableEl._onSort = onSort",
+		"'task-project-filter'",
+		"'task-priority-filter'",
+		"'ts-project-filter'",
+		"'ts-priority-filter'",
+	}
+	for _, sym := range requiredSymbols {
+		if !strings.Contains(js, sym) {
+			t.Errorf("expected app.js to contain %s", sym)
+		}
+	}
+}
