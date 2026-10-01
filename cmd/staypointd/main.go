@@ -38,6 +38,15 @@ func init() {
 }
 
 func main() {
+	// Subcommands dispatch before flag.Parse so they own their own flag sets.
+	if len(os.Args) > 1 && os.Args[1] == "eval-contracts" {
+		if err := runEvalContracts(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "eval-contracts:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	var (
 		flagService    = flag.Bool("service", false, "Run as a Windows service (SCM-managed)")
 		flagInstallSvc = flag.Bool("install-service", false, "Register staypointd with the Windows SCM")

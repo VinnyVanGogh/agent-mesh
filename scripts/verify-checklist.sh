@@ -290,10 +290,16 @@ fi
 echo ""
 echo -e "${BOLD}4. Evaluating Machine Contracts via Divergence Engine...${RESET}"
 EVAL_API_JSON=""
+# Timeout: 60s stopgap (STA-279). Root fix is the eval-contracts cache written by
+# reinstall-daemon.sh; with a warm cache the endpoint returns in <1s. Without a
+# cache (first install or DB not seeded) live evaluation may take up to ~32s if
+# the daemon lacks ~/Documents TCC; 60s prevents a false WARNING in that window.
+# The response includes total_ms / max_contract_ms so the latency is never hidden.
+EVAL_CURL_TIMEOUT=60
 if [[ -n "$AUTH_HEADER" ]]; then
-    EVAL_API_JSON="$(curl -s -f -m 30 -X POST -H "$AUTH_HEADER" "${DAEMON_URL}/api/checklist/evaluate?sprint=${SPRINT}&downgrade=false&repo_root=${REPO_DIR}" 2>/dev/null || true)"
+    EVAL_API_JSON="$(curl -s -f -m "$EVAL_CURL_TIMEOUT" -X POST -H "$AUTH_HEADER" "${DAEMON_URL}/api/checklist/evaluate?sprint=${SPRINT}&downgrade=false&repo_root=${REPO_DIR}" 2>/dev/null || true)"
 else
-    EVAL_API_JSON="$(curl -s -f -m 30 -X POST "${DAEMON_URL}/api/checklist/evaluate?sprint=${SPRINT}&downgrade=false&repo_root=${REPO_DIR}" 2>/dev/null || true)"
+    EVAL_API_JSON="$(curl -s -f -m "$EVAL_CURL_TIMEOUT" -X POST "${DAEMON_URL}/api/checklist/evaluate?sprint=${SPRINT}&downgrade=false&repo_root=${REPO_DIR}" 2>/dev/null || true)"
 fi
 
 if [[ -z "$EVAL_API_JSON" ]]; then
@@ -306,10 +312,18 @@ total = data.get("total", 0)
 passed = data.get("passed", 0)
 failed = data.get("failed", 0)
 divergences = data.get("divergences", 0)
+total_ms = data.get("total_ms", 0)
+max_ms = data.get("max_contract_ms", 0)
+cache_hits = data.get("cache_hits", 0)
+cache_misses = data.get("cache_misses", 0)
 print(f"EVAL_TOTAL={total}")
 print(f"EVAL_PASSED={passed}")
 print(f"EVAL_FAILED={failed}")
 print(f"EVAL_DIVERGENCES={divergences}")
+print(f"EVAL_TOTAL_MS={total_ms}")
+print(f"EVAL_MAX_MS={max_ms}")
+print(f"EVAL_CACHE_HITS={cache_hits}")
+print(f"EVAL_CACHE_MISSES={cache_misses}")
 EOF
 )
     EVAL_METRICS="$(echo "$EVAL_API_JSON" | python3 -c "$PYTHON_EVAL" 2>/dev/null || echo "")"
@@ -318,8 +332,15 @@ EOF
         E_PASS=$(echo "$EVAL_METRICS" | grep "^EVAL_PASSED=" | cut -d= -f2)
         E_FAIL=$(echo "$EVAL_METRICS" | grep "^EVAL_FAILED=" | cut -d= -f2)
         E_DIV=$(echo "$EVAL_METRICS" | grep "^EVAL_DIVERGENCES=" | cut -d= -f2)
+        E_TOTAL_MS=$(echo "$EVAL_METRICS" | grep "^EVAL_TOTAL_MS=" | cut -d= -f2)
+        E_MAX_MS=$(echo "$EVAL_METRICS" | grep "^EVAL_MAX_MS=" | cut -d= -f2)
+        E_HITS=$(echo "$EVAL_METRICS" | grep "^EVAL_CACHE_HITS=" | cut -d= -f2)
+        E_MISSES=$(echo "$EVAL_METRICS" | grep "^EVAL_CACHE_MISSES=" | cut -d= -f2)
 
         echo -e "  Contracts evaluated: ${E_PASS}/${E_TOTAL} passed (${E_FAIL} failed, ${E_DIV} regressions)"
+        if [[ -n "$E_TOTAL_MS" && "$E_TOTAL_MS" -gt 0 ]]; then
+            echo -e "  Evaluation latency:  ${E_TOTAL_MS}ms total, ${E_MAX_MS}ms slowest contract (${E_HITS} cached / ${E_MISSES} live)"
+        fi
         if [[ "$E_FAIL" -eq 0 && "$E_DIV" -eq 0 ]]; then
             echo -e "  ${GREEN}✓ PASS${RESET}: Zero contract failures or regressions detected"
         else

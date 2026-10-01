@@ -161,6 +161,16 @@ EOF
     launchctl load "$REMINDER_PLIST" 2>/dev/null || true
 fi
 
+# Pre-evaluate checklist contracts while running in the user's shell (which has
+# ~/Documents TCC access). The daemon runs under launchd without that grant, so
+# each file_pattern/command contract hangs ~1.2 s instead of failing, causing
+# the 32 s evaluate endpoint timeout (see STA-279). Writing the cache here lets
+# the daemon read results without touching ~/Documents.
+echo "→ Pre-evaluating checklist contracts (STA-279 TCC workaround) ..."
+if ! "$BINARY" eval-contracts --sprint STA-236 --repo-root "$REPO" 2>&1; then
+    echo "  ! eval-contracts failed — daemon will fall back to live evaluation (may be slow without TCC)."
+fi
+
 if launchctl list | grep -q "$LABEL"; then
     echo "→ Stopping $LABEL ..."
     launchctl unload "$PLIST" 2>/dev/null || true
