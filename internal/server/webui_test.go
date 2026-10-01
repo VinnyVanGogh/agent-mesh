@@ -87,6 +87,13 @@ func TestRegisterUIRoutes_SPARoutes(t *testing.T) {
 		"/recent-tasks",
 		"/settings",
 		"/org/StayPoint",
+		"/tasks",
+		"/issues",
+		"/tasks/STA/default/STA-168",
+		"/tasks/STA/default/STA-211",
+		"/tasks/RES/research/RES-42",
+		"/tasks/STA/STA-168",
+		"/tasks/6f1222f9-85c6-4155-94c4-3867c2472b2d",
 	}
 
 	for _, route := range routes {
@@ -98,6 +105,58 @@ func TestRegisterUIRoutes_SPARoutes(t *testing.T) {
 		}
 		if !strings.Contains(w.Body.String(), "staypoint-token") {
 			t.Errorf("SPA route %q response missing staypoint-token meta tag", route)
+		}
+	}
+}
+
+func TestRegisterUIRoutes_HierarchicalTaskRoutes(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterUIRoutes(mux, "test-hierarchical-tok")
+
+	// 1. Verify hierarchical SPA URL paths resolve with 200 OK
+	hierarchicalPaths := []string{
+		"/tasks/STA/default/STA-168",
+		"/tasks/STA/default/STA-211",
+		"/tasks/RES/core/RES-42",
+		"/tasks/MAN/default/MAN-10",
+		"/tasks/STA/task-4f810a72",
+		"/issues/STA/default/STA-168",
+	}
+
+	for _, p := range hierarchicalPaths {
+		req := httptest.NewRequest("GET", p, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 OK for %q, got %d", p, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "test-hierarchical-tok") {
+			t.Errorf("expected token injection for %q", p)
+		}
+	}
+
+	// 2. Verify app.js serves hierarchical URL routing and deep linking logic
+	reqJS := httptest.NewRequest("GET", "/ui/app.js", nil)
+	wJS := httptest.NewRecorder()
+	mux.ServeHTTP(wJS, reqJS)
+	if wJS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for app.js, got %d", wJS.Code)
+	}
+	appJS := wJS.Body.String()
+
+	requiredPatterns := []string{
+		"function taskToPath",
+		"function findTask",
+		"function pathToRoute",
+		"/tasks/:org/:project/:identifier",
+		"isFleetTaskId",
+		"history.pushState",
+		"history.replaceState",
+	}
+
+	for _, pattern := range requiredPatterns {
+		if !strings.Contains(appJS, pattern) {
+			t.Errorf("app.js missing required pattern %q for hierarchical routing", pattern)
 		}
 	}
 }
