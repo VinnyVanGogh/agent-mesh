@@ -192,6 +192,20 @@ func (r *StepRecorder) EmitCheckpoint(sha, msg string) {
 	r.publish("run.step", step)
 }
 
+// EmitRunState broadcasts a run.state SSE event without persisting a step row.
+// Use for transient states like "paused" / "in_progress" that don't mark the run terminal.
+func (r *StepRecorder) EmitRunState(disposition string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	elapsed := time.Since(r.startedAt).Seconds()
+	r.publish("run.state", map[string]any{
+		"run_id":      r.runID,
+		"task_id":     r.taskID,
+		"disposition": disposition,
+		"elapsed_sec": elapsed,
+	})
+}
+
 // EmitState emits a state step (done / in_review / blocked / stopped).
 func (r *StepRecorder) EmitState(disposition string) {
 	r.mu.Lock()

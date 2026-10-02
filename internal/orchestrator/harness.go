@@ -74,6 +74,8 @@ type RunConfig struct {
 	ParseDelta func(line []byte) ([]StepDelta, error)
 	// WakeReason is forwarded to StepRecorder.EmitWake when recording is enabled.
 	WakeReason string
+	// RunControl, when set, enables pause/stop/message-inject controls for this run.
+	RunControl *RunControl
 }
 
 // RunResult summarises a completed autonomous run.
@@ -339,6 +341,11 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		}
 	}
 
+	// Clear stale run control flags from previous runs.
+	if cfg.RunControl != nil {
+		cfg.RunControl.ClearForRun(taskID)
+	}
+
 	for turn := 0; turn < maxTurns; turn++ {
 		if ctx.Err() != nil {
 			result.Disposition = "capped"
@@ -369,7 +376,24 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		if cfg.RunAdapter != nil {
 			var stderrBuf limitedWriter
 			turnStart := time.Now()
-			turnErr := cfg.RunAdapter(ctx, wtPath, cfg.Provider, rawArgs, providerEnv, stdout, &stderrBuf)
+
+			// Watch for stop signal during this turn: if stop is requested,
+			// cancel the adapter context so the subprocess receives SIGTERM.
+			turnCtx, turnCancel := context.WithCancel(ctx)
+			if cfg.RunControl != nil {
+				stopCh := cfg.RunControl.StopChan(taskID)
+				go func() {
+					select {
+					case <-turnCtx.Done():
+					case <-stopCh:
+						turnCancel()
+					}
+				}()
+			}
+
+			turnErr := cfg.RunAdapter(turnCtx, wtPath, cfg.Provider, rawArgs, providerEnv, stdout, &stderrBuf)
+			turnCancel()
+
 			turnDuration := time.Since(turnStart)
 			if turnErr != nil {
 				stderrTail := stderrBuf.String()
@@ -408,6 +432,41 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		if cfg.MaxBudgetUSD > 0 && result.SpentUSD >= cfg.MaxBudgetUSD {
 			result.Disposition = "capped"
 			break
+		}
+
+		// Check run control signals after the turn completes.
+		if rc := cfg.RunControl; rc != nil {
+			if rc.IsStopRequested(taskID) {
+				result.Disposition = "stopped"
+				break
+			}
+			if rc.IsPaused(taskID) {
+				// Emit paused state via SSE and update DB.
+				if sr != nil {
+					sr.EmitRunState("paused")
+				}
+				now := time.Now().UTC().Format(time.RFC3339Nano)
+				_, _ = h.DB.ExecContext(ctx,
+					`UPDATE tasks SET execution_stage='paused', updated_at=? WHERE id=?`,
+					now, taskID,
+				)
+				runLog.Info("run paused after step", slog.Int("turn", turn))
+				stopped := rc.WaitForResume(ctx, taskID)
+				if stopped {
+					result.Disposition = "stopped"
+					break
+				}
+				// Resumed — update execution_stage back to in_progress.
+				now = time.Now().UTC().Format(time.RFC3339Nano)
+				_, _ = h.DB.ExecContext(ctx,
+					`UPDATE tasks SET execution_stage='in_progress', updated_at=? WHERE id=?`,
+					now, taskID,
+				)
+				if sr != nil {
+					sr.EmitRunState("in_progress")
+				}
+				runLog.Info("run resumed", slog.Int("turn", turn))
+			}
 		}
 	}
 
@@ -464,7 +523,7 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		}
 	}
 
-	// Mechanical Completion Interceptor.
+	// Mechanical Completion Interceptor (skipped when stopped).
 	if result.Disposition == "" {
 		approved, diag, _ := h.Interceptor.InterceptCompletion(ctx, taskID, wtPath, repoPath)
 		if approved {
@@ -475,6 +534,11 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 				result.DiagnosticMsg = diag.Message
 			}
 		}
+	}
+
+	// Inject stop comment before updating execution_stage.
+	if result.Disposition == "stopped" {
+		result.DiagnosticMsg = "Run stopped by user request."
 	}
 
 	if sr != nil {
@@ -525,6 +589,15 @@ func buildRawArgs(taskID string, turn int, cfg RunConfig) []string {
 	)
 	if cfg.SkipPermissions {
 		prompt += " Pre-approved permissions: proceed without confirmation prompts."
+	}
+	// Inject any pending user messages queued via the run-control endpoint.
+	if cfg.RunControl != nil {
+		if msgs := cfg.RunControl.DequeuePendingMessages(taskID); len(msgs) > 0 {
+			prompt += "\n\n[Injected user message(s)]:\n"
+			for _, m := range msgs {
+				prompt += m + "\n"
+			}
+		}
 	}
 	args := []string{"--print", prompt, "--output-format", "stream-json"}
 	return args

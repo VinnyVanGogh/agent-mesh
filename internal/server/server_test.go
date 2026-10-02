@@ -1158,3 +1158,85 @@ func TestServer_REST_RunErrors(t *testing.T) {
 }
 
 
+
+func TestServer_REST_RunControl(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+
+	authPost := func(url, body string) *http.Response {
+		req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "http://127.0.0.1")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("POST %s: %v", url, err)
+		}
+		return resp
+	}
+
+	// Create a task via the API so all required columns get defaults.
+	createResp := authPost(srv.URL()+"/api/tasks", `{"name":"RunCtrl Test","repo_path":"/tmp","git_branch":"main"}`)
+	if createResp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(createResp.Body)
+		createResp.Body.Close()
+		t.Fatalf("create task: want 201, got %d: %s", createResp.StatusCode, b)
+	}
+	var created map[string]any
+	_ = json.NewDecoder(createResp.Body).Decode(&created)
+	createResp.Body.Close()
+	taskID, _ := created["id"].(string)
+	if taskID == "" {
+		t.Fatalf("create task: empty id")
+	}
+	// Set to in_progress.
+	_, err := database.Exec(`UPDATE tasks SET execution_stage='in_progress' WHERE id=?`, taskID)
+	if err != nil {
+		t.Fatalf("set in_progress: %v", err)
+	}
+
+	base := srv.URL() + "/api/tasks/" + taskID + "/run-control"
+
+	// Pause.
+	resp := authPost(base, `{"action":"pause"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("pause: want 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Resume (task now paused, still allowed).
+	_, _ = database.Exec(`UPDATE tasks SET execution_stage='paused' WHERE id=?`, taskID)
+	resp = authPost(base, `{"action":"resume"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resume: want 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Inject message.
+	resp = authPost(base, `{"action":"message","text":"hello agent"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("message: want 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Stop.
+	resp = authPost(base, `{"action":"stop"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("stop: want 200, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Invalid action.
+	resp = authPost(base, `{"action":"bogus"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bogus action: want 400, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Not-found task.
+	resp = authPost(srv.URL()+"/api/tasks/no-such-task/run-control", `{"action":"stop"}`)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing task: want 404, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+}
