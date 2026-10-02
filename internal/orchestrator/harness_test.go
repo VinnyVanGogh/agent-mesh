@@ -134,11 +134,12 @@ func TestClaim_FiresWake(t *testing.T) {
 	insertTask(t, db, "wake-task", "/tmp")
 	h := &Harness{DB: db}
 
-	var gotTask, gotReason string
+	type wakeCall struct{ task, reason string }
+	ch := make(chan wakeCall, 1)
+
 	prev := GlobalDispatcher.OnWake
 	GlobalDispatcher.OnWake = func(taskID, reason string) {
-		gotTask = taskID
-		gotReason = reason
+		ch <- wakeCall{taskID, reason}
 	}
 	t.Cleanup(func() { GlobalDispatcher.OnWake = prev })
 
@@ -148,17 +149,16 @@ func TestClaim_FiresWake(t *testing.T) {
 	}
 	defer activeClaims.Add(-1)
 
-	// Wake fires asynchronously; give it a moment.
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) && gotTask == "" {
-		time.Sleep(5 * time.Millisecond)
-	}
-
-	if gotTask != "wake-task" {
-		t.Errorf("expected Wake taskID %q, got %q", "wake-task", gotTask)
-	}
-	if gotReason != "assigned" {
-		t.Errorf("expected Wake reason %q, got %q", "assigned", gotReason)
+	select {
+	case got := <-ch:
+		if got.task != "wake-task" {
+			t.Errorf("expected Wake taskID %q, got %q", "wake-task", got.task)
+		}
+		if got.reason != "assigned" {
+			t.Errorf("expected Wake reason %q, got %q", "assigned", got.reason)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for Wake callback")
 	}
 }
 
