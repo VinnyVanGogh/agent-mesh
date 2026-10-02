@@ -106,7 +106,7 @@ func (h *SessionsHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		Label           string `json:"label"`
 	}
 
-	var agents []Agent
+	agents := []Agent{}
 	for rows.Next() {
 		var a Agent
 		if err := rows.Scan(&a.ID, &a.AgentType, &a.RepoPath, &a.Hostname, &a.Status, &a.LastHeartbeatAt); err != nil {
@@ -256,9 +256,13 @@ func (h *SessionsHandler) CloseSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := h.db.ExecContext(r.Context(), `UPDATE agent_sessions SET status = 'closed' WHERE id = ?`, id)
+	res, err := h.db.ExecContext(r.Context(), `UPDATE agent_sessions SET status = 'closed' WHERE id = ?`, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to close session: "+err.Error())
+		return
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
 
