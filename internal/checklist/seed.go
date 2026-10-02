@@ -16,6 +16,9 @@ func DefaultChecklist(sprint string) []Item {
 	if sprint == "STA-168-2" {
 		return defaultChecklistSTA168_2(sprint)
 	}
+	if sprint == "STA-316" {
+		return defaultChecklistSTA316(sprint)
+	}
 	if sprint == "" || sprint == "STA-236" {
 		return defaultChecklistSTA236(sprint)
 	}
@@ -331,6 +334,58 @@ func defaultChecklistSTA236(sprint string) []Item {
 			CommitHash:  commitHash,
 			Status:      st,
 			Notes:       r.notes,
+			Version:     1,
+		})
+	}
+	return out
+}
+
+// sta316BuildCommit is the build the Board runs the T5 loop against. The
+// checklist page shows it only inside the collapsed "details" toggle.
+const sta316BuildCommit = "f9543a3"
+
+// defaultChecklistSTA316 is the T5 dogfood loop, written for the Board: plain
+// steps, no commit codes or task IDs in the text they read.
+func defaultChecklistSTA316(sprint string) []Item {
+	const section = "Try one task from start to finish"
+	rows := []struct{ title, desc, howTo string }{
+		{
+			title: "1. Create a task",
+			desc:  "Make a new task in the web app and give it to an agent.",
+			howTo: "Open Task Status and click + New Task. Give it any title. Set the folder to /Users/vincevasile/staypoint-dogfood-test, max turns to 6, and pick claude as the agent. Save. The task page opens.",
+		},
+		{
+			title: "2. Watch it wake up",
+			desc:  "The agent starts on its own once the task is assigned to it.",
+			howTo: "Stay on the task page (find it in Task Status) for about 30 seconds. The task should show the agent working. If nothing happens, click Run Now.",
+		},
+		{
+			title: "3. Watch the steps",
+			desc:  "Each thing the agent does shows up on the task page as it happens.",
+			howTo: "Keep the task page open (find it in Task Status). New steps appear on the timeline without reloading the page.",
+		},
+		{
+			title: "4. Answer the question card",
+			desc:  "When the agent needs a decision, it asks you with a card on the task page.",
+			howTo: "On the task page (find it in Task Status), a question card appears. Read it and click Accept. The agent carries on.",
+		},
+		{
+			title: "5. Mark it done",
+			desc:  "The finished task shows what the agent did and can be closed.",
+			howTo: "On the task page (find it in Task Status), wait for the task to reach review, then click Mark done. The task shows as done, with the agent's work listed.",
+		},
+	}
+	out := make([]Item, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Item{
+			ID:          uuid.NewSHA1(uuid.NameSpaceURL, []byte(sprint+":"+section+":"+r.title)).String(),
+			Sprint:      sprint,
+			Section:     section,
+			Title:       r.title,
+			Description: r.desc,
+			HowToTest:   r.howTo,
+			CommitHash:  sta316BuildCommit,
+			Status:      "pending",
 			Version:     1,
 		})
 	}
