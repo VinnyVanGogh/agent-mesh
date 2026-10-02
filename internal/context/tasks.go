@@ -43,6 +43,10 @@ type Task struct {
 	Blocks          []TaskBlockerInfo `json:"blocks,omitempty"`
 	Description     string            `json:"description,omitempty"`
 	Comments        []TaskComment     `json:"comments,omitempty"`
+	// WorkKind is the routing category for this task.
+	// Valid values: "coding" (default), "architecture", "planning", "qa".
+	// TODO(STA-316): wire up DB column, default, and validation.
+	WorkKind        string            `json:"work_kind,omitempty"`
 }
 
 // TaskBlockerInfo contains summarized info about an upstream or downstream related task.
@@ -94,6 +98,9 @@ type TaskCreateOptions struct {
 	Project         string
 	ParentID        string
 	AssigneeAgentID string
+	// WorkKind is the routing category. Defaults to "coding" when empty.
+	// TODO(STA-316): validate and persist.
+	WorkKind        string
 }
 
 // GetCurrentGitBranch returns the current active git branch for a directory.

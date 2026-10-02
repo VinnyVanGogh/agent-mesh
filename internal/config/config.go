@@ -47,6 +47,11 @@ type Config struct {
 	// userscripts via GM_xmlhttpRequest) can reach the local API from any origin.
 	// Disabled by default; set [server] cors_allow_all = true in config.toml to opt in.
 	CORSAllowAll bool `json:"cors_allow_all" toml:"cors_allow_all"`
+
+	// Routing holds the optional [routing] table.
+	// When nil (no table in config.toml), callers fall back to DefaultKindChains.
+	// TODO(STA-316): wire LoadConfig to populate this field.
+	Routing *RoutingConfig `json:"routing,omitempty" toml:"routing"`
 }
 
 // DefaultConfig returns the default configuration.
