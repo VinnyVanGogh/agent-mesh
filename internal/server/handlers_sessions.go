@@ -106,7 +106,7 @@ func (h *SessionsHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		Label           string `json:"label"`
 	}
 
-	var agents []Agent
+	agents := []Agent{}
 	for rows.Next() {
 		var a Agent
 		if err := rows.Scan(&a.ID, &a.AgentType, &a.RepoPath, &a.Hostname, &a.Status, &a.LastHeartbeatAt); err != nil {
