@@ -3,7 +3,7 @@ package telemetry
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os/exec"
 	"strings"
 	"time"
@@ -165,7 +165,7 @@ func (n *RateLimitNotifier) check() {
 }
 
 func SendNotification(title, message string) {
-	log.Printf("[meshd notify] %s: %s", title, message)
+	slog.Info("notify", slog.String("title", title), slog.String("message", message))
 
 	// Safely escape quotes and backslashes for AppleScript string literals
 	safeTitle := strings.ReplaceAll(title, `\`, `\\`)
