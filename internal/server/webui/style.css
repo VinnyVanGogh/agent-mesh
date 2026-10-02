@@ -3209,6 +3209,17 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
   background: rgba(128,128,128,.12);
   color: var(--muted);
   border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.interaction-question-opt:hover {
+  background: rgba(128,128,128,.22);
+  color: var(--text);
+}
+.interaction-question-opt.selected {
+  background: var(--accent, #4f8ef7);
+  color: #fff;
+  border-color: var(--accent, #4f8ef7);
 }
 .interaction-task-item {
   padding: 5px 0;
