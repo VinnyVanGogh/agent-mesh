@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -147,10 +149,12 @@ func runDaemon(ctx context.Context) error {
 	}
 
 	// 0. Open persistent DB; used by recovery scan, harness, and HTTP server.
+	// defer guarantees Close on every return path including early errors below.
 	dbStore, err := db.Open(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
+	defer dbStore.Close()
 	_ = orchestrator.RecoveryScan(ctx, dbStore.DB())
 
 	// 1. Start Rate Limit Notifier
@@ -181,20 +185,22 @@ func runDaemon(ctx context.Context) error {
 	}
 
 	// 4. Start HTTP & SSE Local Daemon Server (127.0.0.1 only)
+	var httpServer *server.Server
 	tokenPath := filepath.Join(cfg.DataDir, "auth_token")
-	httpServer, err := server.New(server.Options{
+	if s, err := server.New(server.Options{
 		BindHost:     "127.0.0.1",
 		Port:         41421,
 		TokenPath:    tokenPath,
 		DB:           dbStore.DB(),
 		GitCommit:    GitCommit,
 		CORSAllowAll: cfg.CORSAllowAll,
-	})
-	if err != nil {
+	}); err != nil {
 		slog.Warn("Failed to initialize HTTP server", slog.Any("error", err))
-	} else if err := httpServer.Start(); err != nil {
+	} else if err := s.Start(); err != nil {
 		slog.Warn("Failed to start HTTP server", slog.Any("error", err))
+		// s is not started; leave httpServer nil so shutdown skips it
 	} else {
+		httpServer = s
 		slog.Info("HTTP and SSE server active",
 			slog.String("url", httpServer.URL()),
 			slog.String("token_path", tokenPath),
@@ -203,17 +209,27 @@ func runDaemon(ctx context.Context) error {
 
 	// 5. Wire GlobalDispatcher.OnWake to launch harness runs.
 	repoRoot := cfg.WorkRepoRoot
-	wireOnWake(ctx, dbStore, repoRoot)
+	wireOnWake(dbStore, repoRoot, nil)
 	slog.Info("agent wake dispatcher wired", slog.String("repo_root", repoRoot))
 
+	// Shutdown: drain in-flight harness runs before closing HTTP server and DB.
 	go func() {
 		<-ctx.Done()
-		shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
+
+		drainDone := make(chan struct{})
+		go func() { orchestrator.GlobalDispatcher.Drain(); close(drainDone) }()
+		select {
+		case <-drainDone:
+		case <-time.After(30 * time.Second):
+			slog.Warn("harness drain timeout; some runs may be incomplete")
+		}
+
 		if httpServer != nil {
+			shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
 			_ = httpServer.Shutdown(shutCtx)
 		}
-		_ = dbStore.Close()
+		// dbStore closed by defer above once runDaemon returns.
 	}()
 
 	slog.Info("Background daemon ready and running")
@@ -222,13 +238,27 @@ func runDaemon(ctx context.Context) error {
 
 // wireOnWake assigns GlobalDispatcher.OnWake so every Wake call launches a
 // harness run for the woken task. Extracted for testability.
-func wireOnWake(ctx context.Context, dbStore *db.Store, repoRoot string) {
+//
+// adapterOverride and wmOverride, when non-nil, replace the production adapter
+// and worktree manager respectively. Pass nil for both in production.
+func wireOnWake(dbStore *db.Store, repoRoot string, adapterOverride orchestrator.AdapterRunFunc, wmOverride ...orchestrator.WorktreeManagerIface) {
 	h := orchestrator.NewHarness(dbStore.DB(), repoRoot)
+	if len(wmOverride) > 0 && wmOverride[0] != nil {
+		h.WM = wmOverride[0]
+	}
 	orchestrator.GlobalDispatcher.OnWake = func(taskID, reason string) {
 		var agentID string
-		_ = dbStore.DB().QueryRowContext(ctx,
+		if err := dbStore.DB().QueryRowContext(context.Background(),
 			"SELECT COALESCE(assignee_agent_id,'') FROM tasks WHERE id=?", taskID,
-		).Scan(&agentID)
+		).Scan(&agentID); err != nil {
+			lvl := slog.LevelError
+			if errors.Is(err, sql.ErrNoRows) {
+				lvl = slog.LevelWarn
+			}
+			slog.Log(context.Background(), lvl, "wake: agent id lookup failed; skipping run",
+				slog.String("task", taskID), slog.Any("error", err))
+			return
+		}
 		if agentID == "" {
 			agentID = "local"
 		}
@@ -238,29 +268,39 @@ func wireOnWake(ctx context.Context, dbStore *db.Store, repoRoot string) {
 			sessID = "paperclip-" + taskID[:8]
 		}
 
-		adapterFn := func(runCtx context.Context, cwd, prov string, rawArgs, extraEnv []string, stdout, stderr io.Writer) error {
-			agentType := prov
-			if agentType == "" {
-				agentType = "claude"
+		var adapterFn orchestrator.AdapterRunFunc
+		if adapterOverride != nil {
+			adapterFn = adapterOverride
+		} else {
+			adapterFn = func(runCtx context.Context, cwd, prov string, rawArgs, extraEnv []string, stdout, stderr io.Writer) error {
+				agentType := prov
+				if agentType == "" {
+					agentType = "claude"
+				}
+				if err := telemetry.HeartbeatSession(dbStore.DB(), telemetry.AgentSession{
+					ID:        sessID,
+					AgentType: agentType,
+					RepoPath:  cwd,
+					PID:       os.Getpid(),
+				}); err != nil {
+					slog.Warn("wake: session heartbeat failed",
+						slog.String("task", taskID), slog.Any("error", err))
+				}
+				if len(extraEnv) > 0 {
+					runCtx = adapter.WithExtraEnv(runCtx, extraEnv)
+				}
+				return adapter.RunAdapter(runCtx, cwd, nil, prov, rawArgs, nil, stdout, stderr)
 			}
-			_ = telemetry.HeartbeatSession(dbStore.DB(), telemetry.AgentSession{
-				ID:        sessID,
-				AgentType: agentType,
-				RepoPath:  cwd,
-				PID:       os.Getpid(),
-			})
-			if len(extraEnv) > 0 {
-				runCtx = adapter.WithExtraEnv(runCtx, extraEnv)
-			}
-			return adapter.RunAdapter(runCtx, cwd, nil, prov, rawArgs, nil, stdout, stderr)
 		}
 
-		runCfg := orchestrator.RunConfig{
+		// Use context.Background() so daemon shutdown does not abruptly kill
+		// in-flight harness work; the dispatcher's Drain() provides the graceful
+		// drain window during shutdown.
+		result, runErr := h.Run(context.Background(), taskID, orchestrator.RunConfig{
 			AgentID:    agentID,
 			WakeReason: reason,
 			RunAdapter: adapterFn,
-		}
-		result, runErr := h.Run(ctx, taskID, runCfg)
+		})
 		if runErr != nil {
 			slog.Error("harness run failed", slog.String("task", taskID), slog.Any("error", runErr))
 			return

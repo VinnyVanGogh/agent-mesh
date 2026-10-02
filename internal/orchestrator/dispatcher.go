@@ -13,6 +13,7 @@ type Dispatcher struct {
 	mu       sync.Mutex
 	seenKeys map[string]time.Time
 	OnWake   func(taskID string, reason string)
+	wg       sync.WaitGroup // tracks in-flight OnWake goroutines
 }
 
 var GlobalDispatcher *Dispatcher
@@ -53,8 +54,18 @@ func (d *Dispatcher) Wake(taskID, reason, idempotencyKey string) {
 
 	slog.Info("wake dispatcher: waking agent", slog.String("task", taskID), slog.String("reason", reason))
 	if d.OnWake != nil {
-		go d.OnWake(taskID, reason)
+		d.wg.Add(1)
+		go func() {
+			defer d.wg.Done()
+			d.OnWake(taskID, reason)
+		}()
 	}
+}
+
+// Drain blocks until all in-flight OnWake goroutines have returned.
+// Call during daemon shutdown to avoid killing in-progress harness runs.
+func (d *Dispatcher) Drain() {
+	d.wg.Wait()
 }
 
 // RecoveryScan runs once at daemon start to reset stale claims.
