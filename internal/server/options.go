@@ -57,6 +57,11 @@ type Options struct {
 
 	// GitCommit is the injected git commit hash of the running binary.
 	GitCommit string
+
+	// CORSAllowAll disables Origin validation so browser extensions (e.g. Tampermonkey
+	// userscripts via GM_xmlhttpRequest) can reach the local API from any page origin.
+	// Disabled by default; enable via [server] cors_allow_all = true in config.toml.
+	CORSAllowAll bool
 }
 
 // GenerateAuthToken generates a 32-byte (64-character hex) cryptographically secure random token.

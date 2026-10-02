@@ -33,7 +33,7 @@ func New(opts Options) (*Server, error) {
 		hub = NewEventHub(opts.ReplayBufferSize, opts.SubscriberBufferSize)
 	}
 
-	secMid := NewSecurityMiddleware(opts.AuthToken, opts.Port)
+	secMid := NewSecurityMiddlewareWithOpts(opts.AuthToken, opts.Port, opts.CORSAllowAll)
 
 	s := &Server{
 		opts:   opts,

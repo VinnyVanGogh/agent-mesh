@@ -18,8 +18,9 @@ const sessionCookieMaxAge = 30 * 24 * 60 * 60
 // SecurityMiddleware returns a middleware that validates Host and Origin headers,
 // enforces no-wildcard CORS, and verifies the local auth token.
 type SecurityMiddleware struct {
-	token       string
-	port        int // actual bound port, if known (or 0 for any local port)
+	token        string
+	port         int  // actual bound port, if known (or 0 for any local port)
+	corsAllowAll bool // opt-in: skip origin check and emit wildcard CORS headers
 }
 
 // NewSecurityMiddleware creates a new SecurityMiddleware.
@@ -27,6 +28,15 @@ func NewSecurityMiddleware(token string, port int) *SecurityMiddleware {
 	return &SecurityMiddleware{
 		token: token,
 		port:  port,
+	}
+}
+
+// NewSecurityMiddlewareWithOpts creates a SecurityMiddleware with extended options.
+func NewSecurityMiddlewareWithOpts(token string, port int, corsAllowAll bool) *SecurityMiddleware {
+	return &SecurityMiddleware{
+		token:        token,
+		port:         port,
+		corsAllowAll: corsAllowAll,
 	}
 }
 
@@ -53,16 +63,24 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 		// 2. Cross-Origin Protection (Origin header check)
 		origin := r.Header.Get("Origin")
 		if origin != "" {
-			if !sm.isValidOrigin(origin) {
-				writeError(w, http.StatusForbidden, "forbidden: cross-origin request rejected")
-				return
-			}
+			if sm.corsAllowAll {
+				// Opt-in permissive mode for browser extensions (e.g. Tampermonkey).
+				// Wildcard '*' is intentional here; auth is still enforced in step 3.
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, X-StayPoint-Token, Content-Type, Last-Event-ID")
+			} else {
+				if !sm.isValidOrigin(origin) {
+					writeError(w, http.StatusForbidden, "forbidden: cross-origin request rejected")
+					return
+				}
 
-			// Valid Origin: reflect exact origin, NEVER wildcard '*'
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, X-StayPoint-Token, Content-Type, Last-Event-ID")
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
+				// Valid loopback origin: reflect exact origin, never wildcard.
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, X-StayPoint-Token, Content-Type, Last-Event-ID")
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
 
 			// Handle preflight OPTIONS request
 			if r.Method == http.MethodOptions {

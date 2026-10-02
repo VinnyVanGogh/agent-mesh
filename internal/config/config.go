@@ -37,6 +37,12 @@ type Config struct {
 	ClaudeBin string `json:"claude_bin" toml:"claude_bin"`
 	AgyBin    string `json:"agy_bin" toml:"agy_bin"`
 	CodexBin  string `json:"codex_bin" toml:"codex_bin"`
+
+	// Server section
+	// CORSAllowAll enables permissive CORS so browser extensions (e.g. Tampermonkey
+	// userscripts via GM_xmlhttpRequest) can reach the local API from any origin.
+	// Disabled by default; set [server] cors_allow_all = true in config.toml to opt in.
+	CORSAllowAll bool `json:"cors_allow_all" toml:"cors_allow_all"`
 }
 
 // DefaultConfig returns the default configuration.

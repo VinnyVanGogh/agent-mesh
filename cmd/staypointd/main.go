@@ -186,11 +186,12 @@ func runDaemon(ctx context.Context) error {
 	} else {
 		tokenPath := filepath.Join(cfg.DataDir, "auth_token")
 		httpServer, err := server.New(server.Options{
-			BindHost:  "127.0.0.1",
-			Port:      41421,
-			TokenPath: tokenPath,
-			DB:        dbStore.DB(),
-			GitCommit: GitCommit,
+			BindHost:     "127.0.0.1",
+			Port:         41421,
+			TokenPath:    tokenPath,
+			DB:           dbStore.DB(),
+			GitCommit:    GitCommit,
+			CORSAllowAll: cfg.CORSAllowAll,
 		})
 		if err != nil {
 			slog.Warn("Failed to initialize HTTP server", slog.Any("error", err))
