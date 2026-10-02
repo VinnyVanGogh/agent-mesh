@@ -353,8 +353,36 @@ function handleEvent(evt) {
   if (type === 'run.step' && evt.data) {
     const step = evt.data;
     const tid = step.task_id;
+    if (tid) {
+      if (!state.tasks[tid]) state.tasks[tid] = {};
+      if (!state.tasks[tid].runSteps) state.tasks[tid].runSteps = [];
+      state.tasks[tid].runSteps.push(step);
+    }
     if (tid && state.openDetailTaskId === tid) {
       appendRunStepToTimeline(tid, step);
+    }
+    return;
+  }
+  if (type === 'run.stats' && evt.data) {
+    const stats = evt.data;
+    const tid = stats.task_id;
+    if (tid) {
+      if (!state.tasks[tid]) state.tasks[tid] = {};
+      if (stats.spent_usd != null) state.tasks[tid].spent_usd = stats.spent_usd;
+      if (stats.spent_tokens != null) state.tasks[tid].spent_tokens = stats.spent_tokens;
+    }
+    if (tid && state.openDetailTaskId === tid) {
+      const statsBar = document.getElementById(`timeline-stats-${tid}`);
+      if (statsBar) {
+        const task = state.tasks[tid] || {};
+        const runSteps = task.runSteps || [];
+        const createdAtMs = task.created_at ? new Date(task.created_at).getTime() : null;
+        const lastStepAt = runSteps.length ? new Date(runSteps[runSteps.length - 1].created_at).getTime() : null;
+        const elapsedMs = lastStepAt && createdAtMs ? lastStepAt - createdAtMs : (createdAtMs ? Date.now() - createdAtMs : null);
+        const isStuck = runSteps.length > 0 && (Date.now() - (lastStepAt || 0)) > 5 * 60 * 1000 && task.status !== 'done';
+        statsBar.innerHTML = '';
+        statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, isStuck));
+      }
     }
     return;
   }
@@ -6640,8 +6668,28 @@ function buildTimelineStats(task, steps, elapsedMs, isStuck) {
     s.appendChild(el('span', 'timeline-stat-val', String(value)));
     return s;
   };
-  wrap.appendChild(stat('Steps', steps.length));
+
+  const filesRead    = steps.filter(s => s && s.kind === 'read').length;
+  const filesEdited  = steps.filter(s => s && s.kind === 'edit').length;
+  const commandsOk   = steps.filter(s => s && s.kind === 'run' && s.status === 'done').length;
+  const commandsFail = steps.filter(s => s && s.kind === 'run' && (s.status === 'error' || s.status === 'failed')).length;
+  const lastStep     = steps.length ? steps[steps.length - 1] : null;
+  const currentStep  = (lastStep && lastStep.title) ? lastStep.title : 'idle';
+
   wrap.appendChild(stat('Elapsed', fmtDuration(elapsedMs)));
+  wrap.appendChild(stat('Step', currentStep));
+  wrap.appendChild(stat('Files read', filesRead));
+  wrap.appendChild(stat('Files edited', filesEdited));
+
+  const cmdTile = el('span', 'timeline-stat');
+  cmdTile.appendChild(el('span', 'timeline-stat-label', 'Cmds'));
+  const cmdVal = el('span', 'timeline-stat-val');
+  cmdVal.appendChild(el('span', 'cmds-ok', `✓${commandsOk}`));
+  cmdVal.appendChild(document.createTextNode(' '));
+  cmdVal.appendChild(el('span', 'cmds-fail', `✗${commandsFail}`));
+  cmdTile.appendChild(cmdVal);
+  wrap.appendChild(cmdTile);
+
   const spentUsd = task.spent_usd || 0;
   const spentTok = task.spent_tokens || 0;
   if (spentUsd > 0 || spentTok > 0) {
@@ -6723,14 +6771,13 @@ function appendRunStepToTimeline(taskId, step) {
   const statsBar = document.getElementById(`timeline-stats-${taskId}`);
   if (statsBar) {
     const task = state.tasks[taskId] || {};
-    const allRows = Array.from(stepList.querySelectorAll('.timeline-row'));
-    const stepCount = allRows.length;
+    const runSteps = task.runSteps || [];
     const createdAtMs = task.created_at ? new Date(task.created_at).getTime() : null;
-    const elapsedMs = createdAtMs ? Date.now() - createdAtMs : null;
+    const lastStepAt = runSteps.length ? new Date(runSteps[runSteps.length - 1].created_at).getTime() : null;
+    const elapsedMs = lastStepAt && createdAtMs ? lastStepAt - createdAtMs : (createdAtMs ? Date.now() - createdAtMs : null);
     const isStuck = false;
-    const fakeSteps = new Array(stepCount);
     statsBar.innerHTML = '';
-    statsBar.appendChild(buildTimelineStats({ ...task, runSteps: fakeSteps }, fakeSteps, elapsedMs, isStuck));
+    statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, isStuck));
   }
 }
 
