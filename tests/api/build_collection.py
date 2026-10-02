@@ -130,6 +130,7 @@ ALL_ROUTES = [
     ("GET", "/api/threads/x/messages"), ("POST", "/api/threads/x/messages"),
     ("GET", "/api/sessions"), ("POST", "/api/sessions"), ("GET", "/api/sessions/x"),
     ("POST", "/api/sessions/x/heartbeat"), ("POST", "/api/sessions/x/close"),
+    ("GET", "/api/agents"),
     ("GET", "/api/tasks/x/governance"), ("POST", "/api/tasks/x/governance"),
     ("POST", "/api/tasks/x/reviewers"), ("DELETE", "/api/tasks/x/reviewers/y"),
     ("POST", "/api/tasks/x/approvers"), ("DELETE", "/api/tasks/x/approvers/y"),
@@ -672,6 +673,8 @@ def f_sessions():
         req("list sessions includes it", "GET", "/api/sessions", tests=[
             status(200), J,
             test("present", 'pm.expect(j.sessions.map(s => s.id)).to.include("e2e-sess-1");')]),
+        req("list agents returns array", "GET", "/api/agents", tests=[
+            status(200), J, test("agents array", 'pm.expect(j.agents).to.be.an("array");')]),
     ])
 
 

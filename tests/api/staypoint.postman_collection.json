@@ -1210,6 +1210,37 @@
               ]
             },
             {
+              "name": "GET /api/agents without token -> 401",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/agents",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "agents"
+                  ]
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status is 401\", () => pm.response.to.have.status(401));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
               "name": "GET /api/tasks/x/governance without token -> 401",
               "request": {
                 "method": "GET",
@@ -8069,6 +8100,36 @@
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const j = pm.response.json();",
                   "pm.test(\"present\", () => { pm.expect(j.sessions.map(s => s.id)).to.include(\"e2e-sess-1\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "list agents returns array",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/agents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "agents"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test(\"agents array\", () => { pm.expect(j.agents).to.be.an(\"array\"); });"
                 ]
               }
             }
