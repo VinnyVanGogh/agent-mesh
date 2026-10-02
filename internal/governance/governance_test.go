@@ -129,6 +129,10 @@ func TestGatedTransition_InReviewToDone(t *testing.T) {
 		t.Errorf("expected gate failure: no reviewer approvals")
 	}
 
+	_ = governance.AssignReviewer(conn, "task-003", "rev-1", "agent", "actor")
+	_ = governance.AssignApprover(conn, "task-003", "app-1", "agent", "actor")
+	_ = governance.AssignApprover(conn, "task-003", "app-2", "agent", "actor")
+
 	// Add a review approval.
 	_, _ = governance.SubmitReview(conn, "task-003", "rev-1", "approved", "", "rev-1")
 

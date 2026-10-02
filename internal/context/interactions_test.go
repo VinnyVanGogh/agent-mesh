@@ -420,3 +420,47 @@ func TestResolveInteraction(t *testing.T) {
 		t.Fatalf("expected 'invalid terminal status' error, got %v", err)
 	}
 }
+
+// STA-355: an interaction resolved through another task's id is not found and
+// stays pending.
+func TestResolveTaskInteraction_RejectsOtherTask(t *testing.T) {
+	testDB := setupTestDB(t)
+
+	taskA, err := CreateTask(testDB, "Task A", "/tmp/repo", "main", "personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskB, err := CreateTask(testDB, "Task B", "/tmp/repo", "main", "personal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	in, err := CreateInteraction(testDB, &TaskInteraction{
+		TaskID:          taskA.ID,
+		InteractionKind: KindRequestConfirmation,
+		Payload:         `{"prompt":"ok?"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, taskID := range []string{taskB.ID, "", "task-doesnotexist"} {
+		if _, err := ResolveTaskInteraction(testDB, taskID, in.ID, InteractionStatusAccepted, nil); !errors.Is(err, ErrInteractionNotFound) {
+			t.Errorf("resolve via task %q: want ErrInteractionNotFound, got %v", taskID, err)
+		}
+	}
+	got, err := GetInteraction(testDB, in.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != InteractionStatusPending {
+		t.Fatalf("cross-task resolve changed status to %q", got.Status)
+	}
+
+	resolved, err := ResolveTaskInteraction(testDB, taskA.ID, in.ID, InteractionStatusAccepted, nil)
+	if err != nil {
+		t.Fatalf("resolve via owning task: %v", err)
+	}
+	if resolved.Status != InteractionStatusAccepted {
+		t.Errorf("want accepted, got %q", resolved.Status)
+	}
+}

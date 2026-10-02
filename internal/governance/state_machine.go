@@ -119,11 +119,16 @@ func checkReviewGate(db *sql.DB, taskID string) error {
 		return fmt.Errorf("governance: read governance config: %w", err)
 	}
 
+	// Only decisions from currently assigned reviewers count.
 	var approved int
-	_ = db.QueryRow(
-		`SELECT COUNT(*) FROM task_review_decisions WHERE task_id = ? AND decision = 'approved'`,
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM task_review_decisions d
+		 JOIN task_reviewers r ON r.task_id = d.task_id AND r.reviewer_id = d.reviewer_id
+		 WHERE d.task_id = ? AND d.decision = 'approved'`,
 		taskID,
-	).Scan(&approved)
+	).Scan(&approved); err != nil {
+		return fmt.Errorf("governance: count review approvals: %w", err)
+	}
 
 	if approved == 0 {
 		return &TransitionError{From: StageInReview, To: StageDone, Reason: "require_review=true but no reviewer has approved"}
@@ -145,11 +150,16 @@ func checkApprovalGate(db *sql.DB, taskID string) error {
 		return nil
 	}
 
+	// Only votes from currently assigned approvers count.
 	var approvedCount int
-	_ = db.QueryRow(
-		`SELECT COUNT(*) FROM task_approval_votes WHERE task_id = ? AND vote = 'approved'`,
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM task_approval_votes v
+		 JOIN task_approvers a ON a.task_id = v.task_id AND a.approver_id = v.approver_id
+		 WHERE v.task_id = ? AND v.vote = 'approved'`,
 		taskID,
-	).Scan(&approvedCount)
+	).Scan(&approvedCount); err != nil {
+		return fmt.Errorf("governance: count approval votes: %w", err)
+	}
 
 	if approvedCount < threshold {
 		return &TransitionError{

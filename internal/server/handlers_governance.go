@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	gctx "github.com/VinnyVanGogh/staypoint/internal/context"
@@ -264,6 +265,10 @@ func (h *GovernanceHandler) SubmitReview(w http.ResponseWriter, r *http.Request)
 	}
 
 	rd, err := governance.SubmitReview(h.db, task.ID, req.ReviewerID, req.Decision, req.Notes, req.ActorID)
+	if errors.Is(err, governance.ErrNotAssigned) {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -305,6 +310,10 @@ func (h *GovernanceHandler) SubmitApproval(w http.ResponseWriter, r *http.Reques
 	}
 
 	av, err := governance.SubmitApprovalVote(h.db, task.ID, req.ApproverID, req.Vote, req.Reason, req.ActorID)
+	if errors.Is(err, governance.ErrNotAssigned) {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

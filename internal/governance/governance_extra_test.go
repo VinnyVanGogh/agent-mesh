@@ -192,6 +192,9 @@ func TestSubmitReview_ReturnsPersistedDecision(t *testing.T) {
 	conn := openTestDB(t)
 	insertTask(t, conn, "task-rd")
 
+	_ = governance.AssignReviewer(conn, "task-rd", "rev-1", "agent", "a")
+	_ = governance.AssignApprover(conn, "task-rd", "app-1", "agent", "a")
+
 	rd, err := governance.SubmitReview(conn, "task-rd", "rev-1", "rejected", "missing tests", "rev-1")
 	if err != nil {
 		t.Fatal(err)
@@ -214,6 +217,8 @@ func TestSubmitReview_ChangesRequestedRevertsInReview(t *testing.T) {
 	insertTask(t, conn, "task-cr")
 	_, _ = conn.Exec(`UPDATE tasks SET execution_stage = 'in_review' WHERE id = 'task-cr'`)
 
+	_ = governance.AssignReviewer(conn, "task-cr", "rev-1", "agent", "a")
+
 	if _, err := governance.SubmitReview(conn, "task-cr", "rev-1", "changes_requested", "fix it", "rev-1"); err != nil {
 		t.Fatal(err)
 	}
@@ -228,6 +233,8 @@ func TestSubmitReview_ChangesRequestedRevertsInReview(t *testing.T) {
 func TestSubmitReview_ChangesRequestedLeavesOtherStages(t *testing.T) {
 	conn := openTestDB(t)
 	insertTask(t, conn, "task-cr2") // stage = todo
+
+	_ = governance.AssignReviewer(conn, "task-cr2", "rev-1", "agent", "a")
 
 	if _, err := governance.SubmitReview(conn, "task-cr2", "rev-1", "changes_requested", "", "rev-1"); err != nil {
 		t.Fatal(err)
@@ -308,7 +315,10 @@ func TestExecuteTransition_GateBlocksDone(t *testing.T) {
 		t.Errorf("stage mutated despite gate: %q", got)
 	}
 
-	_, _ = governance.SubmitApprovalVote(conn, "task-gate", "app-1", "approved", "", "app-1")
+	_ = governance.AssignApprover(conn, "task-gate", "app-1", "agent", "a")
+	if _, err := governance.SubmitApprovalVote(conn, "task-gate", "app-1", "approved", "", "app-1"); err != nil {
+		t.Fatal(err)
+	}
 	if err := governance.ExecuteTransition(conn, "task-gate", governance.StageInReview, governance.StageDone, "a"); err != nil {
 		t.Fatalf("want transition after approval, got %v", err)
 	}
@@ -331,6 +341,9 @@ func TestApprovalGate_OnlyApprovedVotesCount(t *testing.T) {
 	insertTask(t, conn, "task-votes")
 	_, _ = governance.SetGovernanceConfig(conn, "task-votes", "a", 2, false, "", "")
 
+	for _, id := range []string{"app-1", "app-2", "app-3"} {
+		_ = governance.AssignApprover(conn, "task-votes", id, "agent", "a")
+	}
 	_, _ = governance.SubmitApprovalVote(conn, "task-votes", "app-1", "approved", "", "app-1")
 	_, _ = governance.SubmitApprovalVote(conn, "task-votes", "app-2", "rejected", "", "app-2")
 	_, _ = governance.SubmitApprovalVote(conn, "task-votes", "app-3", "abstain", "", "app-3")
@@ -355,6 +368,7 @@ func TestReviewGate_RejectedReviewDoesNotSatisfy(t *testing.T) {
 	conn := openTestDB(t)
 	insertTask(t, conn, "task-rg")
 	_, _ = governance.SetGovernanceConfig(conn, "task-rg", "a", 0, true, "", "")
+	_ = governance.AssignReviewer(conn, "task-rg", "rev-1", "agent", "a")
 	_, _ = governance.SubmitReview(conn, "task-rg", "rev-1", "rejected", "", "rev-1")
 
 	err := governance.CheckGates(conn, "task-rg", governance.StageInReview, governance.StageDone, "a")
