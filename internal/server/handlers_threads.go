@@ -45,6 +45,9 @@ func (h *ThreadsHandler) ListThreads(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list threads: "+err.Error())
 		return
 	}
+	if sessions == nil {
+		sessions = []*conversation.SessionSummary{}
+	}
 
 	var total int
 	_ = h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM chat_sessions`).Scan(&total)
@@ -182,6 +185,10 @@ func (h *ThreadsHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, m)
 	}
 
+	if messages == nil {
+		messages = []conversation.Message{}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"session_id": id,
@@ -213,8 +220,20 @@ func (h *ThreadsHandler) AppendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.TrimSpace(req.Content) == "" {
+		writeError(w, http.StatusBadRequest, "message content is required")
+		return
+	}
+
 	if req.Role == "" {
 		req.Role = "user"
+	}
+
+	switch conversation.Role(req.Role) {
+	case conversation.RoleSystem, conversation.RoleUser, conversation.RoleAssistant, conversation.RoleTool:
+	default:
+		writeError(w, http.StatusBadRequest, "invalid role: must be system, user, assistant, or tool")
+		return
 	}
 
 	msg := &conversation.Message{

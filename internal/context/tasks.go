@@ -1005,6 +1005,49 @@ func BlockTaskWithBlockers(db *sql.DB, taskID, reason string, blockers []Blocker
 	return tx.Commit()
 }
 
+// ErrBlockerSelfReference is returned when a task tries to block itself.
+var ErrBlockerSelfReference = fmt.Errorf("task cannot block itself")
+
+// ErrBlockerCycle is returned when adding a blocker would create a dependency cycle.
+var ErrBlockerCycle = fmt.Errorf("blocker cycle detected")
+
+// hasBlockerCycle reports true if taskID can reach targetID through "blocks" edges.
+// Used to detect cycles before inserting a new blocker relation.
+func hasBlockerCycle(db *sql.DB, taskID, targetID string) (bool, error) {
+	visited := map[string]bool{}
+	queue := []string{taskID}
+	for len(queue) > 0 {
+		curr := queue[0]
+		queue = queue[1:]
+		if curr == targetID {
+			return true, nil
+		}
+		if visited[curr] {
+			continue
+		}
+		visited[curr] = true
+		rows, err := db.Query(`SELECT blocks_id FROM task_relations WHERE task_id = ?`, curr)
+		if err != nil {
+			return false, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return false, err
+			}
+			if !visited[id] {
+				queue = append(queue, id)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
 func AddTaskBlocker(db *sql.DB, taskID, blockerID, rationale string) error {
 	task, err := GetTask(db, taskID)
 	if err != nil {
@@ -1013,6 +1056,20 @@ func AddTaskBlocker(db *sql.DB, taskID, blockerID, rationale string) error {
 	blockerTask, err := GetTask(db, blockerID)
 	if err != nil {
 		return err
+	}
+
+	if task.ID == blockerTask.ID {
+		return ErrBlockerSelfReference
+	}
+
+	// Cycle check: would adding "blockerTask blocks task" create a cycle?
+	// A cycle exists iff task can already reach blockerTask through "blocks" edges.
+	cycle, err := hasBlockerCycle(db, task.ID, blockerTask.ID)
+	if err != nil {
+		return fmt.Errorf("cycle check failed: %w", err)
+	}
+	if cycle {
+		return ErrBlockerCycle
 	}
 
 	tx, err := db.Begin()
