@@ -351,7 +351,7 @@ func TestInterceptor_BlocksDoneOnNoWorkProducts(t *testing.T) {
 	if approved {
 		t.Fatal("interceptor should have rejected: no work products")
 	}
-	if diag == nil || !strings.Contains(diag.Message, "work products") {
+	if diag == nil || !strings.Contains(diag.Message, "work product") {
 		t.Fatalf("expected work-products diagnostic, got: %v", diag)
 	}
 }
