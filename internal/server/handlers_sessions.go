@@ -81,6 +81,52 @@ func (h *SessionsHandler) ListSessions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ListAgents handles GET /api/agents — returns active sessions as assignable agents for the UI.
+func (h *SessionsHandler) ListAgents(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.db.QueryContext(r.Context(), `
+		SELECT id, agent_type, repo_path, hostname, status, last_heartbeat_at
+		FROM agent_sessions
+		WHERE status IN ('active', 'idle')
+		ORDER BY last_heartbeat_at DESC
+		LIMIT 200
+	`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to query agents: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type Agent struct {
+		ID              string `json:"id"`
+		AgentType       string `json:"agent_type"`
+		RepoPath        string `json:"repo_path"`
+		Hostname        string `json:"hostname"`
+		Status          string `json:"status"`
+		LastHeartbeatAt string `json:"last_heartbeat_at"`
+		Label           string `json:"label"`
+	}
+
+	var agents []Agent
+	for rows.Next() {
+		var a Agent
+		if err := rows.Scan(&a.ID, &a.AgentType, &a.RepoPath, &a.Hostname, &a.Status, &a.LastHeartbeatAt); err != nil {
+			continue
+		}
+		a.Label = a.AgentType + " / " + a.ID[:min(8, len(a.ID))]
+		agents = append(agents, a)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"agents": agents})
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // GetSession handles GET /api/sessions/{id}
 func (h *SessionsHandler) GetSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

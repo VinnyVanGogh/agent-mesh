@@ -385,6 +385,63 @@
     </section>
 
     <!-- Task Status dedicated page -->
+    <!-- Create Task Modal -->
+    <div id="create-task-modal" class="modal-overlay" style="display:none;" role="dialog" aria-modal="true" aria-labelledby="create-task-modal-title">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h2 id="create-task-modal-title" class="modal-title">New Task</h2>
+          <button class="modal-close" id="create-task-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <form id="create-task-form" autocomplete="off">
+          <div class="form-field">
+            <label for="ct-name">Task name <span class="required">*</span></label>
+            <input type="text" id="ct-name" placeholder="e.g. Implement login endpoint" required>
+          </div>
+          <div class="form-field">
+            <label for="ct-assignee">Assignee agent</label>
+            <select id="ct-assignee">
+              <option value="">— unassigned —</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <div class="form-field">
+              <label for="ct-org">Organization</label>
+              <input type="text" id="ct-org" placeholder="e.g. Acme Corp">
+            </div>
+            <div class="form-field">
+              <label for="ct-project">Project</label>
+              <input type="text" id="ct-project" placeholder="e.g. Backend API">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-field">
+              <label for="ct-repo">Repo path</label>
+              <input type="text" id="ct-repo" placeholder="/path/to/repo">
+            </div>
+            <div class="form-field">
+              <label for="ct-branch">Git branch</label>
+              <input type="text" id="ct-branch" placeholder="main">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-field">
+              <label for="ct-budget">Budget (USD)</label>
+              <input type="number" id="ct-budget" min="0" step="0.01" placeholder="0.00">
+            </div>
+            <div class="form-field">
+              <label for="ct-turns">Max turns</label>
+              <input type="number" id="ct-turns" min="0" step="1" placeholder="0">
+            </div>
+          </div>
+          <div id="create-task-error" class="form-error" style="display:none;"></div>
+          <div class="modal-actions">
+            <button type="button" id="create-task-cancel" class="btn btn-secondary">Cancel</button>
+            <button type="submit" id="create-task-submit" class="btn btn-primary">Create Task</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
     <section id="view-task-status" class="view">
       <div class="view-header">
         <h1 class="view-title">Global Task Status</h1>
@@ -413,6 +470,7 @@
             <option value="errored">Errored</option>
             <option value="done">Done</option>
           </select>
+          <button id="open-create-task-btn" class="btn btn-primary" style="margin-left:8px;">+ New Task</button>
         </div>
       </div>
       <div class="dashboard-section" style="padding:0">

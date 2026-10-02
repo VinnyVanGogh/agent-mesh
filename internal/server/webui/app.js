@@ -8405,3 +8405,88 @@ loadAll().then(() => {
 setInterval(() => {
   preloadBossReports(true);
 }, BOSS_REPORT_CACHE_TTL_MS);
+
+// ── Create Task Modal ──────────────────────────────────────
+(function initCreateTaskModal() {
+  const modal   = document.getElementById('create-task-modal');
+  const openBtn = document.getElementById('open-create-task-btn');
+  const closeBtn = document.getElementById('create-task-modal-close');
+  const cancelBtn = document.getElementById('create-task-cancel');
+  const form    = document.getElementById('create-task-form');
+  const errBox  = document.getElementById('create-task-error');
+  const assigneeSel = document.getElementById('ct-assignee');
+  const submitBtn = document.getElementById('create-task-submit');
+
+  if (!modal || !openBtn || !form) return;
+
+  function openModal() {
+    modal.style.display = 'flex';
+    form.reset();
+    errBox.style.display = 'none';
+    submitBtn.disabled = false;
+    // Load agents into dropdown
+    apiFetch('/api/agents').then(data => {
+      const agents = data.agents || [];
+      while (assigneeSel.options.length > 1) assigneeSel.remove(1);
+      for (const a of agents) {
+        const opt = document.createElement('option');
+        opt.value = a.id;
+        opt.textContent = a.label || (a.agent_type + ' / ' + a.id.slice(0, 8));
+        assigneeSel.appendChild(opt);
+      }
+    }).catch(() => {});
+    document.getElementById('ct-name').focus();
+  }
+
+  function closeModal() {
+    modal.style.display = 'none';
+  }
+
+  openBtn.addEventListener('click', openModal);
+  closeBtn.addEventListener('click', closeModal);
+  cancelBtn.addEventListener('click', closeModal);
+  modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && modal.style.display !== 'none') closeModal(); });
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    errBox.style.display = 'none';
+    const name = document.getElementById('ct-name').value.trim();
+    if (!name) { showErr('Task name is required.'); return; }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating…';
+
+    const body = {
+      name,
+      assignee_agent_id: assigneeSel.value || '',
+      organization: document.getElementById('ct-org').value.trim(),
+      project:      document.getElementById('ct-project').value.trim(),
+      repo_path:    document.getElementById('ct-repo').value.trim(),
+      git_branch:   document.getElementById('ct-branch').value.trim(),
+      max_budget_usd: parseFloat(document.getElementById('ct-budget').value) || 0,
+      max_turns:    parseInt(document.getElementById('ct-turns').value, 10) || 0,
+    };
+
+    try {
+      const task = await apiFetch('/api/tasks', { method: 'POST', body: JSON.stringify(body) });
+      closeModal();
+      // Refresh task list
+      const fresh = await apiFetch('/api/tasks?status=all').catch(() => ({ tasks: [] }));
+      const taskArr = (fresh.tasks || []);
+      for (const t of taskArr) { state.tasks[t.id] = t; }
+      renderTaskStatusPage();
+      // Navigate to new task
+      if (task && task.id) openDetail(task.id);
+    } catch (err) {
+      showErr(err.message || 'Failed to create task.');
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Create Task';
+    }
+  });
+
+  function showErr(msg) {
+    errBox.textContent = msg;
+    errBox.style.display = 'block';
+  }
+})();
