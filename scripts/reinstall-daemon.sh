@@ -50,6 +50,24 @@ if [ "$COMMIT" != "none" ] && [ -n "$(git -C "$REPO" status --porcelain --untrac
 fi
 BUILD_LABEL="$COMMIT"
 [ "$DIRTY" = true ] && BUILD_LABEL="$COMMIT-dirty"
+
+# Deploy guard: refuse to build from a branch that is not origin/main unless
+# --allow-unmerged is passed. This prevents accidentally deploying work that
+# hasn't been reviewed and merged.
+ALLOW_UNMERGED=0
+for arg in "$@"; do
+    [ "$arg" = "--allow-unmerged" ] && ALLOW_UNMERGED=1
+done
+if [ "$ALLOW_UNMERGED" = "0" ] && [ "$COMMIT" != "none" ]; then
+    git -C "$REPO" fetch --all --prune --quiet 2>/dev/null || true
+    if ! git -C "$REPO" merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+        HEAD_SUBJECT="$(git -C "$REPO" log --format="%s" -1 HEAD 2>/dev/null || echo 'unknown')"
+        echo "✗ ABORTING: HEAD ($COMMIT — $HEAD_SUBJECT) is not in origin/main." >&2
+        echo "  Merge your branch before deploying, or pass --allow-unmerged to override." >&2
+        exit 1
+    fi
+fi
+
 echo "→ Building staypointd from $REPO (commit: $BUILD_LABEL) ..."
 go build -ldflags "-X main.GitCommit=$BUILD_LABEL -X main.commit=$BUILD_LABEL" -o "$BINARY" "$REPO/cmd/staypointd"
 if [ -n "$SIGN_IDENTITY" ] && [ "$SIGN_IDENTITY" != "-" ]; then

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/checkpoint"
+	"github.com/VinnyVanGogh/staypoint/internal/gitgate"
 	"github.com/VinnyVanGogh/staypoint/internal/security"
 	"github.com/VinnyVanGogh/staypoint/internal/workspace"
 	"github.com/google/uuid"
@@ -241,6 +242,47 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 
 	result := &RunResult{TaskID: taskID, RunID: runID}
 
+	// Git pre-flight: fetch, dirty check, fast-forward.
+	// A failure is logged as a timeline comment and blocks the run.
+	{
+		gfCtx, gfCancel := context.WithTimeout(ctx, 60*time.Second)
+		gfResult, gfErr := gitgate.PreFlight(gfCtx, wtPath, "main")
+		gfCancel()
+		gfSummary := "git-preflight: "
+		if gfErr != nil {
+			gfSummary += "error: " + gfErr.Error()
+		} else if !gfResult.OK {
+			gfSummary += "FAILED — " + strings.Join(gfResult.Errors, "; ")
+		} else {
+			gfSummary += "ok (" + strings.Join(gfResult.Details, " | ") + ")"
+		}
+		slog.Info("git preflight", slog.String("task", taskID), slog.String("result", gfSummary))
+		_, _ = h.DB.ExecContext(ctx,
+			`INSERT INTO task_comments (task_id, author, message) VALUES (?, 'harness', ?)`,
+			taskID, gfSummary,
+		)
+		if gfErr != nil || (gfResult != nil && !gfResult.OK) {
+			result.Disposition = "in_progress"
+			result.DiagnosticMsg = gfSummary
+			if sr != nil {
+				sr.EmitState("in_progress")
+				sr.Close()
+			}
+			cleanCtx2, cleanCancel2 := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cleanCancel2()
+			now2 := time.Now().UTC().Format(time.RFC3339Nano)
+			_, _ = h.DB.ExecContext(cleanCtx2,
+				`UPDATE tasks SET execution_stage='in_progress', updated_at=? WHERE id=?`,
+				now2, taskID,
+			)
+			_, _ = h.DB.ExecContext(cleanCtx2,
+				`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, 'run_complete', ?)`,
+				taskID, "disposition=in_progress turns=0 reason=git_preflight_failed",
+			)
+			return result, nil
+		}
+	}
+
 	// Pre-flight cumulative budget check: if the task has already exhausted its
 	// max_turns or max_budget_usd across prior runs, skip the adapter entirely.
 	// The external hook enforces the same gate, but when it blocks the harness
@@ -346,6 +388,32 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 
 	if sr != nil {
 		sr.Close()
+	}
+
+	// Git post-flight: dirty check, unpushed commits, merged-to-main report.
+	// A failure is recorded but does not override the disposition — it annotates
+	// the timeline and blocks `Mark done` at the UI/interceptor layer.
+	{
+		pfCtx, pfCancel := context.WithTimeout(context.Background(), 60*time.Second)
+		pfResult, pfErr := gitgate.PostFlight(pfCtx, wtPath, "main")
+		pfCancel()
+		pfSummary := "git-postflight: "
+		if pfErr != nil {
+			pfSummary += "error: " + pfErr.Error()
+		} else if !pfResult.OK {
+			pfSummary += "FAILED — " + strings.Join(pfResult.Errors, "; ")
+		} else {
+			pfSummary += "ok (" + strings.Join(pfResult.Details, " | ") + ")"
+		}
+		_, _ = h.DB.ExecContext(context.Background(),
+			`INSERT INTO task_comments (task_id, author, message) VALUES (?, 'harness', ?)`,
+			taskID, pfSummary,
+		)
+		_, _ = h.DB.ExecContext(context.Background(),
+			`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, 'git_postflight', ?)`,
+			taskID, pfSummary,
+		)
+		slog.Info("git postflight", slog.String("task", taskID), slog.String("result", pfSummary))
 	}
 
 	// Diff against pre-run checkpoint.
