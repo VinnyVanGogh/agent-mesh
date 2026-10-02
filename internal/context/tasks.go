@@ -908,6 +908,7 @@ func AddTaskComment(db *sql.DB, taskID, author, message string) error {
 		return err
 	}
 
+	_ = LogActivity(db, task.ID, "comment_added", fmt.Sprintf("author=%s", author))
 	// Any pending interactions configured to supersede on comment are superseded
 	_, _ = SupersedeInteractionsOnComment(db, task.ID)
 	// Watchdog: re-evaluate criteria on every comment (update-triggered, no polling).
