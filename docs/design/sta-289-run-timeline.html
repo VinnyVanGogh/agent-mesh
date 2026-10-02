@@ -61,6 +61,8 @@ section.view.on { display: block; animation: fade .25s ease; }
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
 .pill.run { background: rgba(56,189,248,.12); color: var(--cyan); border: 1px solid rgba(56,189,248,.35); }
 .pill.pending { background: rgba(245,158,11,.12); color: var(--amber); border: 1px solid rgba(245,158,11,.4); }
+.pill.stopping { background: rgba(248,81,73,.12); color: var(--red); border: 1px solid rgba(248,81,73,.4); }
+.btn.stop.armed { background: rgba(248,81,73,.18); border-color: var(--red); }
 .pill.paused { background: rgba(210,153,34,.15); color: var(--gold); border: 1px solid rgba(251,191,36,.4); }
 .pill .pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
@@ -220,7 +222,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; padding: 20px
       <span class="pill run" id="statePill"><span class="pulse"></span><span id="stateText">Running</span></span>
       <div class="spacer"></div>
       <button class="btn warn" id="pauseBtn">⏸ Pause after this step <kbd>Esc</kbd></button>
-      <button class="btn stop" id="stopBtn">■ Stop now <kbd>Esc Esc</kbd></button>
+      <button class="btn stop" id="stopBtn">■ Stop <kbd>⌃C</kbd></button>
     </div>
 
     <div class="stats">
@@ -366,7 +368,7 @@ footer { color: var(--muted); font-size: 12px; text-align: center; padding: 20px
       <rect x="1120" y="456" width="200" height="74" rx="8" fill="#0d1117" stroke="#f59e0b"/>
       <text x="1134" y="480" fill="#fcd34d" font-size="13" font-weight="600">Composer + controls</text>
       <text x="1134" y="500" fill="#8b949e" font-size="11.5">message · pause · stop</text>
-      <text x="1134" y="518" fill="#8b949e" font-size="11.5">Esc / Esc Esc</text>
+      <text x="1134" y="518" fill="#8b949e" font-size="11.5">Esc · Stop / Stop again</text>
 
       <!-- data flow arrows -->
       <path d="M170,200 V250" stroke="#8b949e" stroke-width="2" fill="none" marker-end="url(#a)" class="flow"/>
@@ -417,7 +419,7 @@ data: {
 
 <!-- =============================== SEQUENCE =============================== -->
 <section class="view" id="seq">
-  <p class="caption"><b>"Pause after the next message", Claude Code style.</b> A pause never cuts a command in half. It waits until the step that is running finishes, then holds the agent before it starts the next one. A message you type is queued and handed to the agent at that same boundary. <b>Stop now</b> is the only hard interrupt, and it takes a checkpoint first so nothing is lost.</p>
+  <p class="caption"><b>"Pause after the next message", Claude Code style.</b> A pause never cuts a command in half. It waits until the step that is running finishes, then holds the agent before it starts the next one. A message you type is queued and handed to the agent at that same boundary. <b>Stop</b> works like Ctrl+C in a terminal: press it once and the run wraps up cleanly at the next step boundary; press it again and it is killed right away. Either way a checkpoint is taken first, so nothing is lost.</p>
   <div class="card">
     <h3>Sequence: you pause mid-run, add a note, and resume</h3>
     <svg viewBox="0 0 1380 640" width="100%" role="img" aria-label="Pause sequence diagram">
@@ -519,18 +521,19 @@ data: {
           <text x="318" y="206">final status</text>
           <text x="266" y="235">no step N min</text>
           <text x="160" y="235">step arrives</text>
-          <text x="318" y="282">Esc Esc</text>
+          <text x="304" y="282">Stop (×2 = now)</text>
         </g>
       </svg>
     </div>
     <div class="card">
-      <h3>Three ways to step in</h3>
+      <h3>Four ways to step in</h3>
       <p class="caption">Ordered from gentlest to hardest. Only the last one cuts work off.</p>
       <table class="trace">
         <tr><th>Action</th><th>When it takes effect</th><th>What happens</th></tr>
         <tr><td><b>Send a message</b></td><td>Next step boundary</td><td>Queued, then given to the agent before its next tool call. The run keeps going.</td></tr>
         <tr><td><b style="color:var(--gold)">Pause after this step</b> <kbd>Esc</kbd></td><td>When the current step ends</td><td>The current command finishes cleanly, a checkpoint is taken, and the agent holds until you resume or send a message.</td></tr>
-        <tr><td><b style="color:var(--red)">Stop now</b> <kbd>Esc Esc</kbd></td><td>Immediately</td><td>Interrupts the CLI, snapshots the working tree first, and marks the run <i>stopped</i> with a resumable session.</td></tr>
+        <tr><td><b style="color:var(--red)">Stop</b> <kbd>⌃C</kbd> (click once)</td><td>When the current step ends</td><td>Soft cancel. The current command finishes, a checkpoint is taken, and the run ends cleanly as <i>stopped</i> with a resumable session. Unlike pause, it does not wait for you.</td></tr>
+        <tr><td><b style="color:var(--red)">Stop again</b> <kbd>⌃C ⌃C</kbd> (click twice)</td><td>Immediately</td><td>Hard cancel. Snapshots the working tree, then interrupts the CLI mid-step (SIGINT, then SIGKILL if it ignores it). Run marked <i>stopped</i>, still resumable.</td></tr>
       </table>
       <p class="caption" style="margin-top:12px">No timers. Nothing interrupts after 30 seconds or 5 minutes. The only timer is the <b>stuck</b> warning, and it only warns.</p>
     </div>
@@ -551,7 +554,7 @@ data: {
       <ul><li>Checkpoint after every edit step</li><li><code>run.diff</code> event; right sidebar: whole run / this step / since checkpoint</li><li>Per-file undo through <code>internal/checkpoint</code></li></ul>
       <div class="maps">Delivers ask 4</div></div>
     <div class="phase"><div class="p">Phase 4</div><h4>Steer it</h4>
-      <ul><li>Spike: hold-before-next-tool per CLI (claude hook, gemini, codex)</li><li><code>POST /api/runs/{id}/control</code></li><li>Message queue, pause, resume, stop</li><li>Esc / Esc Esc shortcuts</li></ul>
+      <ul><li>Spike: hold-before-next-tool per CLI (claude hook, gemini, codex)</li><li><code>POST /api/runs/{id}/control</code></li><li>Message queue, pause, resume, stop</li><li>Esc pause · Stop / Stop again (⌃C ⌃C)</li></ul>
       <div class="maps">Delivers ask 2</div></div>
   </div>
 
@@ -696,7 +699,7 @@ function selectFile(f) {
 let total = 252, step = 18, state = 'running';
 const fmt = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 setInterval(() => {
-  if (state === 'paused') return;
+  if (state === 'paused' || state === 'stopped') return;
   total++; step++;
   document.getElementById('elapsed').textContent = fmt(total);
   document.getElementById('stepElapsed').textContent = fmt(step);
@@ -726,8 +729,32 @@ pauseBtn.onclick = () => {
   if (state === 'running') { setState('pausing'); setTimeout(() => state === 'pausing' && setState('paused'), 2500); }
   else if (state === 'paused') { queue.length = 0; step = 0; setState('running'); }
 };
-document.getElementById('stopBtn').onclick = () => {
-  setState('paused'); stateText.textContent = 'Stopped · snapshot saved'; pill.className = 'pill paused';
+// Stop is two-stage, like Ctrl+C: first press = soft cancel at the next step
+// boundary, second press = hard cancel now.
+const stopBtn = document.getElementById('stopBtn');
+let stopTimer = null;
+function stopped(how) {
+  clearTimeout(stopTimer); state = 'stopped'; queue.length = 0;
+  pill.className = 'pill paused'; stateText.textContent = how;
+  stopBtn.classList.remove('armed'); stopBtn.disabled = true; pauseBtn.disabled = true;
+  stopBtn.innerHTML = '■ Stopped';
+  queued.innerHTML = how === 'Stopped cleanly'
+    ? '■ Step finished, checkpoint taken, run ended cleanly. Session is resumable.'
+    : '■ Killed mid-step. Working tree snapshot saved first. Session is resumable.';
+  queued.classList.add('show');
+}
+stopBtn.onclick = () => {
+  if (state === 'stopped') return;
+  if (state !== 'stopping') {
+    state = 'stopping';
+    pill.className = 'pill stopping'; stateText.textContent = 'Stopping after this step';
+    stopBtn.classList.add('armed'); stopBtn.innerHTML = '■ Stop now <kbd>⌃C</kbd>';
+    queued.innerHTML = '■ Soft stop: the current step ("go vet && go test") finishes, then the run ends. Click Stop again to kill it now.';
+    queued.classList.add('show');
+    stopTimer = setTimeout(() => stopped('Stopped cleanly'), 3500);
+  } else {
+    stopped('Killed · snapshot saved');
+  }
 };
 function send() {
   const i = document.getElementById('msg'); if (!i.value.trim()) return;
@@ -735,7 +762,10 @@ function send() {
 }
 document.getElementById('sendBtn').onclick = send;
 document.getElementById('msg').onkeydown = e => { if (e.key === 'Enter') send(); };
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.activeElement.id !== 'msg') pauseBtn.click(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.activeElement.id !== 'msg') pauseBtn.click();
+  if (e.key === 'c' && e.ctrlKey) stopBtn.click();
+});
 </script>
 </body>
 </html>
