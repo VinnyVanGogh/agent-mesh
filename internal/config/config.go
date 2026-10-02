@@ -20,6 +20,10 @@ type Config struct {
 	WorkEmail             string  `json:"work_email" toml:"work_email"`
 	PersonalEmail         string  `json:"personal_email" toml:"personal_email"`
 	WorkRepoRoot          string  `json:"work_repo_root" toml:"work_repo_root"`
+	// HarnessRepoRoot is the git repo used for agent worktrees. Populated from
+	// STAYPOINT_REPO_ROOT env var (takes precedence) or harness_repo_root in
+	// config.toml. Never derived from work_repo_root.
+	HarnessRepoRoot string `json:"harness_repo_root" toml:"harness_repo_root"`
 	RemoteHost            string  `json:"remote_host" toml:"remote_host"`
 	RemoteRepoRoot        string  `json:"remote_repo_root" toml:"remote_repo_root"` // e.g. "~/Documents/dev/managed_solution" or "~/Documents/dev/work"
 	MachineRole           string  `json:"machine_role" toml:"machine_role"`         // "hybrid" (default), "work", or "personal"
@@ -129,6 +133,15 @@ func LoadConfig() (*Config, error) {
 	cfg.ClaudeBin = expandPath(cfg.ClaudeBin, home)
 	cfg.AgyBin = expandPath(cfg.AgyBin, home)
 	cfg.CodexBin = expandPath(cfg.CodexBin, home)
+	cfg.HarnessRepoRoot = expandPath(cfg.HarnessRepoRoot, home)
+	// STAYPOINT_REPO_ROOT env var takes precedence over config file value.
+	if v := os.Getenv("STAYPOINT_REPO_ROOT"); v != "" {
+		cfg.HarnessRepoRoot = expandPath(v, home)
+	}
+	// Mansol guard: harness must never create worktrees inside the billing repo.
+	if strings.Contains(strings.ToLower(cfg.HarnessRepoRoot), "mansol") {
+		cfg.HarnessRepoRoot = ""
+	}
 
 	if cfg.RemoteRepoRoot == "" {
 		if strings.Contains(strings.ToLower(cfg.CompanyName), "managed solution") ||
