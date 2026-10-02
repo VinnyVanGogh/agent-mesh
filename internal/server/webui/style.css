@@ -2176,6 +2176,9 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
 }
 .checklist-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .checklist-howto { font-size: 11px; color: var(--cyan); font-family: monospace; margin-top: 3px; }
+.cl-refs { margin-top: 4px; font-size: 10px; color: var(--muted); }
+.cl-refs summary { cursor: pointer; width: fit-content; user-select: none; }
+.cl-refs-body { margin-top: 2px; font-family: monospace; }
 .checklist-notes-row { display: flex; align-items: flex-start; gap: 6px; margin-top: 6px; }
 .checklist-notes-input {
   flex: 1; background: var(--bg-input, var(--bg-card)); border: 1px solid var(--border);
@@ -2665,7 +2668,7 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
 .hud-tool-btn {
   background: transparent;
   border: none;
-  color: var(--muted, #94a3b8);
+  color: var(--muted);
   font-size: 13px;
   cursor: pointer;
   padding: 2px 6px;
@@ -2728,7 +2731,7 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--muted, #94a3b8);
+  color: var(--muted);
   font-weight: 600;
 }
 .hud-item-title {

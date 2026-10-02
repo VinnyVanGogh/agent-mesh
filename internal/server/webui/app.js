@@ -7346,6 +7346,45 @@ function isSectionCommitBlocked(sectionName) {
   return checklistCommitVerification.blocked_sections?.includes(sectionName) || false;
 }
 
+// Commit codes and task IDs mean nothing to someone running the checklist by
+// hand, so they come out of the visible text and sit in a collapsed toggle.
+const CL_REF_RE = /\b(?:(?:STA|MAN|PER|RUN|RES)-\d+|task-[0-9a-f]{6,}|(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40})\b/g;
+
+function splitChecklistRefs(text) {
+  if (!text) return { text: '', refs: [] };
+  const refs = [];
+  const clean = String(text)
+    .replace(CL_REF_RE, m => { refs.push(m); return ''; })
+    .replace(/\(\s*(?:[,;/&\s]|and|or)*\)/g, '')
+    .replace(/[ \t]+([,.;:)])/g, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+  return { text: clean, refs };
+}
+
+function checklistRefsText(item) {
+  const refs = [item.section, item.title, item.description, item.how_to_test]
+    .flatMap(t => splitChecklistRefs(t).refs);
+  if (item.commit_hash) refs.push(item.commit_hash);
+  const uniq = [...new Set(refs)];
+  const tasks = uniq.filter(r => !/^[0-9a-f]{7,40}$/.test(r));
+  const commits = uniq.filter(r => /^[0-9a-f]{7,40}$/.test(r));
+  const parts = [];
+  if (tasks.length) parts.push(`Tasks: ${tasks.join(', ')}`);
+  if (commits.length) parts.push(`Build: ${commits.join(', ')}`);
+  return parts.join(' · ');
+}
+
+function buildChecklistRefsToggle(item) {
+  const text = checklistRefsText(item);
+  if (!text) return null;
+  const d = document.createElement('details');
+  d.className = 'cl-refs';
+  d.appendChild(el('summary', '', 'details'));
+  d.appendChild(el('div', 'cl-refs-body', text));
+  return d;
+}
+
 async function loadChecklist(sprint) {
   const urlParams = new URLSearchParams(window.location.search);
   const sprintFromUrl = urlParams.get('sprint');
@@ -7554,7 +7593,7 @@ function renderChecklist() {
 
     const titleLeft = el('div', 'checklist-section-title-left');
     const chevron = el('span', 'checklist-section-chevron', isCollapsed ? '▶' : '▼');
-    const titleText = el('span', 'checklist-section-name', sectionName);
+    const titleText = el('span', 'checklist-section-name', splitChecklistRefs(sectionName).text);
     titleLeft.appendChild(chevron);
     titleLeft.appendChild(titleText);
     if (isSectionCommitBlocked(sectionName)) {
@@ -7650,12 +7689,7 @@ function buildChecklistItem(item) {
 
   // Body
   const body = el('div', 'checklist-body');
-  const titleEl = el('div', `checklist-title${item.status !== 'pending' ? ' status-' + item.status : ''}`, item.title);
-  if (item.commit_hash) {
-    const commitBadge = el('span', 'checklist-commit-badge', `git:${item.commit_hash}`);
-    commitBadge.title = `Bound commit: ${item.commit_hash}`;
-    titleEl.appendChild(commitBadge);
-  }
+  const titleEl = el('div', `checklist-title${item.status !== 'pending' ? ' status-' + item.status : ''}`, splitChecklistRefs(item.title).text);
   if (isBlocked) {
     const blockedTag = el('span', 'badge badge-commit-blocked', '⛔ Commit Gate');
     blockedTag.title = `Blocked: ${blockReason}`;
@@ -7677,8 +7711,10 @@ function buildChecklistItem(item) {
   });
   titleEl.appendChild(tourItemBtn);
   body.appendChild(titleEl);
-  if (item.description) body.appendChild(el('div', 'checklist-desc', item.description));
-  if (item.how_to_test) body.appendChild(el('div', 'checklist-howto', item.how_to_test));
+  if (item.description) body.appendChild(el('div', 'checklist-desc', splitChecklistRefs(item.description).text));
+  if (item.how_to_test) body.appendChild(el('div', 'checklist-howto', splitChecklistRefs(item.how_to_test).text));
+  const refsToggle = buildChecklistRefsToggle(item);
+  if (refsToggle) body.appendChild(refsToggle);
 
   // Notes + version history
   const notesRow = el('div', 'checklist-notes-row');
@@ -8263,12 +8299,12 @@ function renderWalkthroughHUD() {
   if (counterEl) counterEl.textContent = `Question ${idx + 1} of ${checklistItems.length}`;
 
   const secEl = document.getElementById('hud-item-section');
-  if (secEl) secEl.textContent = item.section || 'General Verification';
+  if (secEl) secEl.textContent = splitChecklistRefs(item.section).text || 'General Verification';
 
   // Title
   const titleEl = document.getElementById('hud-item-title');
   if (titleEl) {
-    titleEl.textContent = item.title;
+    titleEl.textContent = splitChecklistRefs(item.title).text;
     if (item.contract) {
       const tag = el('span', 'checklist-contract-tag', '⚙ contract');
       tag.title = 'Machine contract: ' + item.contract;
@@ -8278,11 +8314,20 @@ function renderWalkthroughHUD() {
 
   // Desc
   const descEl = document.getElementById('hud-item-desc');
-  if (descEl) descEl.textContent = item.description || '';
+  if (descEl) descEl.textContent = splitChecklistRefs(item.description).text;
 
   // How to test
   const howtoEl = document.getElementById('hud-item-howto');
-  if (howtoEl) howtoEl.textContent = item.how_to_test || 'Verify this requirement in the application view.';
+  if (howtoEl) howtoEl.textContent = splitChecklistRefs(item.how_to_test).text || 'Verify this requirement in the application view.';
+
+  const refsEl = document.getElementById('hud-item-refs');
+  if (refsEl) {
+    const refsText = checklistRefsText(item);
+    refsEl.style.display = refsText ? '' : 'none';
+    refsEl.open = false;
+    const body = refsEl.querySelector('.cl-refs-body');
+    if (body) body.textContent = refsText;
+  }
 
   // Target & sidebar highlight
   updateWalkthroughSidebarHighlight();
@@ -8332,7 +8377,7 @@ function renderWalkthroughHUD() {
       const opt = document.createElement('option');
       opt.value = i;
       const statusIcon = it.status === 'pass' ? '✓' : (it.status === 'fail' ? '✗' : (it.status === 'partial' ? '◐' : '○'));
-      opt.textContent = `${statusIcon} #${i + 1}: ${it.title.slice(0, 30)}…`;
+      opt.textContent = `${statusIcon} #${i + 1}: ${splitChecklistRefs(it.title).text.slice(0, 30)}…`;
       if (i === idx) opt.selected = true;
       jumpSel.appendChild(opt);
     });

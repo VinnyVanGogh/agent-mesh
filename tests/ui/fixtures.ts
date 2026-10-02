@@ -86,6 +86,10 @@ export class StayPointAPI {
     );
     return r.interactions || [];
   }
+
+  async seedChecklist(sprint: string) {
+    return this.json('POST', '/api/checklist/seed', { sprint });
+  }
 }
 
 /** URL of the full task page, matching taskToPath() in app.js for local tasks. */
