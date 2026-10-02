@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // StepKind classifies a run timeline step for the board UI.
@@ -59,7 +61,7 @@ type StepDelta struct {
 
 // RunStep is one timeline entry, stored in run_steps and broadcast as run.step SSE.
 type RunStep struct {
-	ID        int64    `json:"id"`
+	ID        string   `json:"id"`
 	RunID     string   `json:"run_id"`
 	TaskID    string   `json:"task_id"`
 	Seq       int      `json:"seq"`
@@ -324,6 +326,10 @@ func (r *StepRecorder) persist(step RunStep) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
+	if step.ID == "" {
+		step.ID = uuid.New().String()
+	}
+
 	var parentSeqNull sql.NullInt64
 	if step.ParentSeq != nil {
 		parentSeqNull = sql.NullInt64{Int64: int64(*step.ParentSeq), Valid: true}
@@ -333,15 +339,14 @@ func (r *StepRecorder) persist(step RunStep) {
 		endedAtNull = sql.NullString{String: *step.EndedAt, Valid: true}
 	}
 
-	row := r.db.QueryRowContext(ctx, `
-		INSERT INTO run_steps (run_id, task_id, seq, parent_seq, kind, title, body, status, started_at, ended_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		RETURNING id`,
-		step.RunID, step.TaskID, step.Seq, parentSeqNull,
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO run_steps (id, run_id, task_id, seq, parent_seq, kind, title, body, status, started_at, ended_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		step.ID, step.RunID, step.TaskID, step.Seq, parentSeqNull,
 		string(step.Kind), step.Title, step.Body, step.Status,
 		step.StartedAt, endedAtNull,
 	)
-	if err := row.Scan(&step.ID); err != nil {
+	if err != nil {
 		slog.Warn("run_steps insert failed", slog.Any("err", err))
 	}
 }

@@ -1377,6 +1377,7 @@ type RunStep struct {
 	Kind      string  `json:"kind"`
 	Title     string  `json:"title"`
 	Body      *string `json:"body,omitempty"`
+	Status    string  `json:"status"`
 	StartedAt *string `json:"started_at,omitempty"`
 	EndedAt   *string `json:"ended_at,omitempty"`
 	CreatedAt string  `json:"created_at"`
@@ -1384,7 +1385,7 @@ type RunStep struct {
 
 // ListRunStepsByTask returns all run_steps for a given task, ordered by seq ascending.
 func ListRunStepsByTask(db *sql.DB, taskID string) ([]RunStep, error) {
-	query := `SELECT id, run_id, COALESCE(task_id,''), seq, parent_seq, kind, title, body, started_at, ended_at, created_at
+	query := `SELECT id, run_id, COALESCE(task_id,''), seq, parent_seq, kind, title, body, COALESCE(status,''), started_at, ended_at, created_at
 	          FROM run_steps WHERE task_id = ? ORDER BY seq ASC`
 	rows, err := db.Query(query, taskID)
 	if err != nil {
@@ -1394,7 +1395,7 @@ func ListRunStepsByTask(db *sql.DB, taskID string) ([]RunStep, error) {
 	var steps []RunStep
 	for rows.Next() {
 		var s RunStep
-		if err := rows.Scan(&s.ID, &s.RunID, &s.TaskID, &s.Seq, &s.ParentSeq, &s.Kind, &s.Title, &s.Body, &s.StartedAt, &s.EndedAt, &s.CreatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.RunID, &s.TaskID, &s.Seq, &s.ParentSeq, &s.Kind, &s.Title, &s.Body, &s.Status, &s.StartedAt, &s.EndedAt, &s.CreatedAt); err != nil {
 			return nil, err
 		}
 		steps = append(steps, s)
