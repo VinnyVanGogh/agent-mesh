@@ -21,15 +21,17 @@ func init() {
 type RunControl struct {
 	db *sql.DB
 
-	mu     sync.Mutex
-	notify map[string]chan struct{} // closed + replaced on any state change
+	mu         sync.Mutex
+	notify     map[string]chan struct{} // closed + replaced on any state change (pause, resume, stop)
+	stopNotify map[string]chan struct{} // closed + replaced only on SetStop
 }
 
 // NewRunControl creates a RunControl. db may be nil (no persistence).
 func NewRunControl(db *sql.DB) *RunControl {
 	return &RunControl{
-		db:     db,
-		notify: make(map[string]chan struct{}),
+		db:         db,
+		notify:     make(map[string]chan struct{}),
+		stopNotify: make(map[string]chan struct{}),
 	}
 }
 
@@ -101,6 +103,7 @@ func (rc *RunControl) SetStop(taskID string) error {
 		}
 	}
 	rc.signal(taskID)
+	rc.signalStop(taskID)
 	return nil
 }
 
@@ -166,11 +169,11 @@ func (rc *RunControl) IsStopRequested(taskID string) bool {
 	return s
 }
 
-// StopChan returns a channel that is closed when stop is requested.
-// The channel is replaced on each signal, so callers should capture it once
-// and select on it.
+// StopChan returns a channel that is closed only when stop is requested.
+// Pause signals do NOT close this channel. Callers should capture it once and
+// select on it alongside turnCtx.Done() to cancel a turn only on hard stop.
 func (rc *RunControl) StopChan(taskID string) <-chan struct{} {
-	return rc.chanFor(taskID)
+	return rc.chanStopFor(taskID)
 }
 
 // WaitForResume blocks until the pause flag is cleared or stop is requested.
@@ -221,7 +224,17 @@ func (rc *RunControl) chanFor(taskID string) <-chan struct{} {
 	return rc.notify[taskID]
 }
 
-// signal closes the current channel for the task (waking all waiters) and
+// chanStopFor returns (or creates) the stop-only notification channel for a task.
+func (rc *RunControl) chanStopFor(taskID string) <-chan struct{} {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	if rc.stopNotify[taskID] == nil {
+		rc.stopNotify[taskID] = make(chan struct{})
+	}
+	return rc.stopNotify[taskID]
+}
+
+// signal closes the current notify channel for the task (waking all waiters) and
 // creates a fresh one for the next wait.
 func (rc *RunControl) signal(taskID string) {
 	rc.mu.Lock()
@@ -230,4 +243,15 @@ func (rc *RunControl) signal(taskID string) {
 		close(ch)
 	}
 	rc.notify[taskID] = make(chan struct{})
+}
+
+// signalStop closes the stop-only channel, waking any turn goroutine watching for
+// hard-stop. Called exclusively by SetStop so pause does not trigger it.
+func (rc *RunControl) signalStop(taskID string) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	if ch := rc.stopNotify[taskID]; ch != nil {
+		close(ch)
+	}
+	rc.stopNotify[taskID] = make(chan struct{})
 }
