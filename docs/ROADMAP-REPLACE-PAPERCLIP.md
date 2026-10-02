@@ -43,11 +43,15 @@ You create a task in StayPoint and assign it. It wakes on its own. You watch its
 ### Code Evidence (checked against repo, not issue status)
 
 **T1 — PARTIAL**  
-Backend foundations exist: `internal/checkpoint/` (checkpoint.go, types.go, undo.go), checkpoint creation + diff in `internal/orchestrator/harness.go`, SSE `EventHub` in `internal/server/events.go`.  
-Missing: harness does not publish step events to SSE hub; web UI (`internal/server/webui/app.js`) has zero timeline/checkpoint/RunStep rendering — only a "working" spinner.
+Backend foundations: `internal/checkpoint/` (checkpoint.go, types.go, undo.go), checkpoint creation + diff in `internal/orchestrator/harness.go`, `run_steps` table (migration 10, `internal/db/db.go:228`, STA-325), `GetRunSteps` REST endpoint, SSE `EventHub` in `internal/server/events.go`.  
+Timeline UI shipped in STA-328: `appendRunStepToTimeline`, `buildRunStepRow`, `buildTimelineStats` in `app.js`; SSE `run.step` event handler at `app.js:352`.  
+Missing: harness does not publish `run.step` events to the SSE hub — `hub.Publish` not called in `internal/orchestrator/` for run steps; live SSE push not wired (REST polling only via `GET /api/tasks/:id/run-steps`).
 
 **T2 — PARTIAL**  
-Schema exists: `task_interactions` table in `internal/db/db.go`; context CRUD in `internal/context/` (interactions_test.go confirms create/list/resolve). No HTTP endpoints for interactions in `internal/server/handlers_tasks.go`. Web UI has no card rendering (1 grep hit = a comment in a chat section, not a card component).
+Schema: `task_interactions` table in `internal/db/db.go`; context CRUD in `internal/context/` (interactions_test.go confirms create/list/resolve).  
+HTTP endpoints shipped in STA-321: `ListInteractions` (`handlers_tasks.go:389`), `CreateInteraction` (`handlers_tasks.go:412`), `ResolveInteraction` (`handlers_tasks.go:460`), wired in `server.go:87-88`.  
+Card rendering shipped in STA-322: `renderInteractionCards()` in `app.js:6686` renders `ask_user_questions`, `request_confirmation`, and `suggest_tasks` cards; CSS added in STA-323.  
+Missing: Board response/submit flow not verified — no confirmed submit handlers in `renderInteractionCards`; resolve flow from web UI to `ResolveInteraction` endpoint needs end-to-end check.
 
 **T3 — MISSING**  
 `GlobalDispatcher.Wake()` exists in `internal/orchestrator/dispatcher.go` and is called from `internal/mcp/tools.go`. Task update handler does not call `dispatcher.Wake` on assignment change — the assignment→wake wire does not exist in `internal/server/`.
@@ -60,6 +64,23 @@ No acceptance test scaffold. No cutover tooling.
 
 **T6 — IN PROGRESS**  
 This document.
+
+---
+
+## Feature Gap (Paperclip vs StayPoint Today)
+
+| Paperclip Feature | StayPoint Today | Notes |
+|---|---|---|
+| Quota gauges (5h / weekly, claude / gemini) | ✅ EXISTS | Live % comes from Anthropic's usage API, so it adapts to a plan change |
+| Quota pacing: plan-aware burn / runway | ⚠️ PARTIAL | The plan label is set by hand (`claude_plan_tier`, `internal/config/config.go:70`); it should come from credentials (`claudeAiOauth.rateLimitTier`). Per-turn burn is hardcoded to 5x (`internal/router/pacer.go:96-97`), so runway reads ~4x too pessimistic on 20x and RESTRICTED mode may kick in too early. The learned estimates file has been stale since Sep 9. PDF report text hardcodes "Max 5x" (`internal/reporting/pdf.go`). |
+
+---
+
+## Risks
+
+| ID | Sev | Risk | Mitigation |
+|----|-----|------|------------|
+| R-08 | M | Pacer misjudges headway after a plan change — fleet drops into RESTRICTED early (or late after a downgrade). | [STA-336](/STA/issues/STA-336). Until it ships, the Board's manual `claude_plan_tier` override only fixes the badge, not the burn. |
 
 ---
 
@@ -86,6 +107,8 @@ Post-cutover (not blocking):
 - Routines / cron triggers
 - Approval cards (first-class entity beyond governance tables)
 - Multi-company / multi-tenant (separate epic)
+- **[STA-336](/STA/issues/STA-336)** Claude plan-tier awareness: detect plan from credentials, rescale pacer burn, drive report text from the plan
+- **[STA-337](/STA/issues/STA-337)** Investigate why `statusline-estimates.json` is stale
 
 ---
 
@@ -100,4 +123,4 @@ Post-cutover (not blocking):
 
 ---
 
-_Last updated: 2026-10-01 · Matches STA-288 plan revision 3 · Code audit at commit `98d3994`_
+_Last updated: 2026-10-02 · Matches STA-288 plan revision 3 · Code audit at commit `f8d6f28`_
