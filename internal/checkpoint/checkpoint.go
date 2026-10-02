@@ -306,7 +306,10 @@ func DiffCheckpointFiles(ctx context.Context, workDir, checkpointID string) ([]F
 		return nil, err
 	}
 
-	targetRef := resolveCheckpointRef(checkpointID)
+	targetRef, err := resolveCheckpointRef(checkpointID)
+	if err != nil {
+		return nil, err
+	}
 	out, err := runGit(ctx, rootDir, nil, "diff", targetRef, "--numstat")
 	if err != nil {
 		return nil, err
@@ -329,15 +332,38 @@ func DiffCheckpointFiles(ctx context.Context, workDir, checkpointID string) ([]F
 	return stats, nil
 }
 
+// validCheckpointID reports whether s is safe to pass to git.
+// Accepts: empty (resolves to latest), "latest", full 40-char SHA, or
+// short IDs / refs containing only [A-Za-z0-9._/-].
+func validCheckpointID(s string) bool {
+	if s == "" || s == "latest" {
+		return true
+	}
+	if strings.HasPrefix(s, "-") {
+		return false
+	}
+	for _, r := range s {
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
+			(r >= '0' && r <= '9') || r == '.' || r == '_' || r == '/' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // resolveCheckpointRef converts a short checkpoint ID to a git ref or SHA.
-func resolveCheckpointRef(checkpointID string) string {
+// Returns an error when checkpointID contains unsafe characters.
+func resolveCheckpointRef(checkpointID string) (string, error) {
+	if !validCheckpointID(checkpointID) {
+		return "", fmt.Errorf("invalid checkpoint id")
+	}
 	if strings.HasPrefix(checkpointID, "refs/") || len(checkpointID) == 40 {
-		return checkpointID
+		return checkpointID, nil
 	}
 	if checkpointID == "" || checkpointID == "latest" {
-		return "refs/staypoint/checkpoints/latest"
+		return "refs/staypoint/checkpoints/latest", nil
 	}
-	return checkpointID
+	return checkpointID, nil
 }
 
 // RestoreFile restores a single file from the specified checkpoint into the working tree.
@@ -345,14 +371,21 @@ func RestoreFile(ctx context.Context, workDir, checkpointID, filePath string) er
 	if filePath == "" {
 		return fmt.Errorf("file path is required")
 	}
+	// Guard against path traversal — reject anything with ".." segments.
+	if strings.Contains(filePath, "..") {
+		return fmt.Errorf("invalid file path")
+	}
 	rootDir, _, err := getGitPaths(ctx, workDir)
 	if err != nil {
 		return err
 	}
 
-	targetRef := resolveCheckpointRef(checkpointID)
+	targetRef, err := resolveCheckpointRef(checkpointID)
+	if err != nil {
+		return err
+	}
 
-	// Resolve short ID to full ref if needed
+	// Resolve short ID to full ref if needed.
 	if !strings.HasPrefix(targetRef, "refs/") && len(targetRef) != 40 {
 		refs, refErr := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname)", fmt.Sprintf("refs/staypoint/checkpoints/*/%s", targetRef))
 		if refErr == nil && len(strings.TrimSpace(refs)) > 0 {
