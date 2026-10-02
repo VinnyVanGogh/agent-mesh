@@ -105,6 +105,7 @@ func ExecuteTransition(db *sql.DB, taskID, from, to, actorID string) error {
 
 	fromCopy, toCopy := from, to
 	_ = LogEvent(db, taskID, actorID, AuditStateTransition, &fromCopy, &toCopy, nil)
+	shadowVote(taskID, from, to)
 	return nil
 }
 
