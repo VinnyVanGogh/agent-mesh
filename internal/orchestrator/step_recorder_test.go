@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 func collectPublished(t *testing.T) (PublishFunc, *[]string) {
@@ -303,6 +304,86 @@ func TestStepRecorder_RouteEmitsStep(t *testing.T) {
 	}
 	if s.Status != "done" {
 		t.Errorf("expected status done, got %q", s.Status)
+	}
+}
+
+// TestStepRecorder_WakeStartedAtIsOwnTime verifies that EmitWake records its own
+// start time, not r.startedAt (the run creation time). This ensures the wake step's
+// StartedAt is not anchored to a moment before the step actually executed.
+func TestStepRecorder_WakeStartedAtIsOwnTime(t *testing.T) {
+	var mu sync.Mutex
+	var steps []RunStep
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				steps = append(steps, s)
+				mu.Unlock()
+			}
+		}
+	}
+
+	before := time.Now().UTC()
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+	// Pause briefly so run creation time (r.startedAt) is measurably before the wake.
+	time.Sleep(2 * time.Millisecond)
+	r.EmitWake("issue_assigned")
+	after := time.Now().UTC()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(steps) == 0 {
+		t.Fatal("no run.step published")
+	}
+	s := steps[0]
+	if s.StartedAt == "" {
+		t.Fatal("StartedAt must not be empty")
+	}
+	ts, err := time.Parse(time.RFC3339Nano, s.StartedAt)
+	if err != nil {
+		t.Fatalf("StartedAt %q not parseable: %v", s.StartedAt, err)
+	}
+	// The step's StartedAt must be within [before, after], not at the recorder's creation.
+	if ts.Before(before) || ts.After(after) {
+		t.Errorf("StartedAt %v not between %v and %v (wake should use its own time, not r.startedAt)", ts, before, after)
+	}
+}
+
+// TestStepRecorder_RouteStartedAtIsOwnTime verifies the same property for EmitRoute.
+func TestStepRecorder_RouteStartedAtIsOwnTime(t *testing.T) {
+	var mu sync.Mutex
+	var steps []RunStep
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				steps = append(steps, s)
+				mu.Unlock()
+			}
+		}
+	}
+
+	before := time.Now().UTC()
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+	time.Sleep(2 * time.Millisecond)
+	r.EmitRoute("Ran on Claude Opus", "")
+	after := time.Now().UTC()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(steps) == 0 {
+		t.Fatal("no run.step published")
+	}
+	s := steps[0]
+	if s.StartedAt == "" {
+		t.Fatal("StartedAt must not be empty")
+	}
+	ts, err := time.Parse(time.RFC3339Nano, s.StartedAt)
+	if err != nil {
+		t.Fatalf("StartedAt %q not parseable: %v", s.StartedAt, err)
+	}
+	if ts.Before(before) || ts.After(after) {
+		t.Errorf("StartedAt %v not between %v and %v", ts, before, after)
 	}
 }
 

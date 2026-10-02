@@ -139,7 +139,7 @@ func (r *StepRecorder) EmitWake(reason string) {
 		Title:     "Woke up",
 		Body:      reason,
 		Status:    "done",
-		StartedAt: r.startedAt.Format(time.RFC3339Nano),
+		StartedAt: now,
 		EndedAt:   &now,
 	}
 	r.persist(step)
@@ -163,7 +163,7 @@ func (r *StepRecorder) EmitRoute(title, body string) {
 		Title:     title,
 		Body:      body,
 		Status:    "done",
-		StartedAt: r.startedAt.Format(time.RFC3339Nano),
+		StartedAt: now,
 		EndedAt:   &now,
 	}
 	r.persist(step)

@@ -6606,9 +6606,11 @@ function renderDiffPane(container, task, checkpoints, diffData) {
 // ── Run-step timeline helpers ──────────────────────────────
 
 const STEP_KIND_ICON = {
+  wake:       '⏰',
   route:      '🔀',
   think:      '🧠',
   run:        '⚙️',
+  read:       '📖',
   edit:       '✏️',
   checkpoint: '📌',
   state:      '💾',
