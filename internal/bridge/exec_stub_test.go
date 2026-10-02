@@ -5,19 +5,53 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
 
-// stubEnv isolates HOME and PATH so that ssh/scp/rsync/pbcopy/open resolve to
-// fake shell scripts that record their argv into a log file instead of
-// touching the network, the clipboard, or the real user home.
+// stubbedTools are replaced by fake shell scripts so tests never touch the
+// network, the clipboard, or a browser.
+var stubbedTools = []string{"ssh", "scp", "rsync", "pbcopy", "open"}
+
+// sharedStubDir holds one script per tool, written and executed once in
+// TestMain. Fresh executables can take seconds to launch on macOS the first
+// time (they get scanned), which would trip ProbeSSH's 2s default timeout, so
+// each test reuses these warmed scripts and picks behaviour via STUB_<TOOL>.
+var sharedStubDir string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "bridge-stubs-")
+	if err != nil {
+		panic(err)
+	}
+	for _, name := range stubbedTools {
+		script := "#!/bin/sh\necho \"" + name + " $*\" >> \"$STUB_LOG\"\neval \"${" + stubVar(name) + ":-exit 0}\"\n"
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(script), 0755); err != nil {
+			panic(err)
+		}
+		warm := exec.Command(path)
+		warm.Env = []string{"STUB_LOG=/dev/null"}
+		_ = warm.Run()
+	}
+	sharedStubDir = dir
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+func stubVar(name string) string {
+	return "STUB_" + strings.ToUpper(name)
+}
+
+// stubEnv isolates HOME and PATH so that the stubbed tools resolve to the
+// shared fake scripts, which record their argv into a per-test log file.
 type stubEnv struct {
 	t       *testing.T
 	home    string
-	binDir  string
 	logPath string
 }
 
@@ -27,28 +61,25 @@ func newStubEnv(t *testing.T) *stubEnv {
 	env := &stubEnv{
 		t:       t,
 		home:    filepath.Join(root, "home"),
-		binDir:  filepath.Join(root, "bin"),
 		logPath: filepath.Join(root, "calls.log"),
 	}
-	for _, d := range []string{env.home, env.binDir} {
-		if err := os.MkdirAll(d, 0755); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.MkdirAll(env.home, 0755); err != nil {
+		t.Fatal(err)
 	}
 	t.Setenv("HOME", env.home)
-	t.Setenv("PATH", env.binDir)
+	t.Setenv("PATH", sharedStubDir)
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("STUB_LOG", env.logPath)
+	for _, name := range stubbedTools {
+		t.Setenv(stubVar(name), "exit 0")
+	}
 	return env
 }
 
-// stub installs a fake executable. body runs after the argv has been logged.
+// stub sets the shell snippet a fake tool evals after logging its argv.
 func (e *stubEnv) stub(name, body string) {
 	e.t.Helper()
-	script := "#!/bin/sh\necho \"" + name + " $*\" >> \"$STUB_LOG\"\n" + body + "\n"
-	if err := os.WriteFile(filepath.Join(e.binDir, name), []byte(script), 0755); err != nil {
-		e.t.Fatal(err)
-	}
+	e.t.Setenv(stubVar(name), body)
 }
 
 func (e *stubEnv) calls() []string {
@@ -678,9 +709,11 @@ func TestFindRecentDesktopScreenshot_PicksNewestMatching(t *testing.T) {
 
 func TestCopyStringToClipboard(t *testing.T) {
 	env := newStubEnv(t)
+	t.Setenv("PATH", t.TempDir())
 	if err := copyStringToClipboard("x"); err != nil {
 		t.Errorf("missing pbcopy should be a no-op, got %v", err)
 	}
+	t.Setenv("PATH", sharedStubDir)
 	env.stub("pbcopy", `read -r line; echo "pbcopy-stdin $line" >> "$STUB_LOG"`)
 	if err := copyStringToClipboard("hello world"); err != nil {
 		t.Fatalf("copyStringToClipboard: %v", err)
