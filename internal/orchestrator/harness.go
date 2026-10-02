@@ -89,6 +89,9 @@ type RunResult struct {
 type WorktreeManagerIface interface {
 	CreateContext(ctx context.Context, taskID, sessionID string) (string, error)
 	PruneContext(ctx context.Context, taskID string) error
+	// PruneWorktreeDirContext removes the worktree directory but keeps the branch
+	// so committed work remains reachable after the run ends.
+	PruneWorktreeDirContext(ctx context.Context, taskID string) error
 }
 
 // Harness orchestrates an autonomous single-task agent run.
@@ -210,7 +213,7 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		return nil, fmt.Errorf("create worktree: %w", err)
 	}
 	defer func() {
-		if pruneErr := wm.PruneContext(context.Background(), taskID); pruneErr != nil {
+		if pruneErr := wm.PruneWorktreeDirContext(context.Background(), taskID); pruneErr != nil {
 			slog.Warn("worktree prune failed", slog.String("task", taskID), slog.Any("error", pruneErr))
 		}
 	}()
@@ -311,8 +314,8 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	// run with a non-empty diff can never reach in_review (STA-391).
 	if result.DiffStat != "" && result.Disposition == "" {
 		if _, err := h.DB.ExecContext(cleanCtx,
-			`INSERT INTO task_work_products (task_id, product_type, reference) VALUES (?, 'workspace_file', ?)`,
-			taskID, ".worktrees/"+taskID,
+			`INSERT INTO task_work_products (task_id, product_type, reference) VALUES (?, 'branch', ?)`,
+			taskID, "staypoint/"+taskID,
 		); err != nil {
 			slog.Warn("register work product failed", slog.String("task", taskID), slog.Any("error", err))
 		}

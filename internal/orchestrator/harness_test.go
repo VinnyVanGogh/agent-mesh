@@ -774,3 +774,86 @@ func (n *noopWorktreeManager) CreateContext(_ context.Context, _ string, _ strin
 	return os.TempDir(), nil
 }
 func (n *noopWorktreeManager) PruneContext(_ context.Context, _ string) error { return nil }
+func (n *noopWorktreeManager) PruneWorktreeDirContext(_ context.Context, _ string) error {
+	return nil
+}
+
+// TestRun_BranchSurvivesAfterRun is the STA-399 regression test.
+// The harness must NOT delete the task branch on run teardown so that committed
+// work stays reachable for reviewers after the worktree directory is removed.
+func TestRun_BranchSurvivesAfterRun(t *testing.T) {
+	activeClaims.Store(0)
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	taskID := "sta399-task"
+	db := openTestDB(t)
+	insertTask(t, db, taskID, repoDir)
+
+	h := &Harness{
+		DB:          db,
+		RepoRoot:    repoDir,
+		WM:          workspace.NewWorktreeManager(repoDir, db),
+		Interceptor: NewInterceptor(db),
+	}
+	h.Interceptor.Guards = []GuardFunc{h.Interceptor.checkWorkProducts}
+
+	result, err := h.Run(context.Background(), taskID, RunConfig{
+		MaxTurns:    2,
+		AgentID:     "tester",
+		MaxWallclock: 30 * time.Second,
+		RunAdapter: func(_ context.Context, cwd, _ string, _, _ []string, stdout, _ io.Writer) error {
+			// Write, stage, and commit a file so DiffStat is non-empty.
+			_ = os.WriteFile(filepath.Join(cwd, "DOGFOOD.txt"), []byte("dogfood\n"), 0o644)
+			for _, args := range [][]string{
+				{"git", "add", "DOGFOOD.txt"},
+				{"git", "commit", "-m", "dogfood sta399"},
+			} {
+				c := exec.Command(args[0], args[1:]...)
+				c.Dir = cwd
+				if out, cmdErr := c.CombinedOutput(); cmdErr != nil {
+					return fmt.Errorf("git %v: %w\n%s", args, cmdErr, out)
+				}
+			}
+			_, _ = fmt.Fprintf(stdout, "work done\n%s\n", taskCompleteMarker)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Disposition != "in_review" {
+		t.Fatalf("expected in_review, got %q (diagnostic: %s)", result.Disposition, result.DiagnosticMsg)
+	}
+
+	branch := "staypoint/" + taskID
+
+	// Worktree directory must be gone.
+	if _, statErr := os.Stat(filepath.Join(repoDir, ".worktrees", taskID)); !os.IsNotExist(statErr) {
+		t.Errorf("worktree dir must be removed after run teardown")
+	}
+
+	// Branch must still exist.
+	cmd := exec.Command("git", "branch", "--list", branch)
+	cmd.Dir = repoDir
+	out, _ := cmd.CombinedOutput()
+	if !strings.Contains(string(out), branch) {
+		t.Fatalf("branch %q must survive run teardown, but git branch --list shows: %q", branch, string(out))
+	}
+
+	// Dogfood commit must be reachable from the branch.
+	cmd = exec.Command("git", "log", "--oneline", branch)
+	cmd.Dir = repoDir
+	out, _ = cmd.CombinedOutput()
+	if !strings.Contains(string(out), "dogfood sta399") {
+		t.Fatalf("dogfood commit not reachable from %q; git log output: %q", branch, string(out))
+	}
+
+	// Work product reference must be the branch, not the worktree path.
+	var ref string
+	_ = db.QueryRow(`SELECT reference FROM task_work_products WHERE task_id=?`, taskID).Scan(&ref)
+	if ref != branch {
+		t.Errorf("work product reference = %q, want %q", ref, branch)
+	}
+}

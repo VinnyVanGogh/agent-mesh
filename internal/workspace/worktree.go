@@ -76,9 +76,22 @@ func (w *WorktreeManager) Prune(taskID string) error {
 }
 
 // PruneContext is the context-aware version of Prune.
+// It removes the worktree directory AND deletes the branch.
+// Use this for orphan sweep and stale-worktree recovery only.
+// For normal run teardown use PruneWorktreeDirContext to preserve the branch.
 func (w *WorktreeManager) PruneContext(ctx context.Context, taskID string) error {
-	wtPath := filepath.Join(w.RepoRoot, ".worktrees", taskID)
+	if err := w.PruneWorktreeDirContext(ctx, taskID); err != nil {
+		return err
+	}
 	branch := fmt.Sprintf("staypoint/%s", taskID)
+	_, _ = runGit(ctx, w.RepoRoot, "branch", "-D", branch)
+	return nil
+}
+
+// PruneWorktreeDirContext removes the worktree directory for the given task
+// but leaves the branch intact so committed work remains reachable.
+func (w *WorktreeManager) PruneWorktreeDirContext(ctx context.Context, taskID string) error {
+	wtPath := filepath.Join(w.RepoRoot, ".worktrees", taskID)
 
 	if _, err := runGit(ctx, w.RepoRoot, "worktree", "remove", "--force", wtPath); err != nil {
 		// If the path still exists after the command, remove it forcibly.
@@ -90,9 +103,6 @@ func (w *WorktreeManager) PruneContext(ctx context.Context, taskID string) error
 	} else {
 		_ = os.RemoveAll(wtPath) // belt-and-suspenders
 	}
-
-	// Delete branch (best-effort).
-	_, _ = runGit(ctx, w.RepoRoot, "branch", "-D", branch)
 	return nil
 }
 
