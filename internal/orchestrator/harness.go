@@ -197,12 +197,20 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		repoPath = h.RepoRoot
 	}
 
-	wtPath, err := h.WM.CreateContext(ctx, taskID, runID)
+	// When the task names a specific repo that differs from the harness default,
+	// build a fresh WorktreeManager for that repo so worktrees land in the right
+	// place and never touch h.RepoRoot.
+	wm := h.WM
+	if repoPath != h.RepoRoot {
+		wm = workspace.NewWorktreeManager(repoPath, h.DB)
+	}
+
+	wtPath, err := wm.CreateContext(ctx, taskID, runID)
 	if err != nil {
 		return nil, fmt.Errorf("create worktree: %w", err)
 	}
 	defer func() {
-		if pruneErr := h.WM.PruneContext(context.Background(), taskID); pruneErr != nil {
+		if pruneErr := wm.PruneContext(context.Background(), taskID); pruneErr != nil {
 			slog.Warn("worktree prune failed", slog.String("task", taskID), slog.Any("error", pruneErr))
 		}
 	}()

@@ -560,6 +560,48 @@ func TestBuildDiagnostic(t *testing.T) {
 	}
 }
 
+// TestRun_PerTaskRepoOverridesHarnessRoot verifies that when a task has its own
+// repo_path set (e.g. the actual agent-mesh repo), Run creates the worktree
+// there even when h.RepoRoot is a non-git directory (like the billing folder).
+// This is the regression test for STA-380: harness was using work_repo_root
+// (~/Documents/dev/mansol) which is not a git repo, causing every wake to fail.
+func TestRun_PerTaskRepoOverridesHarnessRoot(t *testing.T) {
+	activeClaims.Store(0)
+
+	// taskRepo is a real git repo — the worktree must land here.
+	taskRepo := t.TempDir()
+	initGitRepo(t, taskRepo)
+
+	// harnessRoot is a plain directory with no git history — proxy for mansol.
+	harnessRoot := t.TempDir()
+
+	db := openTestDB(t)
+	insertTask(t, db, "per-repo-task", taskRepo) // task.repo_path = taskRepo
+	_, _ = db.Exec(`INSERT INTO task_work_products (task_id, product_type, reference) VALUES ('per-repo-task', 'workspace_file', '.worktrees/per-repo-task')`)
+
+	h := &Harness{
+		DB:          db,
+		RepoRoot:    harnessRoot, // non-git "mansol" proxy
+		WM:          workspace.NewWorktreeManager(harnessRoot, db),
+		Interceptor: NewInterceptor(db),
+	}
+	h.Interceptor.Guards = []GuardFunc{h.Interceptor.checkWorkProducts}
+
+	_, err := h.Run(context.Background(), "per-repo-task", RunConfig{
+		MaxTurns:    1,
+		AgentID:     "tester",
+		MaxWallclock: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Run should succeed when task has its own repo_path; got: %v", err)
+	}
+
+	// harnessRoot must NOT have been touched — no .worktrees dir.
+	if _, statErr := os.Stat(filepath.Join(harnessRoot, ".worktrees")); !os.IsNotExist(statErr) {
+		t.Errorf("harnessRoot %q must not have .worktrees dir; got stat err: %v", harnessRoot, statErr)
+	}
+}
+
 // ---- Helpers ----------------------------------------------------------------
 
 // runWithNoAdapter executes the harness lifecycle with a no-op adapter:
