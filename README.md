@@ -365,6 +365,15 @@ eval "$(staypoint init --shell)"
 
 This registers the `ai` command wrapper, auto-routing evaluations, fast statusline rendering, and terminal-safe execution.
 
+### 3. Web UI end-to-end tests
+
+`scripts/ui-e2e.sh` drives the web UI in headless Chromium (Playwright) against a throwaway daemon on a temp database. It never touches `~/.staypoint` or the launchd daemon. Needs Go, Node and Python 3. See [`tests/ui/README.md`](tests/ui/README.md).
+
+```bash
+scripts/ui-e2e.sh                 # whole suite
+scripts/ui-e2e.sh -g "interaction" # one area
+```
+
 ---
 
 ## Configuration

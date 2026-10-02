@@ -1,0 +1,11 @@
+{
+  "name": "staypoint-ui-e2e",
+  "private": true,
+  "description": "Playwright end-to-end suite for the StayPoint web UI (STA-353). Run via scripts/ui-e2e.sh.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}
