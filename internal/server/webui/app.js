@@ -403,6 +403,29 @@ function handleEvent(evt) {
     }
     return;
   }
+  if (type === 'run.stats' && evt.data) {
+    const stats = evt.data;
+    const tid = stats.task_id;
+    if (tid) {
+      if (!state.tasks[tid]) state.tasks[tid] = {};
+      if (stats.spent_usd != null) state.tasks[tid].spent_usd = stats.spent_usd;
+      if (stats.spent_tokens != null) state.tasks[tid].spent_tokens = stats.spent_tokens;
+    }
+    if (tid && state.openDetailTaskId === tid) {
+      const statsBar = document.getElementById(`timeline-stats-${tid}`);
+      if (statsBar) {
+        const task = state.tasks[tid] || {};
+        const runSteps = task.runSteps || [];
+        const createdAtMs = task.created_at ? new Date(task.created_at).getTime() : null;
+        const lastStepAt = runSteps.length ? new Date(runSteps[runSteps.length - 1].created_at).getTime() : null;
+        const elapsedMs = lastStepAt && createdAtMs ? lastStepAt - createdAtMs : (createdAtMs ? Date.now() - createdAtMs : null);
+        const isStuck = runSteps.length > 0 && (Date.now() - (lastStepAt || 0)) > 5 * 60 * 1000 && task.status !== 'done';
+        statsBar.innerHTML = '';
+        statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, isStuck));
+      }
+    }
+    return;
+  }
   if ((type.startsWith('task_') || type.startsWith('task.')) && evt.data) {
     const t = evt.data;
     if (t.id) state.tasks[t.id] = Object.assign(state.tasks[t.id] || {}, t);
