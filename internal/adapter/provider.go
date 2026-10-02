@@ -62,10 +62,12 @@ type StreamDelta struct {
 	Text      string    `json:"text,omitempty"`
 	ToolName  string    `json:"tool_name,omitempty"`
 	ToolID    string    `json:"tool_id,omitempty"`
-	Status    string    `json:"status,omitempty"`
-	IsError   bool      `json:"is_error,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	Usage     *Usage    `json:"usage,omitempty"`
+	// ToolInput is the raw JSON input object for tool_use deltas.
+	ToolInput string `json:"tool_input,omitempty"`
+	Status    string `json:"status,omitempty"`
+	IsError   bool   `json:"is_error,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Usage     *Usage `json:"usage,omitempty"`
 	// Raw is the provider event type, kept for DeltaOther and debugging.
 	Raw string `json:"raw,omitempty"`
 }

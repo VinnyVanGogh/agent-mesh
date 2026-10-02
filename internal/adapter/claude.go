@@ -33,13 +33,14 @@ type claudeUsage struct {
 }
 
 type claudeContent struct {
-	Type      string `json:"type"`
-	Text      string `json:"text"`
-	Thinking  string `json:"thinking"`
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	ToolUseID string `json:"tool_use_id"`
-	IsError   bool   `json:"is_error"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text"`
+	Thinking  string          `json:"thinking"`
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Input     json.RawMessage `json:"input"`
+	ToolUseID string          `json:"tool_use_id"`
+	IsError   bool            `json:"is_error"`
 }
 
 type claudeEvent struct {
@@ -90,6 +91,9 @@ func (ClaudeAdapter) ParseStreamDelta(line []byte) ([]StreamDelta, error) {
 				d.Kind, d.Text = DeltaThinking, b.Thinking
 			case "tool_use":
 				d.Kind, d.ToolName, d.ToolID = DeltaToolUse, b.Name, b.ID
+				if len(b.Input) > 0 {
+					d.ToolInput = string(b.Input)
+				}
 			case "tool_result":
 				d.Kind, d.ToolID, d.IsError = DeltaToolResult, b.ToolUseID, b.IsError
 			default:
