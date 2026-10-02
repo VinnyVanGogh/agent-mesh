@@ -38,6 +38,13 @@ type UndoOptions struct {
 	DisableSafetyCP bool   // If true, do not create pre-undo snapshot (default false = safety enabled)
 }
 
+// FileDiffStat holds per-file change counts between a checkpoint and the working tree.
+type FileDiffStat struct {
+	Path    string `json:"path"`
+	Added   int    `json:"added"`
+	Removed int    `json:"removed"`
+}
+
 // UndoResult describes the changes rolled back.
 type UndoResult struct {
 	RestoredTo          Checkpoint  `json:"restored_to"`
