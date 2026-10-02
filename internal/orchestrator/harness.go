@@ -60,6 +60,9 @@ type RunConfig struct {
 	// SkipPermissions forwards --dangerously-skip-permissions to the adapter.
 	// Opt-in only; never set by default.
 	SkipPermissions bool
+	// SkipGitPreflight disables the git fetch/dirty/fast-forward pre-flight check.
+	// For tests that run in a non-git directory; never set in production.
+	SkipGitPreflight bool
 	// AgentID tags the checkout for audit.
 	AgentID string
 	// Provider selects the adapter chain entry point. Empty = auto-resolve.
@@ -301,7 +304,8 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 
 	// Git pre-flight: fetch, dirty check, fast-forward.
 	// A failure is logged as a timeline comment and blocks the run.
-	{
+	// Skipped when cfg.SkipGitPreflight is true (tests running in a non-git dir).
+	if !cfg.SkipGitPreflight {
 		gfCtx, gfCancel := context.WithTimeout(ctx, 60*time.Second)
 		gfResult, gfErr := gitgate.PreFlight(gfCtx, wtPath, "main")
 		gfCancel()
@@ -338,7 +342,7 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 			)
 			return result, nil
 		}
-	}
+	} // end git preflight block
 
 	// Clear stale run control flags from previous runs.
 	if cfg.RunControl != nil {

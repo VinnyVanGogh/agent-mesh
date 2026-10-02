@@ -368,12 +368,13 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 		// in-flight harness work; the dispatcher's Drain() provides the graceful
 		// drain window during shutdown.
 		result, runErr := h.Run(context.Background(), taskID, orchestrator.RunConfig{
-			AgentID:      agentID,
-			WakeReason:   reason,
-			RunAdapter:   adapterFn,
-			StepRecorder: sr,
-			ParseDelta:   parseDelta,
-			RunControl:   orchestrator.GlobalRunControl,
+			AgentID:          agentID,
+			WakeReason:       reason,
+			RunAdapter:       adapterFn,
+			StepRecorder:     sr,
+			ParseDelta:       parseDelta,
+			RunControl:       orchestrator.GlobalRunControl,
+			SkipGitPreflight: adapterOverride != nil,
 		})
 		if runErr != nil {
 			slog.Error("harness run failed", slog.String("task", taskID), slog.Any("error", runErr))
