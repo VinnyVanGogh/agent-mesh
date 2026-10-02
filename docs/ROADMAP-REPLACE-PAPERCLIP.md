@@ -7,7 +7,7 @@
 
 ## Design Thesis (from STA-200/STA-201)
 
-StayPoint's performance edge over Paperclip comes from **lean context**: task + repo state + minimal harness ≈ ≤4,000 tokens. Paperclip injects heartbeat rules, skill catalogs, and per-agent instruction files before the agent sees the task, causing "lost in the middle" degradation. StayPoint enforces agent behavior in **platform code** (disposition checks, DoD gate, interaction card schema, governance tables), not in prompt boilerplate. This means StayPoint has no concept of "hiring an agent with instructions" — any adapter run on any task gets the same lean context.
+StayPoint's performance edge over Paperclip comes from **lean context**: task + repo state + minimal harness ≈ ≤4,000 tokens. Paperclip injects heartbeat rules, skill catalogs, and per-agent instruction files before the agent sees the task, causing "lost in the middle" degradation. StayPoint enforces agent behavior in **platform code** (disposition checks, DoD gate, interaction card schema, governance tables), not in prompt boilerplate. Per-agent instruction files will exist but stay minimal — roughly 1-2 lines ("This is your job. This is your goal.") — the heavy behavioral weight lives in platform code, not in prompt injection.
 
 ---
 
@@ -132,16 +132,15 @@ Estimated time from now: **~3 weeks** (M0 ≈ 1 week remaining + M1 ≈ 1 week +
 
 ### M4 · Adapter status dashboard — M — post-dogfood
 
-StayPoint has no "agents with roles and instructions" — it has adapters (claude, gemini, codex) configured to run tasks. The lean-prompt thesis (STA-200/STA-201) is that platform code — disposition checks, governance tables, DoD gate, interaction schema — replaces per-agent instruction injection. There is nothing to "re-hire."
+StayPoint runs adapters (claude, gemini, codex), not "hired agents with instruction stacks." Per-adapter instruction files will exist but stay minimal — 1-2 lines of job + goal. Platform code (disposition checks, governance tables, DoD gate, interaction schema) carries the behavioral weight. The lean-prompt thesis (STA-200/STA-201) holds: context ≤4k, no skill catalog injection, no heartbeat boilerplate.
 
-What to build instead:
+What to build:
 
 - `GET /api/adapters` — lists configured adapters and their current load (active task, last run, last error)
 - Per-adapter task filter: `GET /api/tasks?adapter={claude|gemini|...}`
 - Adapter status cards in web UI (active task, last run timestamp, quota remaining)
 - Per-project adapter preference in config (`staypoint.toml`: `[project.STA] default_adapter = "claude"`)
-
-_No AGENTS.md, no role config, no hiring. Platform enforces discipline in code._
+- Per-adapter minimal instruction file path in config (points to a 1-2 line `.md` defining the adapter's role)
 
 ---
 
@@ -191,7 +190,7 @@ When M0–M6 pass a Board acceptance test:
 | R-03 | Wake-on-assign races with manual checkout: two agents claim the same task | M | Existing concurrency cap (max 1 active claim) prevents double-run; still add idempotency key on wake |
 | R-04 | Quota flip regression (STA-283) not fully resolved before dogfood | M | STA-283 must be `done` before M3 merges; add checklist gate |
 | R-05 | Clean-start cuts off Board from historical STA context | M | Keep Paperclip URL in bookmark bar; add a pinned comment on STA-288 with the archive link |
-| R-06 | CoS and engineers need re-hiring in StayPoint with correct instructions | M | M4 covers this; CoS instructions are in `~/.paperclip/…/AGENTS.md` — port verbatim |
+| R-06 | Per-adapter minimal instruction files need to be authored and wired before cutover | M | M4 covers this; files are 1-2 lines, stored at path from `staypoint.toml`; platform code carries the rest |
 | R-07 | STA-289 scope creep: micro-checkpoints become a large streaming infrastructure rewrite | M | Scope strictly to emit + display; no persistence of step history beyond in-memory SSE buffer initially |
 
 ---
