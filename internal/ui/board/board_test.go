@@ -233,8 +233,14 @@ func TestBoard_ThreadViewAndComments(t *testing.T) {
 	if len(m.activeProducts) != 1 {
 		t.Errorf("expected 1 work product, got %d", len(m.activeProducts))
 	}
-	if len(m.activeActivity) != 1 {
-		t.Errorf("expected 1 activity log entry, got %d", len(m.activeActivity))
+	// AddTaskComment logs a comment_added event per comment (STA-358), so the
+	// thread carries 2 comment_added entries plus the explicit checkpoint.
+	eventCounts := map[string]int{}
+	for _, a := range m.activeActivity {
+		eventCounts[a.EventType]++
+	}
+	if len(m.activeActivity) != 3 || eventCounts["comment_added"] != 2 || eventCounts["checkpoint"] != 1 {
+		t.Errorf("expected 2 comment_added + 1 checkpoint activity entries, got %d entries: %v", len(m.activeActivity), eventCounts)
 	}
 
 	// View output verification
