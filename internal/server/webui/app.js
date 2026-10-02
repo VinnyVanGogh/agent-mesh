@@ -358,11 +358,11 @@ function handleEvent(evt) {
     }
     return;
   }
-  if (type.startsWith('task.') && evt.data) {
+  if ((type.startsWith('task_') || type.startsWith('task.')) && evt.data) {
     const t = evt.data;
     if (t.id) state.tasks[t.id] = Object.assign(state.tasks[t.id] || {}, t);
     refreshFleetData();
-  } else if (type.startsWith('session.') && evt.data) {
+  } else if ((type.startsWith('session_') || type.startsWith('session.')) && evt.data) {
     const s = evt.data;
     if (s.id) state.sessions[s.id] = Object.assign(state.sessions[s.id] || {}, s);
     refreshFleetData();

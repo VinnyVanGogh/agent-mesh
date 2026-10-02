@@ -371,7 +371,9 @@ func TestServer_SSE_ReconnectReplaysMissedEvents(t *testing.T) {
 
 	reader := bufio.NewReader(resp.Body)
 
-	// Helper to read one SSE message
+	// Helper to read one SSE message. Events are unnamed (no "event:" line);
+	// the full Event struct is JSON-encoded in the data field so we read
+	// evt.type from JSON.parse(data).type to match the new writeSSEEvent format.
 	readEvent := func() (id int64, eventType, data string) {
 		for {
 			line, err := reader.ReadString('\n')
@@ -381,11 +383,16 @@ func TestServer_SSE_ReconnectReplaysMissedEvents(t *testing.T) {
 			line = strings.TrimSpace(line)
 			if strings.HasPrefix(line, "id:") {
 				fmt.Sscanf(strings.TrimSpace(strings.TrimPrefix(line, "id:")), "%d", &id)
-			} else if strings.HasPrefix(line, "event:") {
-				eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
 			} else if strings.HasPrefix(line, "data:") {
 				data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 			} else if line == "" && id > 0 {
+				// Parse type from the JSON-encoded Event struct in data.
+				var env struct {
+					Type string `json:"type"`
+				}
+				if err := json.Unmarshal([]byte(data), &env); err == nil {
+					eventType = env.Type
+				}
 				return id, eventType, data
 			}
 		}
