@@ -435,3 +435,151 @@ func (h *TasksHandler) SetStage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+
+// ListInteractions handles GET /api/tasks/{id}/interactions
+func (h *TasksHandler) ListInteractions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+
+	interactions, err := context.ListInteractions(h.db, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if interactions == nil {
+		interactions = []context.TaskInteraction{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"interactions": interactions,
+	})
+}
+
+// CreateInteraction handles POST /api/tasks/{id}/interactions
+func (h *TasksHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+
+	var req struct {
+		Kind           string `json:"kind"`
+		Payload        string `json:"payload"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	req.Kind = strings.TrimSpace(req.Kind)
+	if req.Kind == "" {
+		writeError(w, http.StatusBadRequest, "interaction kind is required")
+		return
+	}
+	if strings.TrimSpace(req.Payload) == "" {
+		writeError(w, http.StatusBadRequest, "interaction payload is required")
+		return
+	}
+
+	in := &context.TaskInteraction{
+		TaskID:          id,
+		InteractionKind: req.Kind,
+		Payload:         req.Payload,
+		IdempotencyKey:  req.IdempotencyKey,
+	}
+
+	created, err := context.CreateInteraction(h.db, in)
+	if err != nil {
+		switch err {
+		case context.ErrInvalidInteractionKind, context.ErrInvalidPayload:
+			writeError(w, http.StatusBadRequest, err.Error())
+		case context.ErrStaleDocumentRevision, context.ErrDocumentNotFound:
+			writeError(w, http.StatusConflict, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	if h.hub != nil {
+		h.hub.Publish("interaction_created", map[string]any{
+			"task_id":          created.TaskID,
+			"interaction_id":   created.ID,
+			"interaction_kind": created.InteractionKind,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(created)
+}
+
+// ResolveInteraction handles POST /api/tasks/{id}/interactions/{iid}/resolve
+func (h *TasksHandler) ResolveInteraction(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	iid := r.PathValue("iid")
+	if id == "" || iid == "" {
+		writeError(w, http.StatusBadRequest, "task id and interaction id are required")
+		return
+	}
+
+	interactionID, err := strconv.Atoi(iid)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "interaction id must be an integer")
+		return
+	}
+
+	var req struct {
+		Status   string          `json:"status"`
+		Response json.RawMessage `json:"response,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	req.Status = strings.TrimSpace(req.Status)
+	if req.Status == "" {
+		writeError(w, http.StatusBadRequest, "status is required (accepted, rejected, cancelled)")
+		return
+	}
+
+	var respValue any
+	if len(req.Response) > 0 && string(req.Response) != "null" {
+		respValue = string(req.Response)
+	}
+
+	resolved, err := context.ResolveInteraction(h.db, interactionID, req.Status, respValue)
+	if err != nil {
+		switch {
+		case err == context.ErrInteractionNotFound:
+			writeError(w, http.StatusNotFound, err.Error())
+		case strings.Contains(err.Error(), "already resolved"):
+			writeError(w, http.StatusConflict, err.Error())
+		case strings.Contains(err.Error(), "invalid terminal status"):
+			writeError(w, http.StatusBadRequest, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	if h.hub != nil {
+		h.hub.Publish("interaction_resolved", map[string]any{
+			"task_id":          id,
+			"interaction_id":   resolved.ID,
+			"interaction_kind": resolved.InteractionKind,
+			"status":           resolved.Status,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resolved)
+}

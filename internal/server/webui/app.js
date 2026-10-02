@@ -6518,15 +6518,17 @@ async function openTaskPage(target, pushHistory = true) {
   const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
 
   try {
-    const [taskResp, commentsResp] = await Promise.all([
+    const [taskResp, commentsResp, interactionsResp] = await Promise.all([
       apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}`),
-      apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}/comments`).catch(() => ({ comments: [] }))
+      apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}/comments`).catch(() => ({ comments: [] })),
+      apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/interactions`).catch(() => ({ interactions: [] }))
     ]);
     const task = taskResp.task || taskResp;
     const comments = (taskResp.comments && taskResp.comments.length)
       ? taskResp.comments
       : (commentsResp?.comments || (Array.isArray(commentsResp) ? commentsResp : []));
     task.comments = comments;
+    task.interactions = interactionsResp?.interactions || [];
 
     if (task.id) state.openDetailTaskId = task.id;
 
@@ -6555,6 +6557,139 @@ async function openTaskPage(target, pushHistory = true) {
     } else if (pageContent) {
       pageContent.innerHTML = '<p style="color:var(--red);padding:2rem">Task not found or failed to load.</p>';
     }
+  }
+}
+
+// ── Interaction card renderer ─────────────────────────────
+
+function renderInteractionCards(container, taskId, interactions) {
+  for (const ix of interactions) {
+    const card = el('div', `interaction-card kind-${ix.interaction_kind || ix.interactionKind || ''}`);
+    if (ix.status !== 'pending') card.classList.add('resolved');
+
+    // Header
+    const header = el('div', 'interaction-card-header');
+    const kindRaw = ix.interaction_kind || ix.interactionKind || '';
+    const kindLabel = { request_confirmation: 'Confirmation', ask_user_questions: 'Questions', suggest_tasks: 'Suggest Tasks' }[kindRaw] || kindRaw;
+    const kindBadge = el('span', `interaction-kind-badge kind-${kindRaw}`, kindLabel);
+    header.appendChild(kindBadge);
+
+    const ts = ix.created_at || ix.createdAt || '';
+    if (ts) header.appendChild(el('span', 'panel-comment-meta', fmtDateTime(ts)));
+
+    const statusBadge = el('span', `interaction-status-badge status-${ix.status}`, ix.status || 'pending');
+    header.appendChild(statusBadge);
+    card.appendChild(header);
+
+    // Body — parse payload
+    let payload = {};
+    try { payload = JSON.parse(ix.payload || '{}'); } catch { /* ignore */ }
+
+    const body = el('div', 'interaction-card-body');
+
+    if (kindRaw === 'request_confirmation') {
+      const prompt = payload.prompt || '';
+      if (prompt) body.appendChild(el('div', 'interaction-prompt', prompt));
+      if (payload.target && payload.target.key) {
+        body.appendChild(el('div', 'interaction-target-ref',
+          `Document: ${payload.target.key} · rev ${payload.target.revisionId}`));
+      }
+    } else if (kindRaw === 'ask_user_questions') {
+      const qs = payload.questions || [];
+      if (qs.length) {
+        const qList = el('ul', 'interaction-question-list');
+        for (const q of qs) {
+          const li = document.createElement('li');
+          li.appendChild(el('div', null, q.question || q.id || ''));
+          if (q.options && q.options.length) {
+            const opts = el('div', 'interaction-question-options');
+            for (const o of q.options) opts.appendChild(el('span', 'interaction-question-opt', o));
+            li.appendChild(opts);
+          }
+          qList.appendChild(li);
+        }
+        body.appendChild(qList);
+      }
+    } else if (kindRaw === 'suggest_tasks') {
+      const tasks = payload.tasks || [];
+      if (tasks.length) {
+        const tList = el('ul', 'interaction-task-list');
+        for (const t of tasks) {
+          const li = document.createElement('li');
+          li.appendChild(el('div', 'interaction-task-title', t.title || t.id || ''));
+          if (t.description) li.appendChild(el('div', 'interaction-task-desc', t.description));
+          tList.appendChild(li);
+        }
+        body.appendChild(tList);
+      }
+    } else {
+      // Generic: show raw payload snippet
+      body.appendChild(el('div', 'interaction-prompt', ix.payload ? ix.payload.slice(0, 200) : ''));
+    }
+
+    card.appendChild(body);
+
+    // Actions — only for pending
+    if (ix.status === 'pending') {
+      const actions = el('div', 'interaction-card-actions');
+
+      const acceptBtn = el('button', 'interaction-accept-btn', 'Accept');
+      acceptBtn.addEventListener('click', async () => {
+        acceptBtn.disabled = true;
+        rejectBtn.disabled = true;
+        try {
+          await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/interactions/${ix.id}/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'accepted' }),
+          });
+          ix.status = 'accepted';
+          card.classList.add('resolved');
+          statusBadge.textContent = 'accepted';
+          statusBadge.className = 'interaction-status-badge status-accepted';
+          actions.replaceWith(el('div', 'interaction-resolved-note', '✓ Accepted'));
+        } catch (e) {
+          acceptBtn.disabled = false;
+          rejectBtn.disabled = false;
+        }
+      });
+
+      const rejectBtn = el('button', 'interaction-reject-btn', 'Reject');
+      rejectBtn.addEventListener('click', async () => {
+        acceptBtn.disabled = true;
+        rejectBtn.disabled = true;
+        try {
+          await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/interactions/${ix.id}/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'rejected' }),
+          });
+          ix.status = 'rejected';
+          card.classList.add('resolved');
+          statusBadge.textContent = 'rejected';
+          statusBadge.className = 'interaction-status-badge status-rejected';
+          actions.replaceWith(el('div', 'interaction-resolved-note', '✗ Rejected'));
+        } catch (e) {
+          acceptBtn.disabled = false;
+          rejectBtn.disabled = false;
+        }
+      });
+
+      actions.appendChild(acceptBtn);
+      actions.appendChild(rejectBtn);
+      card.appendChild(actions);
+    } else if (ix.response) {
+      let respText = '';
+      try {
+        const r = JSON.parse(ix.response);
+        respText = JSON.stringify(r, null, 2);
+      } catch { respText = ix.response; }
+      if (respText) {
+        card.appendChild(el('div', 'interaction-resolved-note', `Response: ${respText.slice(0, 120)}`));
+      }
+    }
+
+    container.appendChild(card);
   }
 }
 
@@ -6616,6 +6751,15 @@ function renderTaskPage(container, task, comments) {
     notesSection.appendChild(el('div', 'task-page-section-title', 'Notes'));
     notesSection.appendChild(mdEl(notesVal));
     main.appendChild(notesSection);
+  }
+
+  // Interaction cards (ask_user_questions, request_confirmation, suggest_tasks)
+  const interactions = task.interactions || [];
+  if (interactions.length) {
+    const interactionSection = el('div', 'task-page-section interaction-cards-section');
+    interactionSection.appendChild(el('div', 'task-page-section-title', 'Interactions'));
+    renderInteractionCards(interactionSection, task.id, interactions);
+    main.appendChild(interactionSection);
   }
 
   // Activity / comments
