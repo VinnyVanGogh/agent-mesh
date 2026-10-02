@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -680,6 +682,19 @@ func (h *TasksHandler) GetTaskCheckpoints(w http.ResponseWriter, r *http.Request
 	_ = json.NewEncoder(w).Encode(map[string]any{"checkpoints": checkpoints})
 }
 
+// taskCheckpointWorkDir returns the path to use for checkpoint operations.
+// If the task's git worktree still exists (active run), it is returned so that
+// diffs and restores target the agent's isolated tree. Otherwise the parent
+// repo path is returned with hasWorktree=false so the caller can fall back to a
+// branch-based diff instead.
+func taskCheckpointWorkDir(task *context.Task) (workDir string, hasWorktree bool) {
+	wt := filepath.Join(task.RepoPath, ".worktrees", task.ID)
+	if _, err := os.Stat(wt); err == nil {
+		return wt, true
+	}
+	return task.RepoPath, false
+}
+
 // GetTaskDiff handles GET /api/tasks/{id}/diff?checkpoint={id}
 // Returns diff stat, per-file stats, and file list between working tree and the named checkpoint.
 func (h *TasksHandler) GetTaskDiff(w http.ResponseWriter, r *http.Request) {
@@ -695,14 +710,29 @@ func (h *TasksHandler) GetTaskDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	cpID := r.URL.Query().Get("checkpoint")
 
-	stat, err := checkpoint.DiffCheckpoint(r.Context(), task.RepoPath, cpID)
-	if err != nil {
-		stat = ""
-	}
-
-	fileStats, err := checkpoint.DiffCheckpointFiles(r.Context(), task.RepoPath, cpID)
-	if err != nil {
-		fileStats = []checkpoint.FileDiffStat{}
+	workDir, hasWorktree := taskCheckpointWorkDir(task)
+	var stat string
+	var fileStats []checkpoint.FileDiffStat
+	if hasWorktree {
+		stat, err = checkpoint.DiffCheckpoint(r.Context(), workDir, cpID)
+		if err != nil {
+			stat = ""
+		}
+		fileStats, err = checkpoint.DiffCheckpointFiles(r.Context(), workDir, cpID)
+		if err != nil {
+			fileStats = []checkpoint.FileDiffStat{}
+		}
+	} else {
+		// Worktree pruned — compare checkpoint against the task branch tip.
+		branch := "staypoint/" + task.ID
+		stat, err = checkpoint.DiffCheckpointAgainstRef(r.Context(), task.RepoPath, cpID, branch)
+		if err != nil {
+			stat = ""
+		}
+		fileStats, err = checkpoint.DiffCheckpointFilesAgainstRef(r.Context(), task.RepoPath, cpID, branch)
+		if err != nil {
+			fileStats = []checkpoint.FileDiffStat{}
+		}
 	}
 
 	// Build plain file list for backwards compatibility.
@@ -745,7 +775,12 @@ func (h *TasksHandler) RestoreFileHandler(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "file_path is required")
 		return
 	}
-	if err := checkpoint.RestoreFile(r.Context(), task.RepoPath, req.CheckpointID, req.FilePath); err != nil {
+	workDir, hasWorktree := taskCheckpointWorkDir(task)
+	if !hasWorktree {
+		writeError(w, http.StatusConflict, "task worktree is no longer active; restore requires an active run")
+		return
+	}
+	if err := checkpoint.RestoreFile(r.Context(), workDir, req.CheckpointID, req.FilePath); err != nil {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("restore failed: %s", err))
 		return
 	}
@@ -772,8 +807,13 @@ func (h *TasksHandler) UndoTaskCheckpoint(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	workDir, hasWorktree := taskCheckpointWorkDir(task)
+	if !hasWorktree {
+		writeError(w, http.StatusConflict, "task worktree is no longer active; undo requires an active run")
+		return
+	}
 	result, err := checkpoint.Undo(r.Context(), checkpoint.UndoOptions{
-		WorkDir:      task.RepoPath,
+		WorkDir:      workDir,
 		CheckpointID: req.CheckpointID,
 	})
 	if err != nil {
