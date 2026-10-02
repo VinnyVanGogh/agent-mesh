@@ -349,6 +349,32 @@ function handleEvent(evt) {
   if (state.events.length > state.maxEvents) state.events.pop();
 
   const type = evt.type || '';
+  if (type === 'run.step' && evt.data) {
+    applyTimelineStep(evt.data);
+    return;
+  }
+  if (type === 'run.state' && evt.data) {
+    // Refresh task page status pill on run completion
+    const stateData = evt.data;
+    if (stateData.task_id) refreshFleetData();
+    return;
+  }
+  if (type === 'run.stats' && evt.data) {
+    const statsData = evt.data;
+    const statsBar = document.getElementById('page-timeline-stats');
+    if (statsBar && statsData) {
+      statsBar.style.display = 'flex';
+      const span = statsBar.querySelector('.tl-stat-tokens') || (() => {
+        const s = document.createElement('span');
+        s.className = 'tl-stat tl-stat-tokens';
+        statsBar.appendChild(s);
+        return s;
+      })();
+      const tok = (statsData.input_tokens || 0) + (statsData.output_tokens || 0);
+      span.textContent = `🔢 ${tok.toLocaleString()} tokens`;
+    }
+    return;
+  }
   if (type.startsWith('task.') && evt.data) {
     const t = evt.data;
     if (t.id) state.tasks[t.id] = Object.assign(state.tasks[t.id] || {}, t);
@@ -6480,6 +6506,130 @@ document.getElementById('panel-open')?.addEventListener('click', () => {
   if (state.openDetailTaskId) openTaskPage(state.openDetailTaskId);
 });
 
+// ── Run Timeline helpers ───────────────────────────────────
+
+const STEP_ICON = {
+  wake:       '🌅',
+  think:      '💭',
+  read:       '📖',
+  run:        '⚡',
+  edit:       '✏️',
+  checkpoint: '📌',
+  message:    '💬',
+  state:      '🏁',
+  stats:      '📊',
+};
+
+const STEP_STATUS_CLASS = {
+  running: 'tl-status-running',
+  done:    'tl-status-done',
+  error:   'tl-status-error',
+};
+
+function renderTimelineStep(container, step) {
+  const row = el('div', 'timeline-row');
+  row.dataset.seq = step.seq;
+  row.dataset.status = step.status;
+
+  const header = el('div', 'timeline-row-header');
+  const icon = el('span', 'tl-icon', STEP_ICON[step.kind] || '•');
+  const title = el('span', 'tl-title', step.title || step.kind);
+  const statusDot = el('span', `tl-dot ${STEP_STATUS_CLASS[step.status] || 'tl-status-done'}`);
+
+  let elapsed = '';
+  if (step.started_at && step.ended_at) {
+    const ms = new Date(step.ended_at) - new Date(step.started_at);
+    elapsed = ms < 1000 ? `${ms}ms` : `${(ms/1000).toFixed(1)}s`;
+  }
+  const time = el('span', 'tl-time', elapsed);
+
+  header.appendChild(statusDot);
+  header.appendChild(icon);
+  header.appendChild(title);
+  header.appendChild(time);
+  row.appendChild(header);
+
+  // Body (expandable)
+  if (step.body) {
+    const body = el('div', 'timeline-row-body');
+    body.textContent = step.body;
+    body.style.display = 'none';
+    row.appendChild(body);
+    header.style.cursor = 'pointer';
+    header.addEventListener('click', () => {
+      body.style.display = body.style.display === 'none' ? 'block' : 'none';
+    });
+  }
+
+  container.appendChild(row);
+  return row;
+}
+
+function updateTimelineStats(statsBar, steps) {
+  if (!steps || !steps.length) { statsBar.style.display = 'none'; return; }
+  statsBar.style.display = 'flex';
+
+  const first = steps.find(s => s.started_at);
+  const last = [...steps].reverse().find(s => s.ended_at || s.started_at);
+  let elapsedStr = '';
+  if (first && last) {
+    const end = last.ended_at || last.started_at;
+    const ms = new Date(end) - new Date(first.started_at);
+    elapsedStr = ms < 60000 ? `${(ms/1000).toFixed(1)}s` : `${(ms/60000).toFixed(1)}m`;
+  }
+  const edits = steps.filter(s => s.kind === 'edit').length;
+  const runs  = steps.filter(s => s.kind === 'run').length;
+  const errors = steps.filter(s => s.status === 'error').length;
+
+  statsBar.innerHTML = '';
+  const items = [
+    elapsedStr && `⏱ ${elapsedStr}`,
+    edits && `✏️ ${edits} edit${edits !== 1 ? 's' : ''}`,
+    runs  && `⚡ ${runs} cmd${runs !== 1 ? 's' : ''}`,
+    errors && `❌ ${errors} error${errors !== 1 ? 's' : ''}`,
+  ].filter(Boolean);
+  for (const item of items) {
+    const span = document.createElement('span');
+    span.className = 'tl-stat';
+    span.textContent = item;
+    statsBar.appendChild(span);
+  }
+}
+
+// Append or update a step in the live timeline list.
+function applyTimelineStep(step) {
+  const list = document.getElementById('page-timeline-list');
+  if (!list) return;
+  // Remove placeholder
+  const placeholder = list.querySelector('.panel-field-muted');
+  if (placeholder) placeholder.remove();
+
+  const existing = list.querySelector(`[data-seq="${step.seq}"]`);
+  if (existing) {
+    existing.dataset.status = step.status;
+    const dot = existing.querySelector('.tl-dot');
+    if (dot) dot.className = `tl-dot ${STEP_STATUS_CLASS[step.status] || 'tl-status-done'}`;
+    const bodyEl = existing.querySelector('.timeline-row-body');
+    if (bodyEl && step.body) bodyEl.textContent = step.body;
+  } else {
+    renderTimelineStep(list, step);
+  }
+
+  // Update stats
+  const statsBar = document.getElementById('page-timeline-stats');
+  if (statsBar) {
+    const allRows = [...list.querySelectorAll('.timeline-row')];
+    const synthSteps = allRows.map(r => ({
+      seq:        parseInt(r.dataset.seq),
+      kind:       r.querySelector('.tl-icon')?.textContent,
+      status:     r.dataset.status,
+      started_at: null,
+      ended_at:   null,
+    }));
+    updateTimelineStats(statsBar, synthSteps.length ? synthSteps : null);
+  }
+}
+
 // ── Full-page task view ────────────────────────────────────
 
 async function openTaskPage(target, pushHistory = true) {
@@ -6688,6 +6838,34 @@ function renderTaskPage(container, task, comments) {
   compose.appendChild(sendBtn);
   chatSection.appendChild(compose);
   main.appendChild(chatSection);
+
+  // ── Run Timeline section ──
+  const tlSection = el('div', 'task-page-section');
+  tlSection.id = 'page-timeline-section';
+  const tlTitle = el('div', 'task-page-section-title', 'Run Timeline');
+  tlSection.appendChild(tlTitle);
+
+  const statsBar = el('div', 'timeline-stats-bar');
+  statsBar.id = 'page-timeline-stats';
+  statsBar.style.display = 'none';
+  tlSection.appendChild(statsBar);
+
+  const tlList = el('div', 'timeline-list');
+  tlList.id = 'page-timeline-list';
+  tlList.appendChild(el('p', 'panel-field-muted', 'No run steps yet.'));
+  tlSection.appendChild(tlList);
+
+  main.appendChild(tlSection);
+
+  // Load existing steps
+  try {
+    const stepsResp = await apiFetch(`/api/tasks/${task.id}/run-steps`);
+    if (Array.isArray(stepsResp) && stepsResp.length > 0) {
+      tlList.innerHTML = '';
+      for (const s of stepsResp) renderTimelineStep(tlList, s);
+      updateTimelineStats(statsBar, stepsResp);
+    }
+  } catch { /* silent */ }
 
   layout.appendChild(main);
 

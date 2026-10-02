@@ -435,3 +435,71 @@ func (h *TasksHandler) SetStage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+
+// GetRunSteps handles GET /api/tasks/{id}/run-steps
+// Returns all steps for the task ordered by seq, optionally filtered by run_id.
+func (h *TasksHandler) GetRunSteps(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+	runID := r.URL.Query().Get("run_id")
+
+	var rows *sql.Rows
+	var err error
+	if runID != "" {
+		rows, err = h.db.QueryContext(r.Context(), `
+			SELECT id, run_id, task_id, seq, parent_seq, kind, title, body, status, started_at, ended_at, created_at
+			FROM run_steps WHERE task_id=? AND run_id=? ORDER BY seq ASC`, id, runID)
+	} else {
+		rows, err = h.db.QueryContext(r.Context(), `
+			SELECT id, run_id, task_id, seq, parent_seq, kind, title, body, status, started_at, ended_at, created_at
+			FROM run_steps WHERE task_id=? ORDER BY seq ASC`, id)
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to query run steps: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type RunStepRow struct {
+		ID        int64   `json:"id"`
+		RunID     string  `json:"run_id"`
+		TaskID    string  `json:"task_id"`
+		Seq       int     `json:"seq"`
+		ParentSeq *int    `json:"parent_seq,omitempty"`
+		Kind      string  `json:"kind"`
+		Title     string  `json:"title"`
+		Body      string  `json:"body,omitempty"`
+		Status    string  `json:"status"`
+		StartedAt string  `json:"started_at"`
+		EndedAt   *string `json:"ended_at,omitempty"`
+		CreatedAt string  `json:"created_at"`
+	}
+
+	var steps []RunStepRow
+	for rows.Next() {
+		var s RunStepRow
+		var parentSeq sql.NullInt64
+		var endedAt sql.NullString
+		if err := rows.Scan(&s.ID, &s.RunID, &s.TaskID, &s.Seq, &parentSeq, &s.Kind, &s.Title, &s.Body, &s.Status, &s.StartedAt, &endedAt, &s.CreatedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "scan error: "+err.Error())
+			return
+		}
+		if parentSeq.Valid {
+			v := int(parentSeq.Int64)
+			s.ParentSeq = &v
+		}
+		if endedAt.Valid {
+			s.EndedAt = &endedAt.String
+		}
+		steps = append(steps, s)
+	}
+	if steps == nil {
+		steps = []RunStepRow{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(steps)
+}

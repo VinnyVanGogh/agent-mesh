@@ -64,6 +64,14 @@ type RunConfig struct {
 	Provider string
 	// RunAdapter is the injected turn runner. Nil = skip adapter (dry-run).
 	RunAdapter AdapterRunFunc
+	// StepRecorder, if set, receives parsed stream deltas for live timeline emission.
+	// Nil disables step recording (tests, dry-runs).
+	StepRecorder *StepRecorder
+	// ParseDelta converts one raw stream line into StepDeltas. Required when
+	// StepRecorder is set. Injected to avoid import cycle (adapter → router → context → orchestrator).
+	ParseDelta func(line []byte) ([]StepDelta, error)
+	// WakeReason is forwarded to StepRecorder.EmitWake when recording is enabled.
+	WakeReason string
 }
 
 // RunResult summarises a completed autonomous run.
@@ -209,6 +217,16 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		providerEnv = append(providerEnv, "STAYPOINT_SKIP_PERMISSIONS=1")
 	}
 
+	// Emit wake step if recording is enabled.
+	sr := cfg.StepRecorder
+	if sr != nil {
+		wakeReason := cfg.WakeReason
+		if wakeReason == "" {
+			wakeReason = "run started"
+		}
+		sr.EmitWake(wakeReason)
+	}
+
 	result := &RunResult{TaskID: taskID, RunID: runID}
 
 	for turn := 0; turn < maxTurns; turn++ {
@@ -218,20 +236,28 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		}
 
 		if turn > 0 {
-			_, _ = checkpoint.CreateCheckpoint(ctx, checkpoint.CreateOptions{
+			cp, _ := checkpoint.CreateCheckpoint(ctx, checkpoint.CreateOptions{
 				WorkDir:   wtPath,
 				SessionID: runID,
 				Message:   fmt.Sprintf("turn %d %s", turn, taskID),
 			})
+			if sr != nil && cp != nil {
+				sr.EmitCheckpoint(cp.ID, fmt.Sprintf("turn %d", turn))
+			}
 		}
 
-		// Drive one adapter turn.
+		// Drive one adapter turn. Tee stdout through StepRecorder line scanner if enabled.
 		var outBuf bytes.Buffer
 		tw := &completionWriter{dst: &outBuf}
 		rawArgs := buildRawArgs(taskID, turn, cfg)
 
+		var stdout io.Writer = tw
+		if sr != nil && cfg.ParseDelta != nil {
+			stdout = &stepTeeWriter{dst: tw, rec: sr, parse: cfg.ParseDelta}
+		}
+
 		if cfg.RunAdapter != nil {
-			turnErr := cfg.RunAdapter(ctx, wtPath, cfg.Provider, rawArgs, providerEnv, tw, io.Discard)
+			turnErr := cfg.RunAdapter(ctx, wtPath, cfg.Provider, rawArgs, providerEnv, stdout, io.Discard)
 			if turnErr != nil {
 				slog.Warn("adapter turn error", slog.Int("turn", turn), slog.Any("error", turnErr))
 				_, _ = h.DB.ExecContext(ctx,
@@ -253,6 +279,10 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		}
 	}
 
+	if sr != nil {
+		sr.Close()
+	}
+
 	// Diff against pre-run checkpoint.
 	if preCP != nil {
 		if ds, err := checkpoint.DiffCheckpoint(ctx, wtPath, preCP.ID); err == nil {
@@ -271,6 +301,10 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 				result.DiagnosticMsg = diag.Message
 			}
 		}
+	}
+
+	if sr != nil {
+		sr.EmitState(result.Disposition)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -341,6 +375,31 @@ func buildRunID(agentID string) string {
 		id = "harness"
 	}
 	return id + "-" + uuid.New().String()[:8]
+}
+
+// stepTeeWriter tees all writes to dst AND feeds each newline-delimited line to StepRecorder.
+type stepTeeWriter struct {
+	dst   io.Writer
+	rec   *StepRecorder
+	parse func([]byte) ([]StepDelta, error)
+	buf   []byte
+}
+
+func (w *stepTeeWriter) Write(p []byte) (int, error) {
+	n, err := w.dst.Write(p)
+	if n > 0 {
+		w.buf = append(w.buf, p[:n]...)
+		for {
+			idx := bytes.IndexByte(w.buf, '\n')
+			if idx < 0 {
+				break
+			}
+			line := w.buf[:idx]
+			w.buf = w.buf[idx+1:]
+			w.rec.FeedRawLine(line, w.parse)
+		}
+	}
+	return n, err
 }
 
 // completionWriter wraps a Writer and sets detected=true on [[TASK_COMPLETE]].

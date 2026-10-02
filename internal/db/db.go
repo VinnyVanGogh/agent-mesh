@@ -131,6 +131,24 @@ CREATE TABLE IF NOT EXISTS activity_log (
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS run_steps (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id       TEXT NOT NULL,
+    task_id      TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    seq          INTEGER NOT NULL,
+    parent_seq   INTEGER,
+    kind         TEXT NOT NULL CHECK (kind IN ('wake','think','read','run','edit','checkpoint','message','state','stats')),
+    title        TEXT NOT NULL DEFAULT '',
+    body         TEXT NOT NULL DEFAULT '',
+    status       TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','done','error')),
+    started_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    ended_at     TEXT,
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_steps_task_seq ON run_steps (task_id, seq);
+CREATE INDEX IF NOT EXISTS idx_run_steps_run_id ON run_steps (run_id);
+
 CREATE TABLE IF NOT EXISTS wire_messages (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     channel     TEXT NOT NULL DEFAULT 'global',
@@ -602,6 +620,31 @@ var Migrations = []Migration{
 				_, _ = conn.Exec("ALTER TABLE checklist_items ADD COLUMN contract TEXT;")
 			}
 			return nil
+		},
+	},
+	{
+		Version: 10,
+		Name:    "run_steps",
+		Up: func(conn *sql.DB) error {
+			_, err := conn.Exec(`
+				CREATE TABLE IF NOT EXISTS run_steps (
+					id           INTEGER PRIMARY KEY AUTOINCREMENT,
+					run_id       TEXT NOT NULL,
+					task_id      TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+					seq          INTEGER NOT NULL,
+					parent_seq   INTEGER,
+					kind         TEXT NOT NULL CHECK (kind IN ('wake','think','read','run','edit','checkpoint','message','state','stats')),
+					title        TEXT NOT NULL DEFAULT '',
+					body         TEXT NOT NULL DEFAULT '',
+					status       TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running','done','error')),
+					started_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+					ended_at     TEXT,
+					created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				);
+				CREATE INDEX IF NOT EXISTS idx_run_steps_task_seq ON run_steps (task_id, seq);
+				CREATE INDEX IF NOT EXISTS idx_run_steps_run_id ON run_steps (run_id);
+			`)
+			return err
 		},
 	},
 }
