@@ -14,6 +14,7 @@ import (
 
 	"github.com/VinnyVanGogh/staypoint/internal/checkpoint"
 	"github.com/VinnyVanGogh/staypoint/internal/gitgate"
+	"github.com/VinnyVanGogh/staypoint/internal/logging"
 	"github.com/VinnyVanGogh/staypoint/internal/security"
 	"github.com/VinnyVanGogh/staypoint/internal/workspace"
 	"github.com/google/uuid"
@@ -21,9 +22,9 @@ import (
 
 // Sentinel errors.
 var (
-	ErrAlreadyClaimed = errors.New("task already claimed by another run")
+	ErrAlreadyClaimed = errors.New("Can't start run: this task is already checked out by another run in this session. Wait for it to finish or clear the stale checkout.")
 	ErrTaskNotFound   = errors.New("task not found")
-	ErrConcurrencyCap = errors.New("concurrent agent cap reached (max 1)")
+	ErrConcurrencyCap = errors.New("Can't start run: only one agent may run at a time and another is currently active. Try again in a moment.")
 )
 
 // Hard cap: at most one agent may hold a task claim inside this process.
@@ -181,6 +182,11 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	}
 	defer h.Release(taskID, runID)
 
+	runLog := logging.WithRunContext(
+		logging.WithComponent(slog.Default(), "harness"),
+		taskID, runID, cfg.AgentID,
+	)
+
 	maxTurns := cfg.MaxTurns
 	if maxTurns <= 0 {
 		maxTurns = 50
@@ -215,7 +221,7 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	}
 	defer func() {
 		if pruneErr := wm.PruneWorktreeDirContext(context.Background(), taskID); pruneErr != nil {
-			slog.Warn("worktree prune failed", slog.String("task", taskID), slog.Any("error", pruneErr))
+			runLog.Warn("worktree prune failed", slog.Any("error", pruneErr))
 		}
 	}()
 
@@ -256,7 +262,7 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		} else {
 			gfSummary += "ok (" + strings.Join(gfResult.Details, " | ") + ")"
 		}
-		slog.Info("git preflight", slog.String("task", taskID), slog.String("result", gfSummary))
+		runLog.Info("git preflight", slog.String("result", gfSummary))
 		_, _ = h.DB.ExecContext(ctx,
 			`INSERT INTO task_comments (task_id, author, message) VALUES (?, 'harness', ?)`,
 			taskID, gfSummary,
@@ -361,12 +367,31 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		}
 
 		if cfg.RunAdapter != nil {
-			turnErr := cfg.RunAdapter(ctx, wtPath, cfg.Provider, rawArgs, providerEnv, stdout, io.Discard)
+			var stderrBuf limitedWriter
+			turnStart := time.Now()
+			turnErr := cfg.RunAdapter(ctx, wtPath, cfg.Provider, rawArgs, providerEnv, stdout, &stderrBuf)
+			turnDuration := time.Since(turnStart)
 			if turnErr != nil {
-				slog.Warn("adapter turn error", slog.Int("turn", turn), slog.Any("error", turnErr))
+				stderrTail := stderrBuf.String()
+				exitCode := exitCodeFrom(turnErr)
+				runLog.Warn("adapter turn error",
+					slog.Int("turn", turn),
+					slog.Int("exit_code", exitCode),
+					slog.Int64("duration_ms", turnDuration.Milliseconds()),
+					slog.String("stderr_tail", truncate(stderrTail, 500)),
+					slog.Any("error", turnErr),
+				)
+				_, _ = h.DB.ExecContext(ctx,
+					`INSERT INTO run_errors (id, run_id, task_id, turn, exit_code, stderr_tail, duration_ms, model, adapter)
+					 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					uuid.NewString(), runID, taskID, turn, exitCode,
+					truncate(stderrTail, 4096),
+					turnDuration.Milliseconds(),
+					cfg.Provider, cfg.Provider,
+				)
 				_, _ = h.DB.ExecContext(ctx,
 					`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, 'adapter_failure', ?)`,
-					taskID, turnErr.Error(),
+					taskID, plainAdapterError(turnErr, exitCode, stderrTail),
 				)
 			}
 		}
@@ -413,7 +438,7 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 			`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, 'git_postflight', ?)`,
 			taskID, pfSummary,
 		)
-		slog.Info("git postflight", slog.String("task", taskID), slog.String("result", pfSummary))
+		runLog.Info("git postflight", slog.String("result", pfSummary))
 	}
 
 	// Diff against pre-run checkpoint.
@@ -435,7 +460,7 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 			`INSERT INTO task_work_products (task_id, product_type, reference) VALUES (?, 'branch', ?)`,
 			taskID, "staypoint/"+taskID,
 		); err != nil {
-			slog.Warn("register work product failed", slog.String("task", taskID), slog.Any("error", err))
+			runLog.Warn("register work product failed", slog.Any("error", err))
 		}
 	}
 
@@ -462,7 +487,7 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		`UPDATE tasks SET execution_stage=?, updated_at=? WHERE id=?`,
 		result.Disposition, now, taskID,
 	); err != nil {
-		slog.Error("persist disposition failed", slog.String("task", taskID), slog.String("disposition", result.Disposition), slog.Any("error", err))
+		runLog.Error("persist disposition failed", slog.String("disposition", result.Disposition), slog.Any("error", err))
 	}
 
 	if result.DiagnosticMsg != "" {
@@ -470,7 +495,7 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 			`INSERT INTO task_comments (task_id, author, message) VALUES (?, 'harness', ?)`,
 			taskID, result.DiagnosticMsg,
 		); err != nil {
-			slog.Warn("inject diagnostic comment failed", slog.String("task", taskID), slog.Any("error", err))
+			runLog.Warn("inject diagnostic comment failed", slog.Any("error", err))
 		}
 	}
 
@@ -478,14 +503,14 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		`UPDATE tasks SET spent_turns=spent_turns+?, spent_usd=spent_usd+?, updated_at=? WHERE id=?`,
 		result.Turns, result.SpentUSD, now, taskID,
 	); err != nil {
-		slog.Warn("persist cost failed", slog.String("task", taskID), slog.Any("error", err))
+		runLog.Warn("persist cost failed", slog.Any("error", err))
 	}
 
 	if _, err := h.DB.ExecContext(cleanCtx,
 		`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, 'run_complete', ?)`,
 		taskID, fmt.Sprintf("disposition=%s turns=%d", result.Disposition, result.Turns),
 	); err != nil {
-		slog.Warn("activity log failed", slog.String("task", taskID), slog.Any("error", err))
+		runLog.Warn("activity log failed", slog.Any("error", err))
 	}
 
 	return result, nil
