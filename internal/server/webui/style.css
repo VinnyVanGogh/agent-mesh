@@ -3179,6 +3179,8 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
 }
 .timeline-stat-warn .timeline-stat-label,
 .timeline-stat-warn .timeline-stat-val { color: var(--orange, #f97316); }
+.cmds-ok   { color: var(--green, #3fb950); }
+.cmds-fail { color: var(--red, #f85149); }
 
 .timeline-steps { display: flex; flex-direction: column; gap: 2px; }
 .timeline-empty { margin: 6px 0; font-size: 12px; }
