@@ -1041,6 +1041,9 @@ func hasBlockerCycle(db *sql.DB, taskID, targetID string) (bool, error) {
 			}
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			return false, err
+		}
 	}
 	return false, nil
 }
