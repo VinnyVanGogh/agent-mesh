@@ -687,11 +687,11 @@ document.getElementById('filter-clear')?.addEventListener('click', () => {
 });
 
 // ── Universal KPI Drill-down Navigation Helpers ───────────
-function drillDownToTasks(status, org = 'all') {
+function drillDownToTasks(status, org = 'all', project = 'all') {
   state.tsFilter = state.tsFilter || { search: '', org: 'all', project: 'all', priority: 'all', status: 'all' };
   state.tsFilter.status = status;
   state.tsFilter.org = org;
-  state.tsFilter.project = 'all';
+  state.tsFilter.project = project;
   state.tsFilter.priority = 'all';
   state.tsFilter.search = '';
 
@@ -701,7 +701,7 @@ function drillDownToTasks(status, org = 'all') {
   if (tsOrgSel) tsOrgSel.value = org;
   populateTSProjectFilter();
   const tsProjSel = document.getElementById('ts-project-filter');
-  if (tsProjSel) tsProjSel.value = 'all';
+  if (tsProjSel) tsProjSel.value = state.tsFilter.project;
   const tsPriSel = document.getElementById('ts-priority-filter');
   if (tsPriSel) tsPriSel.value = 'all';
   const tsSearch = document.getElementById('ts-search-input');
@@ -2037,6 +2037,21 @@ function createProjectCard(p, globalStatusFilter) {
   }
 
   renderTaskList();
+
+  // Clicking the card opens the project: the Task Status page filtered to this
+  // org + project. Inner controls stopPropagation so they keep their own action.
+  const openProject = () => drillDownToTasks('all', p.org, p.isNoProject ? 'all' : p.name);
+  card.setAttribute('role', 'button');
+  card.setAttribute('tabindex', '0');
+  card.title = p.isNoProject ? `View unassigned ${p.org} tasks` : `Open ${p.name}`;
+  card.addEventListener('click', openProject);
+  card.addEventListener('keydown', (e) => {
+    if (e.target !== card) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openProject();
+    }
+  });
 
   return card;
 }
@@ -4970,6 +4985,7 @@ function renderOrgDetailView(org) {
   if (Object.keys(orgQuotas).length) {
     const quotaSec = el('div', 'org-detail-section');
     quotaSec.appendChild(el('div', 'org-detail-section-title', '5-Hour Rolling Quotas & Lockout Status'));
+    const quotaGrid = el('div', 'quota-gauges-grid');
     const isManagedSol = (org.name || '').toLowerCase().includes('managed');
     const order = isManagedSol
       ? ['gemini', 'claude_work', 'claude_personal', 'claude', 'openai']
@@ -4978,8 +4994,6 @@ function renderOrgDetailView(org) {
       const q = orgQuotas[key];
       if (!q) continue;
       if (key === 'claude' && (orgQuotas['claude_work'] || orgQuotas['claude_personal'])) continue;
-      if (!isManagedSol && key === 'claude_work' && orgQuotas['claude_personal'] && q.five_hour_used_pct === 0 && q.weekly_used_pct === 0) continue;
-      if (isManagedSol && key === 'claude_personal' && orgQuotas['claude_work'] && q.five_hour_used_pct === 0 && q.weekly_used_pct === 0) continue;
       quotaGrid.appendChild(buildGaugeCard(key, q));
     }
     quotaSec.appendChild(quotaGrid);
