@@ -1419,3 +1419,81 @@ func ListRunStepsByTask(db *sql.DB, taskID string) ([]RunStep, error) {
 	return steps, rows.Err()
 }
 
+// RunError represents one failed adapter turn recorded in run_errors.
+type RunError struct {
+	ID         string `json:"id"`
+	RunID      string `json:"run_id"`
+	TaskID     string `json:"task_id,omitempty"`
+	Turn       int    `json:"turn"`
+	ExitCode   int    `json:"exit_code"`
+	StderrTail string `json:"stderr_tail"`
+	DurationMs int64  `json:"duration_ms"`
+	Model      string `json:"model"`
+	Adapter    string `json:"adapter"`
+	CreatedAt  string `json:"created_at"`
+}
+
+func scanRunErrors(rows *sql.Rows) ([]RunError, error) {
+	defer rows.Close()
+	var errs []RunError
+	for rows.Next() {
+		var e RunError
+		if err := rows.Scan(&e.ID, &e.RunID, &e.TaskID, &e.Turn, &e.ExitCode, &e.StderrTail, &e.DurationMs, &e.Model, &e.Adapter, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		errs = append(errs, e)
+	}
+	return errs, rows.Err()
+}
+
+// ListRunErrorsByTask returns run_errors for the given task, newest first.
+func ListRunErrorsByTask(db *sql.DB, taskID string, limit int) ([]RunError, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := db.Query(
+		`SELECT id, run_id, COALESCE(task_id,''), turn, exit_code, stderr_tail, duration_ms, model, adapter, created_at
+		 FROM run_errors WHERE task_id = ? ORDER BY created_at DESC LIMIT ?`,
+		taskID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return scanRunErrors(rows)
+}
+
+// ListAllRunErrors returns run_errors across all tasks, newest first.
+// taskID and runID are optional filters; zero string means no filter.
+func ListAllRunErrors(db *sql.DB, taskID, runID string, limit int) ([]RunError, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	query := `SELECT id, run_id, COALESCE(task_id,''), turn, exit_code, stderr_tail, duration_ms, model, adapter, created_at
+	          FROM run_errors`
+	var args []any
+	var clauses []string
+	if taskID != "" {
+		clauses = append(clauses, "task_id = ?")
+		args = append(args, taskID)
+	}
+	if runID != "" {
+		clauses = append(clauses, "run_id = ?")
+		args = append(args, runID)
+	}
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY created_at DESC LIMIT ?"
+	args = append(args, limit)
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanRunErrors(rows)
+}
+
+// ListRecentRunErrors returns the most recent run_errors across all tasks.
+func ListRecentRunErrors(db *sql.DB, limit int) ([]RunError, error) {
+	return ListAllRunErrors(db, "", "", limit)
+}
+
