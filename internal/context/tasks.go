@@ -45,8 +45,7 @@ type Task struct {
 	Comments        []TaskComment     `json:"comments,omitempty"`
 	// WorkKind is the routing category for this task.
 	// Valid values: "coding" (default), "architecture", "planning", "qa".
-	// TODO(STA-316): wire up DB column, default, and validation.
-	WorkKind        string            `json:"work_kind,omitempty"`
+	WorkKind        string            `json:"work_kind"`
 }
 
 // TaskBlockerInfo contains summarized info about an upstream or downstream related task.
@@ -164,14 +163,19 @@ func CreateTaskWithOptions(db *sql.DB, opts TaskCreateOptions) (*Task, error) {
 
 	taskID := fmt.Sprintf("task-%s", uuid.New().String()[:8])
 
+	workKind := opts.WorkKind
+	if workKind == "" {
+		workKind = "coding"
+	}
+
 	query := `
 		INSERT INTO tasks (
 			id, name, repo_path, git_branch, status, account_role,
 			max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-			organization, project, parent_id, assignee_agent_id,
+			organization, project, parent_id, assignee_agent_id, work_kind,
 			created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 0, 0.0, 0, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 0, 0.0, 0, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 	`
 
 	var parentID interface{}
@@ -184,7 +188,7 @@ func CreateTaskWithOptions(db *sql.DB, opts TaskCreateOptions) (*Task, error) {
 		assigneeAgentID = opts.AssigneeAgentID
 	}
 
-	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns, opts.Organization, opts.Project, parentID, assigneeAgentID); err != nil {
+	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns, opts.Organization, opts.Project, parentID, assigneeAgentID, workKind); err != nil {
 		return nil, fmt.Errorf("failed to insert task: %w", err)
 	}
 
@@ -424,7 +428,8 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id,
-		       assignee_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
+		       assignee_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at,
+		       COALESCE(work_kind, 'coding')
 		FROM tasks
 		WHERE id = ? OR id = ? OR id LIKE ?
 		ORDER BY created_at DESC
@@ -463,6 +468,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 		&t.CreatedAt,
 		&t.UpdatedAt,
 		&deletedAt,
+		&t.WorkKind,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, fmt.Errorf("task not found: %s", id)

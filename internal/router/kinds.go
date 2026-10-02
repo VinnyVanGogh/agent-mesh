@@ -1,5 +1,10 @@
 package router
 
+import (
+	"strings"
+	"time"
+)
+
 // WorkKind is the category of work driving model-routing decisions.
 type WorkKind string
 
@@ -45,18 +50,71 @@ type KindSlot struct {
 //	architecture : Gemini 3.1 Pro → Claude Cloud (Opus) [off] → Claude Opus
 //	planning     : Gemini 3.8 Flash → Claude Cloud [off] → Claude Sonnet
 //	qa           : Gemini 3.8 Flash → Claude Sonnet
-//
-// TODO(STA-316): implement – currently returns nil so tests fail.
 func DefaultKindChains() map[WorkKind][]KindSlot {
-	return nil
+	disabled := false
+	_ = disabled
+	return map[WorkKind][]KindSlot{
+		WorkKindCoding: {
+			{Provider: "claude-opus", Model: "opus", PoolID: PoolPersonalClaude, Enabled: true},
+			{Provider: "gemini-3.1-pro", Model: "gemini-3.1-pro-high", PoolID: PoolGeminiNative, Enabled: true},
+		},
+		WorkKindArchitecture: {
+			{Provider: "gemini-3.1-pro", Model: "gemini-3.1-pro-high", PoolID: PoolGeminiNative, Enabled: true},
+			// Cloud slot off until STA-410 lands; gated by cloud_credit_expires = 2026-11-04.
+			{Provider: "claude-cloud", Model: "opus", PoolID: "", Enabled: false, CloudCreditExpires: "2026-11-04T00:00:00Z"},
+			{Provider: "claude-opus", Model: "opus", PoolID: PoolPersonalClaude, Enabled: true},
+		},
+		WorkKindPlanning: {
+			{Provider: "gemini-3.8-flash", Model: "gemini-3.8-flash-high", PoolID: PoolGeminiNative, Enabled: true},
+			// Cloud slot off until STA-410 lands.
+			{Provider: "claude-cloud", Model: "opus", PoolID: "", Enabled: false, CloudCreditExpires: "2026-11-04T00:00:00Z"},
+			{Provider: "claude-sonnet", Model: "sonnet", PoolID: PoolPersonalClaude, Enabled: true},
+		},
+		WorkKindQA: {
+			{Provider: "gemini-3.8-flash", Model: "gemini-3.8-flash-high", PoolID: PoolGeminiNative, Enabled: true},
+			{Provider: "claude-sonnet", Model: "sonnet", PoolID: PoolPersonalClaude, Enabled: true},
+		},
+	}
 }
 
 // ResolveKindChain walks the chain for kind, skipping locked, expired, or
 // disabled slots, and returns the first viable slot. Returns nil when every
 // slot is unavailable.
-//
-// TODO(STA-316): implement – currently returns nil so tests fail.
 func ResolveKindChain(kind WorkKind, chains map[WorkKind][]KindSlot, pacer *PacerState) *KindSlot {
+	chain, ok := chains[kind]
+	if !ok {
+		return nil
+	}
+	now := time.Now()
+	for i := range chain {
+		s := &chain[i]
+		if !s.Enabled {
+			continue
+		}
+		// Skip expired cloud credit.
+		if s.CloudCreditExpires != "" {
+			if exp, err := time.Parse(time.RFC3339, s.CloudCreditExpires); err == nil && now.After(exp) {
+				continue
+			}
+		}
+		// Cloud slots with no pool are skipped via the enabled flag above; if
+		// somehow enabled with no pool, allow through (no quota check possible).
+		if s.PoolID == "" {
+			return s
+		}
+		if pacer != nil {
+			if pool, ok := pacer.Pools[s.PoolID]; ok && pool.IsLocked {
+				continue
+			}
+			// Also check work-claude pool for claude slots: work seat → personal seat ordering.
+			if s.PoolID == PoolPersonalClaude {
+				if work, ok := pacer.Pools[PoolWorkClaude]; ok && !work.IsLocked {
+					// work seat available; still pick this slot (personal) per the chain order
+				}
+			}
+		}
+		return s
+	}
 	return nil
 }
 
@@ -66,8 +124,16 @@ func ResolveKindChain(kind WorkKind, chains map[WorkKind][]KindSlot, pacer *Pace
 //	Claude Sonnet <-> Gemini 3.8 Flash
 //
 // Returns "" for unknown models.
-//
-// TODO(STA-316): implement – currently returns "" so tests fail.
 func PairModelBidirectional(model string) string {
+	switch strings.ToLower(model) {
+	case "opus":
+		return "gemini-3.1-pro-high"
+	case "gemini-3.1-pro", "gemini-3.1-pro-high":
+		return "opus"
+	case "sonnet":
+		return "gemini-3.8-flash-high"
+	case "gemini-3.8-flash", "gemini-3.8-flash-high":
+		return "sonnet"
+	}
 	return ""
 }
