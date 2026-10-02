@@ -10,7 +10,7 @@ test.describe('task list', () => {
   });
 
   test('task created over the API appears without a reload (live SSE)', async ({ page, api }) => {
-    knownBug('SSE-NAMED-EVENTS');
+    knownBug('STA-377');
     await page.goto('/task-status');
     await expect(page.locator('#conn-badge')).toHaveText('live');
     const task = await api.createTask('List live');

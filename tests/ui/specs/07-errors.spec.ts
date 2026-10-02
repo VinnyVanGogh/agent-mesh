@@ -37,7 +37,7 @@ test('the UI shows an error when the daemon goes down', async ({ page, request }
 
   // Opening a task needs the API, which is gone. Showing the copy cached at
   // page load, with no sign it may be stale, is the bug this half covers.
-  knownBug('STALE-ON-DAEMON-DOWN');
+  knownBug('STA-379');
   // Navigating inside the already-loaded app needs the API, which is gone.
   await page.evaluate(path => {
     history.pushState({}, '', path);
