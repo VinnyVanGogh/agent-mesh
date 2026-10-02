@@ -3231,6 +3231,26 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
 }
 .timeline-body.hidden { display: none; }
 
+/* ── Route row banner ──────────────────────────────────────── */
+.timeline-row-route {
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent, #6366f1) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, #6366f1) 20%, transparent);
+  margin-bottom: 4px;
+}
+.timeline-route-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+.timeline-route-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent, #818cf8);
+  flex: 1;
+}
+
 /* ── Interaction cards ─────────────────────────────────────── */
 #interaction-cards-section {
   margin-bottom: 28px;

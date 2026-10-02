@@ -18,6 +18,7 @@ type StepKind string
 
 const (
 	StepWake       StepKind = "wake"
+	StepRoute      StepKind = "route"
 	StepThink      StepKind = "think"
 	StepRead       StepKind = "read"
 	StepRun        StepKind = "run"
@@ -136,6 +137,30 @@ func (r *StepRecorder) EmitWake(reason string) {
 		Kind:      StepWake,
 		Title:     "Woke up",
 		Body:      reason,
+		Status:    "done",
+		StartedAt: r.startedAt.Format(time.RFC3339Nano),
+		EndedAt:   &now,
+	}
+	r.persist(step)
+	r.publish("run.step", step)
+}
+
+// EmitRoute emits a route step as the first substantive row of each run.
+// title is the plain-language label ("Ran on Claude Opus") and body is the
+// optional reason detail ("Gemini quota locked" etc.).
+func (r *StepRecorder) EmitRoute(title, body string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.closeCurrentLocked()
+	r.seq++
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	step := RunStep{
+		RunID:     r.runID,
+		TaskID:    r.taskID,
+		Seq:       r.seq,
+		Kind:      StepRoute,
+		Title:     title,
+		Body:      body,
 		Status:    "done",
 		StartedAt: r.startedAt.Format(time.RFC3339Nano),
 		EndedAt:   &now,

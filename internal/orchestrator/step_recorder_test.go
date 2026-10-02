@@ -168,3 +168,38 @@ func TestStepRecorder_ErrorToolResult(t *testing.T) {
 	}
 }
 
+func TestStepRecorder_RouteEmitsStep(t *testing.T) {
+	var published []RunStep
+	var mu sync.Mutex
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				published = append(published, s)
+				mu.Unlock()
+			}
+		}
+	}
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+	r.EmitRoute("Ran on Claude Opus", "Kind of work: coding")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(published) != 1 {
+		t.Fatalf("expected 1 run.step, got %d", len(published))
+	}
+	s := published[0]
+	if s.Kind != StepRoute {
+		t.Errorf("expected kind %q, got %q", StepRoute, s.Kind)
+	}
+	if s.Title != "Ran on Claude Opus" {
+		t.Errorf("unexpected title: %q", s.Title)
+	}
+	if s.Body != "Kind of work: coding" {
+		t.Errorf("unexpected body: %q", s.Body)
+	}
+	if s.Status != "done" {
+		t.Errorf("expected status done, got %q", s.Status)
+	}
+}
+
