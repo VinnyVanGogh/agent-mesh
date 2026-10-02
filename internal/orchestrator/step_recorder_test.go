@@ -167,3 +167,4 @@ func TestStepRecorder_ErrorToolResult(t *testing.T) {
 		t.Errorf("expected 1 run.step for error result, got %d", stepCount)
 	}
 }
+
