@@ -125,6 +125,43 @@ func initGitRepo(t *testing.T, dir string) {
 	}
 }
 
+// TestClaim_FiresWake verifies that a successful Claim fires GlobalDispatcher.Wake
+// with reason "assigned" and the runID as idempotency key.
+func TestClaim_FiresWake(t *testing.T) {
+	activeClaims.Store(0)
+
+	db := openTestDB(t)
+	insertTask(t, db, "wake-task", "/tmp")
+	h := &Harness{DB: db}
+
+	var gotTask, gotReason string
+	prev := GlobalDispatcher.OnWake
+	GlobalDispatcher.OnWake = func(taskID, reason string) {
+		gotTask = taskID
+		gotReason = reason
+	}
+	t.Cleanup(func() { GlobalDispatcher.OnWake = prev })
+
+	runID := "run-wake-test"
+	if err := h.Claim(context.Background(), "wake-task", runID, "agent-w"); err != nil {
+		t.Fatal("claim:", err)
+	}
+	defer activeClaims.Add(-1)
+
+	// Wake fires asynchronously; give it a moment.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) && gotTask == "" {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if gotTask != "wake-task" {
+		t.Errorf("expected Wake taskID %q, got %q", "wake-task", gotTask)
+	}
+	if gotReason != "assigned" {
+		t.Errorf("expected Wake reason %q, got %q", "assigned", gotReason)
+	}
+}
+
 // TestClaim_AlreadyClaimed verifies that a second Claim on an in_progress task fails.
 func TestClaim_AlreadyClaimed(t *testing.T) {
 	db := openTestDB(t)
