@@ -80,8 +80,8 @@ func RecoveryScan(ctx context.Context, dbConn *sql.DB) error {
 		return err
 	}
 
-	// 2. Reset tasks that were 'in_progress' back to 'todo' and clear their checkout_run_id.
-	res, err := dbConn.ExecContext(ctx, "UPDATE tasks SET execution_stage = 'todo', checkout_run_id = NULL, checkout_agent_id = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE execution_stage = 'in_progress'")
+	// 2. Reset tasks that were 'in_progress' or 'paused' back to 'todo' and clear checkout.
+	res, err := dbConn.ExecContext(ctx, "UPDATE tasks SET execution_stage = 'todo', checkout_run_id = NULL, checkout_agent_id = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE execution_stage IN ('in_progress', 'paused')")
 	if err != nil {
 		return err
 	}
@@ -90,6 +90,9 @@ func RecoveryScan(ctx context.Context, dbConn *sql.DB) error {
 	if affected > 0 {
 		slog.Info("recovered stale claims", slog.Int64("count", affected))
 	}
+
+	// Clear stale run_control flags.
+	_, _ = dbConn.ExecContext(ctx, "UPDATE run_control SET pause_after_step=0, stop_requested=0")
 
 	// 3. Reset capped tasks to todo so they can be retried.
 	resCapped, err := dbConn.ExecContext(ctx,

@@ -211,6 +211,8 @@ func runDaemon(ctx context.Context) error {
 	// 5. Wire GlobalDispatcher.OnWake to launch harness runs.
 	// HarnessRepoRoot comes from STAYPOINT_REPO_ROOT env or harness_repo_root config key.
 	// work_repo_root is intentionally NOT used here — it belongs to billing/bridge.
+	orchestrator.GlobalRunControl.SetDB(dbStore.DB())
+
 	repoRoot := cfg.HarnessRepoRoot
 	if repoRoot == "" {
 		slog.Warn("harness_repo_root not configured and STAYPOINT_REPO_ROOT not set; wake harness disabled")
@@ -371,6 +373,7 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 			RunAdapter:   adapterFn,
 			StepRecorder: sr,
 			ParseDelta:   parseDelta,
+			RunControl:   orchestrator.GlobalRunControl,
 		})
 		if runErr != nil {
 			slog.Error("harness run failed", slog.String("task", taskID), slog.Any("error", runErr))

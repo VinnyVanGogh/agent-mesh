@@ -260,6 +260,22 @@ CREATE TABLE IF NOT EXISTS run_errors (
 
 CREATE INDEX IF NOT EXISTS idx_run_errors_task ON run_errors (task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_run_errors_run ON run_errors (run_id);
+
+CREATE TABLE IF NOT EXISTS run_control (
+    task_id          TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    pause_after_step INTEGER NOT NULL DEFAULT 0,
+    stop_requested   INTEGER NOT NULL DEFAULT 0,
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS run_pending_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    message    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_pending_messages_task ON run_pending_messages (task_id, id);
 ` + ChatSchema
 
 const ChatSchema = `
@@ -719,6 +735,33 @@ var Migrations = []Migration{
 				);`,
 				`CREATE INDEX IF NOT EXISTS idx_run_errors_task ON run_errors (task_id, created_at DESC);`,
 				`CREATE INDEX IF NOT EXISTS idx_run_errors_run ON run_errors (run_id);`,
+			}
+			for _, q := range queries {
+				if _, err := conn.Exec(q); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
+	{
+		Version: 15,
+		Name:    "run_control",
+		Up: func(conn *sql.DB) error {
+			queries := []string{
+				`CREATE TABLE IF NOT EXISTS run_control (
+					task_id          TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+					pause_after_step INTEGER NOT NULL DEFAULT 0,
+					stop_requested   INTEGER NOT NULL DEFAULT 0,
+					updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				);`,
+				`CREATE TABLE IF NOT EXISTS run_pending_messages (
+					id         INTEGER PRIMARY KEY AUTOINCREMENT,
+					task_id    TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+					message    TEXT NOT NULL,
+					created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				);`,
+				`CREATE INDEX IF NOT EXISTS idx_run_pending_messages_task ON run_pending_messages (task_id, id);`,
 			}
 			for _, q := range queries {
 				if _, err := conn.Exec(q); err != nil {

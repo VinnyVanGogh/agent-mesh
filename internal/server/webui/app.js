@@ -358,6 +358,16 @@ function handleEvent(evt) {
     }
     return;
   }
+  if (type === 'run.state' && evt.data) {
+    const { task_id: tid, disposition } = evt.data;
+    if (tid) {
+      if (state.tasks[tid]) state.tasks[tid].execution_stage = disposition;
+      if (tid === state.openDetailTaskId) {
+        updateRunControlBar(tid, disposition);
+      }
+    }
+    return;
+  }
   if ((type.startsWith('task_') || type.startsWith('task.')) && evt.data) {
     const t = evt.data;
     if (t.id) state.tasks[t.id] = Object.assign(state.tasks[t.id] || {}, t);
@@ -6648,6 +6658,94 @@ function fmtDuration(ms) {
   return `${m}m ${s}s`;
 }
 
+// ── Run-control bar ───────────────────────────────────────────────────────────
+
+function buildRunControlBar(task) {
+  const wrap = el('div', 'run-control-bar');
+  const stage = task.execution_stage || task.status || '';
+  const isActive = stage === 'in_progress' || stage === 'paused';
+  if (!isActive) wrap.classList.add('hidden');
+  wrap.setAttribute('data-task-id', task.id || '');
+  renderRunControlBarContent(wrap, task.id, stage);
+  return wrap;
+}
+
+function renderRunControlBarContent(wrap, taskId, stage) {
+  wrap.innerHTML = '';
+  const isPaused = stage === 'paused';
+
+  // Pause / Resume
+  const pauseBtn = el('button', `run-ctrl-btn run-ctrl-pause${isPaused ? ' active' : ''}`,
+    isPaused ? '▶ Resume' : '⏸ Pause after step');
+  pauseBtn.title = isPaused ? 'Resume the run' : 'Finish current tool call, then pause';
+  pauseBtn.addEventListener('click', () => {
+    const action = isPaused ? 'resume' : 'pause';
+    runControlAction(taskId, action);
+  });
+
+  // Stop
+  const stopBtn = el('button', 'run-ctrl-btn run-ctrl-stop', '⏹ Stop');
+  stopBtn.title = 'Terminate the run immediately';
+  stopBtn.addEventListener('click', () => {
+    if (confirm('Stop this run?')) runControlAction(taskId, 'stop');
+  });
+
+  // Send message
+  const msgWrap = el('div', 'run-ctrl-msg-wrap');
+  const msgBtn = el('button', 'run-ctrl-btn run-ctrl-msg', '✉ Send message');
+  msgBtn.title = 'Inject a user message before the next turn';
+  const msgArea = el('textarea', 'run-ctrl-textarea hidden');
+  msgArea.placeholder = 'Message for the agent…';
+  msgArea.rows = 2;
+  const sendBtn = el('button', 'run-ctrl-btn run-ctrl-send hidden', 'Send');
+  msgBtn.addEventListener('click', () => {
+    msgArea.classList.toggle('hidden');
+    sendBtn.classList.toggle('hidden');
+    if (!msgArea.classList.contains('hidden')) msgArea.focus();
+  });
+  sendBtn.addEventListener('click', () => {
+    const text = msgArea.value.trim();
+    if (!text) return;
+    runControlAction(taskId, 'message', text);
+    msgArea.value = '';
+    msgArea.classList.add('hidden');
+    sendBtn.classList.add('hidden');
+  });
+  msgWrap.appendChild(msgBtn);
+  msgWrap.appendChild(msgArea);
+  msgWrap.appendChild(sendBtn);
+
+  wrap.appendChild(pauseBtn);
+  wrap.appendChild(stopBtn);
+  wrap.appendChild(msgWrap);
+}
+
+function updateRunControlBar(taskId, disposition) {
+  const bar = document.getElementById(`run-control-bar-${taskId}`);
+  if (!bar) return;
+  const isActive = disposition === 'in_progress' || disposition === 'paused';
+  if (isActive) {
+    bar.classList.remove('hidden');
+    renderRunControlBarContent(bar, taskId, disposition);
+  } else {
+    bar.classList.add('hidden');
+  }
+}
+
+async function runControlAction(taskId, action, text) {
+  try {
+    const body = { action };
+    if (text) body.text = text;
+    await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/run-control`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    console.error('run-control action failed', e);
+  }
+}
+
 function buildTimelineStats(task, steps, elapsedMs, isStuck) {
   const wrap = el('div', 'timeline-stats-inner');
   const stat = (label, value, cls) => {
@@ -7027,6 +7125,11 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
   const isStuck = runSteps.length > 0 && (Date.now() - (lastStepAt || 0)) > 5 * 60 * 1000 && task.status !== 'done';
   statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, isStuck));
   timelineSection.appendChild(statsBar);
+
+  // Run-control bar (pause / stop / send message)
+  const rcBar = buildRunControlBar(task);
+  rcBar.id = `run-control-bar-${task.id}`;
+  timelineSection.appendChild(rcBar);
 
   // Step rows
   const stepList = el('div', 'timeline-steps');
