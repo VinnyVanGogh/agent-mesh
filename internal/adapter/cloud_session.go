@@ -69,7 +69,7 @@ func buildCloudSessionArgs(opts ParsedOptions) []string {
 		"--output-format", "json",
 	}
 	if opts.Prompt != "" {
-		args = append(args, opts.Prompt)
+		args = append(args, "--", opts.Prompt)
 	}
 	return args
 }
