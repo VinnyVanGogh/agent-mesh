@@ -22,6 +22,7 @@ import (
 	"github.com/VinnyVanGogh/staypoint/internal/logging"
 	"github.com/VinnyVanGogh/staypoint/internal/mcp"
 	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
+	"github.com/VinnyVanGogh/staypoint/internal/router"
 	"github.com/VinnyVanGogh/staypoint/internal/server"
 	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 )
@@ -329,6 +330,7 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 		runID := fmt.Sprintf("run-%s-%d", idPrefix, time.Now().UnixMilli())
 		sr := orchestrator.NewStepRecorder(dbStore.DB(), publishFn, runID, taskID)
 		sr.EmitWake(reason)
+		emitRouteStep(sr, dbStore.DB(), taskID)
 
 		parseDelta := func(line []byte) ([]orchestrator.StepDelta, error) {
 			prov := resolvedProv
@@ -380,5 +382,79 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 			slog.String("disposition", result.Disposition),
 			slog.Int("turns", result.Turns),
 		)
+	}
+}
+
+// emitRouteStep looks up the task's work_kind, resolves the kind chain using the
+// current pacer state, and emits a route step as the first substantive timeline row.
+// Human-readable labels: "Ran on Claude Opus", "Fell back to Gemini 3.1 Pro: Opus quota locked".
+func emitRouteStep(sr *orchestrator.StepRecorder, dbConn *sql.DB, taskID string) {
+	var workKind string
+	if err := dbConn.QueryRowContext(context.Background(),
+		"SELECT COALESCE(work_kind,'coding') FROM tasks WHERE id=?", taskID,
+	).Scan(&workKind); err != nil {
+		slog.Warn("route step: work_kind lookup failed", slog.String("task", taskID), slog.Any("err", err))
+		return
+	}
+
+	chains := router.DefaultKindChains()
+	pacer, err := router.LoadPacerState()
+	if err != nil {
+		slog.Warn("route step: pacer state load failed", slog.Any("err", err))
+		pacer = &router.PacerState{Pools: make(map[router.PoolID]*router.QuotaPool)}
+	}
+
+	kind := router.WorkKind(workKind)
+	chain := chains[kind]
+	selected := router.ResolveKindChain(kind, chains, pacer)
+
+	if selected == nil {
+		sr.EmitRoute("All providers locked", "No viable slot in the "+workKind+" chain")
+		return
+	}
+
+	selectedName := providerDisplayName(selected.Provider)
+
+	// Determine if this is a fallback (selected slot is not the first enabled slot).
+	var primaryName string
+	for i := range chain {
+		if chain[i].Enabled {
+			if chain[i].Provider != selected.Provider {
+				primaryName = providerDisplayName(chain[i].Provider)
+			}
+			break
+		}
+	}
+
+	if selected.Provider == "claude-cloud" {
+		sr.EmitRoute("Running in Claude Cloud", "")
+		return
+	}
+
+	if primaryName != "" {
+		sr.EmitRoute(
+			"Fell back to "+selectedName+": "+primaryName+" quota locked",
+			"Kind of work: "+workKind,
+		)
+	} else {
+		sr.EmitRoute("Ran on "+selectedName, "Kind of work: "+workKind)
+	}
+}
+
+// providerDisplayName maps a KindSlot.Provider key to a human-readable label.
+func providerDisplayName(provider string) string {
+	switch provider {
+	case "claude-opus":
+		return "Claude Opus"
+	case "claude-sonnet":
+		return "Claude Sonnet"
+	case "gemini-3.1-pro":
+		return "Gemini 3.1 Pro"
+	case "gemini-3.8-flash":
+		return "Gemini 3.8 Flash"
+	case "claude-cloud":
+		return "Claude Cloud"
+	default:
+		return provider
 	}
 }

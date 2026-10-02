@@ -6606,6 +6606,7 @@ function renderDiffPane(container, task, checkpoints, diffData) {
 // ── Run-step timeline helpers ──────────────────────────────
 
 const STEP_KIND_ICON = {
+  route:      '🔀',
   think:      '🧠',
   run:        '⚙️',
   edit:       '✏️',
@@ -6654,6 +6655,21 @@ function buildTimelineStats(task, steps, elapsedMs, isStuck) {
 function buildRunStepRow(s) {
   const row = el('div', `timeline-row timeline-row-${s.kind || 'unknown'}`);
   row.setAttribute('data-step-id', s.id);
+
+  // Route rows render as a compact banner: icon + plain text, no kind badge.
+  if (s.kind === 'route') {
+    const banner = el('div', 'timeline-row-summary timeline-route-banner');
+    banner.style.cursor = s.body ? 'pointer' : 'default';
+    banner.appendChild(el('span', 'timeline-icon', '🔀'));
+    banner.appendChild(el('span', 'timeline-route-label', s.title || '(route)'));
+    row.appendChild(banner);
+    if (s.body) {
+      const detail = el('div', 'timeline-body hidden', s.body);
+      row.appendChild(detail);
+      banner.addEventListener('click', () => detail.classList.toggle('hidden'));
+    }
+    return row;
+  }
 
   const summary = el('div', 'timeline-row-summary');
   summary.style.cursor = s.body ? 'pointer' : 'default';
