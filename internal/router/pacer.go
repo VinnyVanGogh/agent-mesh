@@ -442,6 +442,18 @@ func applyStateJSON(path string, state *PacerState) {
 		return
 	}
 
+	// The writers also keep a generic "Claude" key holding whichever seat's
+	// statusline ran last. Map order is random, so letting it compete with the
+	// seat keys flipped the personal pool between seats per load (STA-283). It
+	// only backfills personal when no personal entry exists.
+	hasPersonal := false
+	for qName := range sj.Quotas {
+		lower := strings.ToLower(qName)
+		if strings.Contains(lower, "personal") && strings.Contains(lower, "claude") {
+			hasPersonal = true
+		}
+	}
+
 	for qName, qVal := range sj.Quotas {
 		lower := strings.ToLower(qName)
 		var targetPoolID PoolID
@@ -453,6 +465,9 @@ func applyStateJSON(path string, state *PacerState) {
 		case strings.Contains(lower, "personal") && strings.Contains(lower, "claude"):
 			targetPoolID = PoolPersonalClaude
 		case strings.Contains(lower, "claude"):
+			if hasPersonal {
+				continue
+			}
 			targetPoolID = PoolPersonalClaude
 		case strings.Contains(lower, "gemini"):
 			targetPoolID = PoolGeminiNative
