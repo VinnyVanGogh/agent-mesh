@@ -8,6 +8,22 @@ import (
 	"strings"
 )
 
+// WithComponent returns a child logger pre-tagged with a component name.
+// Use for daemon subsystems: "harness", "adapter", "server", etc.
+func WithComponent(logger *slog.Logger, component string) *slog.Logger {
+	return logger.With(slog.String("component", component))
+}
+
+// WithRunContext returns a child logger pre-tagged with task/run/agent context.
+// Attach once at the start of a run; all messages in that run carry the fields.
+func WithRunContext(logger *slog.Logger, taskID, runID, agent string) *slog.Logger {
+	return logger.With(
+		slog.String("task_id", taskID),
+		slog.String("run_id", runID),
+		slog.String("agent", agent),
+	)
+}
+
 // SetupLogger configures and returns an slog.Logger instance based on the provided level and format.
 // It also sets the logger as the default global logger.
 func SetupLogger(level string, format string, writer io.Writer) *slog.Logger {

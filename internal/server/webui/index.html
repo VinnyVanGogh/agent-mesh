@@ -71,6 +71,9 @@
       <button class="sidebar-item" data-view="audit">
         <span class="sidebar-icon">&#9998;</span>Audit
       </button>
+      <button class="sidebar-item" data-view="logs">
+        <span class="sidebar-icon">&#9888;</span>Logs
+      </button>
     </nav>
 
     <div class="sidebar-section">
@@ -597,6 +600,26 @@
         <div class="stub-title">Audit Log</div>
         <div class="stub-desc">Event log of all agent actions, approvals, and system events.</div>
         <div class="stub-phase">Coming in Phase 2</div>
+      </div>
+    </section>
+
+    <!-- Logs page -->
+    <section id="view-logs" class="view">
+      <div class="view-header">
+        <div class="view-title-group">
+          <h1 class="view-title">Logs</h1>
+          <span class="refresh-indicator">Recent adapter failures across all tasks</span>
+        </div>
+        <div class="table-controls">
+          <input type="text" id="logs-search" placeholder="Filter by task, model, adapter, error…" class="search-input">
+          <select id="logs-adapter-filter" class="select-filter">
+            <option value="all">All Adapters</option>
+          </select>
+          <button id="logs-refresh-btn" class="sidebar-filter-btn">Refresh</button>
+        </div>
+      </div>
+      <div class="dashboard-section" style="padding:0">
+        <div id="logs-container" class="run-errors-list"></div>
       </div>
     </section>
 

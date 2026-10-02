@@ -244,6 +244,22 @@ CREATE TABLE IF NOT EXISTS run_steps (
 
 CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps (run_id, seq);
 CREATE INDEX IF NOT EXISTS idx_run_steps_task ON run_steps (task_id, seq);
+
+CREATE TABLE IF NOT EXISTS run_errors (
+    id           TEXT PRIMARY KEY,
+    run_id       TEXT NOT NULL,
+    task_id      TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+    turn         INTEGER NOT NULL DEFAULT 0,
+    exit_code    INTEGER NOT NULL DEFAULT 0,
+    stderr_tail  TEXT NOT NULL DEFAULT '',
+    duration_ms  INTEGER NOT NULL DEFAULT 0,
+    model        TEXT NOT NULL DEFAULT '',
+    adapter      TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_errors_task ON run_errors (task_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_run_errors_run ON run_errors (run_id);
 ` + ChatSchema
 
 const ChatSchema = `
@@ -680,6 +696,34 @@ var Migrations = []Migration{
 			_, err := conn.Exec(`ALTER TABLE tasks ADD COLUMN work_kind TEXT NOT NULL DEFAULT 'coding';`)
 			if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 				return err
+			}
+			return nil
+		},
+	},
+	{
+		Version: 14,
+		Name:    "run_errors",
+		Up: func(conn *sql.DB) error {
+			queries := []string{
+				`CREATE TABLE IF NOT EXISTS run_errors (
+					id           TEXT PRIMARY KEY,
+					run_id       TEXT NOT NULL,
+					task_id      TEXT REFERENCES tasks(id) ON DELETE CASCADE,
+					turn         INTEGER NOT NULL DEFAULT 0,
+					exit_code    INTEGER NOT NULL DEFAULT 0,
+					stderr_tail  TEXT NOT NULL DEFAULT '',
+					duration_ms  INTEGER NOT NULL DEFAULT 0,
+					model        TEXT NOT NULL DEFAULT '',
+					adapter      TEXT NOT NULL DEFAULT '',
+					created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				);`,
+				`CREATE INDEX IF NOT EXISTS idx_run_errors_task ON run_errors (task_id, created_at DESC);`,
+				`CREATE INDEX IF NOT EXISTS idx_run_errors_run ON run_errors (run_id);`,
+			}
+			for _, q := range queries {
+				if _, err := conn.Exec(q); err != nil {
+					return err
+				}
 			}
 			return nil
 		},

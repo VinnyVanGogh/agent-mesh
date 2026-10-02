@@ -82,6 +82,18 @@ CREATE TABLE IF NOT EXISTS agent_working_files (
     session_id TEXT NOT NULL,
     file_path  TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS run_errors (
+    id           TEXT PRIMARY KEY,
+    run_id       TEXT NOT NULL,
+    task_id      TEXT,
+    turn         INTEGER NOT NULL DEFAULT 0,
+    exit_code    INTEGER NOT NULL DEFAULT 0,
+    stderr_tail  TEXT NOT NULL DEFAULT '',
+    duration_ms  INTEGER NOT NULL DEFAULT 0,
+    model        TEXT NOT NULL DEFAULT '',
+    adapter      TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 `
 
 // insertTask inserts a task row with execution_stage = 'todo'.
@@ -339,7 +351,7 @@ func TestInterceptor_BlocksDoneOnNoWorkProducts(t *testing.T) {
 	if approved {
 		t.Fatal("interceptor should have rejected: no work products")
 	}
-	if diag == nil || !strings.Contains(diag.Message, "work products") {
+	if diag == nil || !strings.Contains(diag.Message, "work product") {
 		t.Fatalf("expected work-products diagnostic, got: %v", diag)
 	}
 }
@@ -604,8 +616,8 @@ func TestBuildDiagnostic(t *testing.T) {
 			t.Errorf("diagnostic missing check: %q", c)
 		}
 	}
-	if !strings.Contains(msg, "BLOCKED") {
-		t.Error("diagnostic should mention BLOCKED")
+	if !strings.Contains(msg, "Can't complete") {
+		t.Error("diagnostic should open with Can't complete")
 	}
 	if !strings.Contains(msg, "in_progress") {
 		t.Error("diagnostic should mention in_progress")

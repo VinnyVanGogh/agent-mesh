@@ -35,7 +35,7 @@ func TestDB_OpenAndSchema(t *testing.T) {
 		"schema_versions", "accounts", "quota_windows", "tasks", "wire_messages",
 		"wire_cursors", "agent_sessions", "agent_working_files", "agent_circuit_breakers",
 		"chat_sessions", "chat_messages", "chat_tool_calls", "session_provider_handles",
-		"run_steps",
+		"run_steps", "run_errors",
 	}
 	for _, tbl := range tables {
 		var count int
@@ -165,6 +165,169 @@ func TestDB_SchemaMigration_FailureRestore(t *testing.T) {
 	_ = store.DB().QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='bad_table';").Scan(&count)
 	if count != 0 {
 		t.Errorf("expected bad_table to be reverted")
+	}
+}
+
+func TestDB_RunErrors(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := Open(filepath.Join(tmpDir, "run_errors.db"))
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer store.Close()
+
+	// Insert a task so we can reference it via FK.
+	_, err = store.DB().Exec(
+		`INSERT INTO tasks (id, name, repo_path) VALUES (?, ?, ?)`,
+		"task-001", "test task", "/repo",
+	)
+	if err != nil {
+		t.Fatalf("insert task failed: %v", err)
+	}
+
+	_, err = store.DB().Exec(
+		`INSERT INTO run_errors (id, run_id, task_id, turn, exit_code, stderr_tail, duration_ms, model, adapter)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"err-001", "run-abc", "task-001", 2, 1, "fatal: out of memory", 3500, "claude-opus-4-5", "claude_local",
+	)
+	if err != nil {
+		t.Fatalf("insert run_errors failed: %v", err)
+	}
+
+	var id, runID, taskID, stderrTail, model, adapter, createdAt string
+	var turn, exitCode, durationMs int
+	err = store.DB().QueryRow(
+		`SELECT id, run_id, task_id, turn, exit_code, stderr_tail, duration_ms, model, adapter, created_at
+		 FROM run_errors WHERE run_id = ?`, "run-abc",
+	).Scan(&id, &runID, &taskID, &turn, &exitCode, &stderrTail, &durationMs, &model, &adapter, &createdAt)
+	if err != nil {
+		t.Fatalf("SELECT run_errors failed: %v", err)
+	}
+
+	if id != "err-001" {
+		t.Errorf("id: want err-001, got %s", id)
+	}
+	if runID != "run-abc" {
+		t.Errorf("run_id: want run-abc, got %s", runID)
+	}
+	if taskID != "task-001" {
+		t.Errorf("task_id: want task-001, got %s", taskID)
+	}
+	if turn != 2 {
+		t.Errorf("turn: want 2, got %d", turn)
+	}
+	if exitCode != 1 {
+		t.Errorf("exit_code: want 1, got %d", exitCode)
+	}
+	if stderrTail != "fatal: out of memory" {
+		t.Errorf("stderr_tail: want 'fatal: out of memory', got %s", stderrTail)
+	}
+	if durationMs != 3500 {
+		t.Errorf("duration_ms: want 3500, got %d", durationMs)
+	}
+	if model != "claude-opus-4-5" {
+		t.Errorf("model: want claude-opus-4-5, got %s", model)
+	}
+	if adapter != "claude_local" {
+		t.Errorf("adapter: want claude_local, got %s", adapter)
+	}
+	if createdAt == "" {
+		t.Error("created_at should be auto-populated")
+	}
+}
+
+func TestDB_RunErrors_NullTaskID(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := Open(filepath.Join(tmpDir, "run_errors_null.db"))
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer store.Close()
+
+	// task_id is nullable — orphaned run errors are allowed.
+	_, err = store.DB().Exec(
+		`INSERT INTO run_errors (id, run_id, task_id, turn, exit_code, stderr_tail, duration_ms, model, adapter)
+		 VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`,
+		"err-002", "run-xyz", 0, 2, "adapter crashed", 1000, "gemini-flash", "gemini_local",
+	)
+	if err != nil {
+		t.Fatalf("insert with NULL task_id failed: %v", err)
+	}
+
+	var taskID sql.NullString
+	err = store.DB().QueryRow(`SELECT task_id FROM run_errors WHERE id = ?`, "err-002").Scan(&taskID)
+	if err != nil {
+		t.Fatalf("SELECT failed: %v", err)
+	}
+	if taskID.Valid {
+		t.Errorf("expected NULL task_id, got %s", taskID.String)
+	}
+}
+
+func TestDB_RunErrors_CascadeDelete(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := Open(filepath.Join(tmpDir, "run_errors_cascade.db"))
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer store.Close()
+
+	// Enable FK enforcement (SQLite requires explicit PRAGMA).
+	if _, err := store.DB().Exec("PRAGMA foreign_keys = ON;"); err != nil {
+		t.Fatalf("enable FK pragma failed: %v", err)
+	}
+
+	_, err = store.DB().Exec(
+		`INSERT INTO tasks (id, name, repo_path) VALUES (?, ?, ?)`,
+		"task-cascade", "cascade task", "/repo",
+	)
+	if err != nil {
+		t.Fatalf("insert task failed: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		_, err = store.DB().Exec(
+			`INSERT INTO run_errors (id, run_id, task_id) VALUES (?, ?, ?)`,
+			fmt.Sprintf("err-cascade-%d", i), fmt.Sprintf("run-%d", i), "task-cascade",
+		)
+		if err != nil {
+			t.Fatalf("insert run_error %d failed: %v", i, err)
+		}
+	}
+
+	var count int
+	_ = store.DB().QueryRow(`SELECT count(*) FROM run_errors WHERE task_id = ?`, "task-cascade").Scan(&count)
+	if count != 3 {
+		t.Fatalf("expected 3 run_errors before delete, got %d", count)
+	}
+
+	if _, err := store.DB().Exec(`DELETE FROM tasks WHERE id = ?`, "task-cascade"); err != nil {
+		t.Fatalf("delete task failed: %v", err)
+	}
+
+	_ = store.DB().QueryRow(`SELECT count(*) FROM run_errors WHERE task_id = ?`, "task-cascade").Scan(&count)
+	if count != 0 {
+		t.Errorf("expected run_errors to be cascade-deleted, got %d rows", count)
+	}
+}
+
+func TestDB_RunErrors_Indexes(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := Open(filepath.Join(tmpDir, "run_errors_idx.db"))
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer store.Close()
+
+	indexes := []string{"idx_run_errors_task", "idx_run_errors_run"}
+	for _, idx := range indexes {
+		var count int
+		err := store.DB().QueryRow(
+			`SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?`, idx,
+		).Scan(&count)
+		if err != nil || count != 1 {
+			t.Errorf("expected index %q to exist, count=%d err=%v", idx, count, err)
+		}
 	}
 }
 

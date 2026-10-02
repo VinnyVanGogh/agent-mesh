@@ -1051,4 +1051,110 @@ func TestServer_REST_AuditMergesActivity(t *testing.T) {
 	}
 }
 
+func TestServer_REST_RunErrors(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	client := &http.Client{}
+
+	authGet := func(url string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodGet, url, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", url, err)
+		}
+		return resp
+	}
+
+	// Seed a task.
+	createBody := []byte(`{"name":"err-task","repo_path":"/tmp/err-repo"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL()+"/api/tasks", bytes.NewReader(createBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create task: %v, status %d", err, resp.StatusCode)
+	}
+	var created map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+	taskID, _ := created["id"].(string)
+
+	// Seed a run_error row directly.
+	_, err = database.Exec(
+		`INSERT INTO run_errors (id, run_id, task_id, turn, exit_code, stderr_tail, duration_ms, model, adapter)
+		 VALUES ('re-01', 'run-xyz', ?, 1, 2, 'oom error', 1200, 'claude-opus', 'claude_local')`,
+		taskID,
+	)
+	if err != nil {
+		t.Fatalf("seed run_error: %v", err)
+	}
+
+	// GET /api/tasks/{id}/run-errors
+	resp = authGet(srv.URL() + "/api/tasks/" + taskID + "/run-errors")
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET task run-errors: want 200, got %d: %s", resp.StatusCode, body)
+	}
+	var taskErrors map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&taskErrors)
+	resp.Body.Close()
+	errs, _ := taskErrors["errors"].([]any)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 task run-error, got %d", len(errs))
+	}
+	first := errs[0].(map[string]any)
+	if first["id"] != "re-01" {
+		t.Errorf("expected id re-01, got %v", first["id"])
+	}
+
+	// GET /api/tasks/{id}/run-errors — non-existent task returns 404.
+	resp = authGet(srv.URL() + "/api/tasks/no-such-task/run-errors")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("missing task: want 404, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// GET /api/run-errors — global endpoint.
+	resp = authGet(srv.URL() + "/api/run-errors")
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET /api/run-errors: want 200, got %d: %s", resp.StatusCode, body)
+	}
+	var allErrors map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&allErrors)
+	resp.Body.Close()
+	allErrs, _ := allErrors["errors"].([]any)
+	if len(allErrs) != 1 {
+		t.Fatalf("expected 1 global run-error, got %d", len(allErrs))
+	}
+
+	// GET /api/run-errors?task_id=... — filtered.
+	resp = authGet(srv.URL() + "/api/run-errors?task_id=" + taskID)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/run-errors?task_id: want 200, got %d", resp.StatusCode)
+	}
+	var filtered map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&filtered)
+	resp.Body.Close()
+	filteredErrs, _ := filtered["errors"].([]any)
+	if len(filteredErrs) != 1 {
+		t.Fatalf("expected 1 filtered run-error, got %d", len(filteredErrs))
+	}
+
+	// GET /api/run-errors?run_id=run-xyz — filtered by run.
+	resp = authGet(srv.URL() + "/api/run-errors?run_id=run-xyz")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/run-errors?run_id: want 200, got %d", resp.StatusCode)
+	}
+	var byRun map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&byRun)
+	resp.Body.Close()
+	byRunErrs, _ := byRun["errors"].([]any)
+	if len(byRunErrs) != 1 {
+		t.Fatalf("expected 1 run_id-filtered run-error, got %d", len(byRunErrs))
+	}
+}
+
 

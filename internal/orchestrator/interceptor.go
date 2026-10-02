@@ -105,7 +105,7 @@ func (ic *Interceptor) checkWorkProducts(_ context.Context, taskID, _, _ string)
 		return "", err
 	}
 	if n == 0 {
-		return "no work products registered for task " + taskID, nil
+		return "No work product registered for this task. Commit and push your changes so a branch work product is created before marking done.", nil
 	}
 	return "", nil
 }
@@ -136,7 +136,7 @@ func (ic *Interceptor) checkGitSync(ctx context.Context, _, wtPath, _ string) (s
 	}
 	if status != "" {
 		lines := strings.Count(strings.TrimSpace(status), "\n") + 1
-		return fmt.Sprintf("worktree has %d uncommitted change(s); commit or stash before marking done", lines), nil
+		return fmt.Sprintf("Worktree has %d uncommitted change(s). Run `git add -A && git commit` to stage and commit them, then emit [[TASK_COMPLETE]] again.", lines), nil
 	}
 
 	// 2. Unpushed commits (only if branch has an upstream).
@@ -146,7 +146,7 @@ func (ic *Interceptor) checkGitSync(ctx context.Context, _, wtPath, _ string) (s
 		return "", nil
 	}
 	if ahead != "" && ahead != "0" {
-		return fmt.Sprintf("branch is %s commit(s) ahead of remote; push before marking done", ahead), nil
+		return fmt.Sprintf("Branch is %s commit(s) ahead of remote. Run `git push` to upload your commits, then emit [[TASK_COMPLETE]] again.", ahead), nil
 	}
 
 	return "", nil
@@ -180,7 +180,7 @@ func (ic *Interceptor) checkMutexLease(_ context.Context, taskID, _, repoRoot st
 		return "", err
 	}
 	if n > 0 {
-		return fmt.Sprintf("another agent is currently in_progress on the same repo (%s); cannot confirm completion until that run ends", filepath.Base(repoRoot)), nil
+		return fmt.Sprintf("Can't mark done: another task is currently running on repo '%s'. Wait for it to finish or clear the stale checkout, then emit [[TASK_COMPLETE]] again.", filepath.Base(repoRoot)), nil
 	}
 	return "", nil
 }
@@ -188,11 +188,11 @@ func (ic *Interceptor) checkMutexLease(_ context.Context, taskID, _, repoRoot st
 // buildDiagnostic formats failed checks into a self-correcting agent message.
 func buildDiagnostic(failed []string) string {
 	var sb strings.Builder
-	sb.WriteString("**[Mechanical Completion Interceptor] Transition to done/in_review BLOCKED**\n\n")
-	sb.WriteString("The following verifications failed. Remediate each one and emit `[[TASK_COMPLETE]]` again.\n\n")
+	sb.WriteString("**Can't complete: the following checks failed.**\n\n")
+	sb.WriteString("Fix each item below and emit `[[TASK_COMPLETE]]` again.\n\n")
 	for i, f := range failed {
 		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, f))
 	}
-	sb.WriteString("\nTask remains `in_progress`. No further action is needed beyond fixing the items above.")
+	sb.WriteString("\nTask stays `in_progress` until these are resolved.")
 	return sb.String()
 }
