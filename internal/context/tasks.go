@@ -868,9 +868,14 @@ func DeleteTask(db *sql.DB, id string) error {
 		return err
 	}
 
+	// Reset execution_stage so the mutex-lease check in the interceptor does not
+	// see this task as holding an in_progress lock after it is cancelled.
 	query := `
 		UPDATE tasks
-		SET status = 'soft_deleted', deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		SET status = 'soft_deleted',
+		    execution_stage = 'cancelled',
+		    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+		    deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 		WHERE id = ?
 	`
 	res, err := db.Exec(query, task.ID)

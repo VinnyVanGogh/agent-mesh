@@ -241,6 +241,56 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 
 	result := &RunResult{TaskID: taskID, RunID: runID}
 
+	// Pre-flight cumulative budget check: if the task has already exhausted its
+	// max_turns or max_budget_usd across prior runs, skip the adapter entirely.
+	// The external hook enforces the same gate, but when it blocks the harness
+	// cannot observe why — the run silently ends in_progress. This check makes
+	// the exhaustion explicit before any adapter invocation.
+	{
+		var spentTurns, dbMaxTurns int
+		var spentUSD, dbMaxBudget float64
+		if qErr := h.DB.QueryRowContext(ctx,
+			`SELECT spent_turns, max_turns, spent_usd, max_budget_usd FROM tasks WHERE id=?`, taskID,
+		).Scan(&spentTurns, &dbMaxTurns, &spentUSD, &dbMaxBudget); qErr == nil {
+			var capMsg string
+			switch {
+			case dbMaxTurns > 0 && spentTurns >= dbMaxTurns:
+				capMsg = fmt.Sprintf(
+					"Turn budget exhausted (%d turns spent / %d turn limit). Task capped; no further adapter runs.",
+					spentTurns, dbMaxTurns,
+				)
+			case dbMaxBudget > 0 && spentUSD >= dbMaxBudget:
+				capMsg = fmt.Sprintf(
+					"USD budget exhausted ($%.4f spent / $%.4f limit). Task capped; no further adapter runs.",
+					spentUSD, dbMaxBudget,
+				)
+			}
+			if capMsg != "" {
+				result.Disposition = "capped"
+				if sr != nil {
+					sr.EmitState("capped")
+					sr.Close()
+				}
+				capCtx, capCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer capCancel()
+				capNow := time.Now().UTC().Format(time.RFC3339Nano)
+				_, _ = h.DB.ExecContext(capCtx,
+					`UPDATE tasks SET execution_stage='capped', updated_at=? WHERE id=?`,
+					capNow, taskID,
+				)
+				_, _ = h.DB.ExecContext(capCtx,
+					`INSERT INTO task_comments (task_id, author, message) VALUES (?, 'harness', ?)`,
+					taskID, capMsg,
+				)
+				_, _ = h.DB.ExecContext(capCtx,
+					`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, 'run_complete', ?)`,
+					taskID, "disposition=capped turns=0 reason=budget_exhausted",
+				)
+				return result, nil
+			}
+		}
+	}
+
 	for turn := 0; turn < maxTurns; turn++ {
 		if ctx.Err() != nil {
 			result.Disposition = "capped"

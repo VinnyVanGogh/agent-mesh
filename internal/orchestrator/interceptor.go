@@ -159,21 +159,28 @@ func (ic *Interceptor) checkMutexLease(_ context.Context, taskID, _, repoRoot st
 	if ic.DB == nil {
 		return "", nil
 	}
-	repoDir := filepath.Base(repoRoot)
-	// Use GLOB instead of LIKE to avoid treating % and _ in repoDir as wildcards.
+	// A live lease = active task in_progress that shares the same canonical repo
+	// root: exact match, or one path is a prefix of the other.  Using basename
+	// GLOB (*<name>*) over-matches unrelated worktrees (e.g. *agent-mesh* hits
+	// every .worktrees/* path).  Excluding non-active status means a
+	// soft_deleted/cancelled task never holds the lock even when its
+	// execution_stage was not reset before deletion.
 	var n int
 	err := ic.DB.QueryRow(
 		`SELECT COUNT(1) FROM tasks
 		  WHERE execution_stage = 'in_progress'
+		    AND status = 'active'
 		    AND id != ?
-		    AND (repo_path = ? OR repo_path GLOB ?)`,
-		taskID, repoRoot, "*"+repoDir+"*",
+		    AND (repo_path = ?
+		         OR repo_path GLOB ? || '/*'
+		         OR ? GLOB repo_path || '/*')`,
+		taskID, repoRoot, repoRoot, repoRoot,
 	).Scan(&n)
 	if err != nil {
 		return "", err
 	}
 	if n > 0 {
-		return fmt.Sprintf("another agent is currently in_progress on the same repo (%s); cannot confirm completion until that run ends", repoDir), nil
+		return fmt.Sprintf("another agent is currently in_progress on the same repo (%s); cannot confirm completion until that run ends", filepath.Base(repoRoot)), nil
 	}
 	return "", nil
 }

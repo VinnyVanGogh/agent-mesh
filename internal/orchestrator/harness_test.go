@@ -703,6 +703,122 @@ func TestRun_FileChangeWithMarkerEndsInReview(t *testing.T) {
 	}
 }
 
+// TestRun_BudgetExhausted_SetsCapped is the STA-406 regression test.
+// When a task has already consumed its cumulative max_turns, the harness must
+// detect this before invoking the adapter and set disposition to "capped" with
+// an explicit task comment. Prior to the fix the external hook would block the
+// prompt silently and the harness would end in_progress with no explanation.
+func TestRun_BudgetExhausted_SetsCapped(t *testing.T) {
+	activeClaims.Store(0)
+
+	db := openTestDB(t)
+	// Insert a task with max_turns=2 already fully consumed (spent_turns=2).
+	_, err := db.Exec(
+		`INSERT INTO tasks (id, name, repo_path, max_turns, spent_turns) VALUES (?, ?, ?, ?, ?)`,
+		"budget-task", "budget test", "/tmp", 2, 2,
+	)
+	if err != nil {
+		t.Fatal("insert task:", err)
+	}
+
+	adapterCalled := false
+	h := &Harness{
+		DB:       db,
+		RepoRoot: "/tmp",
+		WM:       &noopWorktreeManager{},
+		Interceptor: NewInterceptor(db),
+	}
+	h.Interceptor.Guards = nil // should never reach interceptor
+
+	result, err := h.Run(context.Background(), "budget-task", RunConfig{
+		MaxTurns:    10,
+		AgentID:     "tester",
+		MaxWallclock: 10 * time.Second,
+		RunAdapter: func(_ context.Context, _, _ string, _, _ []string, _, _ io.Writer) error {
+			adapterCalled = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Disposition != "capped" {
+		t.Fatalf("STA-406: expected disposition=capped when budget exhausted, got %q", result.Disposition)
+	}
+	if adapterCalled {
+		t.Fatal("STA-406: adapter must not be called when cumulative budget is already exhausted")
+	}
+
+	// Verify DB stage.
+	var stage string
+	_ = db.QueryRow(`SELECT execution_stage FROM tasks WHERE id='budget-task'`).Scan(&stage)
+	if stage != "capped" {
+		t.Fatalf("execution_stage should be capped, got %q", stage)
+	}
+
+	// Verify a harness comment was injected.
+	var msg string
+	_ = db.QueryRow(`SELECT message FROM task_comments WHERE task_id='budget-task' AND author='harness'`).Scan(&msg)
+	if msg == "" {
+		t.Fatal("expected a harness comment explaining the budget exhaustion")
+	}
+	if !strings.Contains(msg, "budget exhausted") && !strings.Contains(msg, "Budget exhausted") &&
+		!strings.Contains(msg, "Turn budget") {
+		t.Fatalf("comment should mention budget exhaustion, got: %q", msg)
+	}
+
+	// Verify activity log.
+	var logDetails string
+	_ = db.QueryRow(
+		`SELECT details FROM activity_log WHERE task_id='budget-task' AND event_type='run_complete'`,
+	).Scan(&logDetails)
+	if !strings.Contains(logDetails, "capped") {
+		t.Fatalf("activity log should mention capped, got: %q", logDetails)
+	}
+}
+
+// TestRun_USDCapExhausted_SetsCapped verifies that USD budget exhaustion also
+// triggers the capped pre-flight path (STA-406).
+func TestRun_USDCapExhausted_SetsCapped(t *testing.T) {
+	activeClaims.Store(0)
+
+	db := openTestDB(t)
+	_, err := db.Exec(
+		`INSERT INTO tasks (id, name, repo_path, max_budget_usd, spent_usd) VALUES (?, ?, ?, ?, ?)`,
+		"usd-task", "usd test", "/tmp", 1.0, 1.0,
+	)
+	if err != nil {
+		t.Fatal("insert task:", err)
+	}
+
+	h := &Harness{
+		DB:          db,
+		RepoRoot:    "/tmp",
+		WM:          &noopWorktreeManager{},
+		Interceptor: NewInterceptor(db),
+	}
+	h.Interceptor.Guards = nil
+
+	result, err := h.Run(context.Background(), "usd-task", RunConfig{
+		MaxTurns:    5,
+		AgentID:     "tester",
+		MaxWallclock: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Disposition != "capped" {
+		t.Fatalf("expected capped for USD-exhausted task, got %q", result.Disposition)
+	}
+
+	var msg string
+	_ = db.QueryRow(`SELECT message FROM task_comments WHERE task_id='usd-task' AND author='harness'`).Scan(&msg)
+	if !strings.Contains(msg, "USD budget") && !strings.Contains(msg, "budget") {
+		t.Fatalf("comment should mention USD budget, got: %q", msg)
+	}
+}
+
 // ---- Helpers ----------------------------------------------------------------
 
 // runWithNoAdapter executes the harness lifecycle with a no-op adapter:
