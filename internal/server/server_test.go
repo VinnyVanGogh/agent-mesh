@@ -883,4 +883,96 @@ func TestServer_REST_ReportHTMLPreview(t *testing.T) {
 	}
 }
 
+func TestServer_REST_Interactions(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	client := &http.Client{}
+
+	// Create a task first
+	createBody := []byte(`{"name":"interaction test task"}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL()+"/api/tasks", bytes.NewReader(createBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create task failed: %v, status %d", err, resp.StatusCode)
+	}
+	var task map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&task)
+	resp.Body.Close()
+	taskID, _ := task["id"].(string)
+
+	// GET /api/tasks/{id}/interactions with no interactions → 200 {"interactions":[]}
+	req, _ = http.NewRequest(http.MethodGet, srv.URL()+"/api/tasks/"+taskID+"/interactions", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatalf("list interactions request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	var listResp map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&listResp)
+	interactions, _ := listResp["interactions"].([]any)
+	if interactions == nil {
+		t.Fatalf("expected interactions key in response, got: %v", listResp)
+	}
+	if len(interactions) != 0 {
+		t.Fatalf("expected 0 interactions, got %d", len(interactions))
+	}
+
+	// POST /api/tasks/{id}/interactions → create one
+	payload := `{"questions":[{"question":"confirm?","options":["yes","no"]}]}`
+	interBody, _ := json.Marshal(map[string]string{
+		"kind":    "ask_user_questions",
+		"payload": payload,
+	})
+	req, _ = http.NewRequest(http.MethodPost, srv.URL()+"/api/tasks/"+taskID+"/interactions", bytes.NewReader(interBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp2, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("create interaction request failed: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp2.Body)
+		t.Fatalf("expected 201, got %d: %s", resp2.StatusCode, body)
+	}
+	var created map[string]any
+	_ = json.NewDecoder(resp2.Body).Decode(&created)
+	interactionID := int(created["id"].(float64))
+	if interactionID == 0 {
+		t.Fatalf("expected non-zero interaction id")
+	}
+
+	// POST /api/tasks/{id}/interactions/{iid}/resolve
+	resolveBody, _ := json.Marshal(map[string]any{
+		"status":   "accepted",
+		"response": map[string]any{"answers": []any{}},
+	})
+	req, _ = http.NewRequest(http.MethodPost,
+		fmt.Sprintf("%s/api/tasks/%s/interactions/%d/resolve", srv.URL(), taskID, interactionID),
+		bytes.NewReader(resolveBody))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp3, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("resolve interaction request failed: %v", err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp3.Body)
+		t.Fatalf("expected 200, got %d: %s", resp3.StatusCode, body)
+	}
+	var resolved map[string]any
+	_ = json.NewDecoder(resp3.Body).Decode(&resolved)
+	if resolved["status"] != "accepted" {
+		t.Fatalf("expected status=accepted, got %v", resolved["status"])
+	}
+}
+
 

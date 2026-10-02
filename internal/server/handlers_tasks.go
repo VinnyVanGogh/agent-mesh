@@ -386,6 +386,123 @@ func (h *TasksHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
+// ListInteractions handles GET /api/tasks/{id}/interactions
+func (h *TasksHandler) ListInteractions(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+
+	interactions, err := context.ListInteractions(h.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	if interactions == nil {
+		interactions = []context.TaskInteraction{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"interactions": interactions,
+	})
+}
+
+// CreateInteraction handles POST /api/tasks/{id}/interactions
+func (h *TasksHandler) CreateInteraction(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+
+	var req struct {
+		Kind           string `json:"kind"`
+		Payload        string `json:"payload"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Kind) == "" {
+		writeError(w, http.StatusBadRequest, "interaction kind is required")
+		return
+	}
+
+	in := &context.TaskInteraction{
+		TaskID:          id,
+		InteractionKind: req.Kind,
+		Payload:         req.Payload,
+		IdempotencyKey:  req.IdempotencyKey,
+	}
+
+	created, err := context.CreateInteraction(h.db, in)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if h.hub != nil {
+		h.hub.Publish("task_interaction_created", map[string]any{
+			"task_id":        id,
+			"interaction_id": created.ID,
+			"kind":           created.InteractionKind,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(created)
+}
+
+// ResolveInteraction handles POST /api/tasks/{id}/interactions/{iid}/resolve
+func (h *TasksHandler) ResolveInteraction(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	iidStr := r.PathValue("iid")
+	if id == "" || iidStr == "" {
+		writeError(w, http.StatusBadRequest, "task id and interaction id are required")
+		return
+	}
+
+	iid, err := strconv.Atoi(iidStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "interaction id must be an integer")
+		return
+	}
+
+	var req struct {
+		Status   string `json:"status"`
+		Response any    `json:"response"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Status) == "" {
+		writeError(w, http.StatusBadRequest, "status is required")
+		return
+	}
+
+	updated, err := context.ResolveInteraction(h.db, iid, req.Status, req.Response)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if h.hub != nil {
+		h.hub.Publish("task_interaction_resolved", map[string]any{
+			"task_id":        id,
+			"interaction_id": iid,
+			"status":         req.Status,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(updated)
+}
+
 // SetStage handles POST /api/tasks/{id}/stage
 func (h *TasksHandler) SetStage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
