@@ -38,7 +38,7 @@ func TestWireOnWake_SetsOnWake(t *testing.T) {
 	if orchestrator.GlobalDispatcher.OnWake != nil {
 		t.Fatal("pre-condition: OnWake should be nil before wiring")
 	}
-	wireOnWake(openTestStore(t), t.TempDir(), nil)
+	wireOnWake(openTestStore(t), t.TempDir(), nil, nil)
 	if orchestrator.GlobalDispatcher.OnWake == nil {
 		t.Fatal("wireOnWake did not set GlobalDispatcher.OnWake")
 	}
@@ -66,7 +66,7 @@ func TestWireOnWake_AdapterCalledOnWake(t *testing.T) {
 		return nil
 	}
 
-	wireOnWake(store, dir, stub, &stubWM{dir: dir})
+	wireOnWake(store, dir, nil, stub, &stubWM{dir: dir})
 
 	orchestrator.GlobalDispatcher.Wake(taskID, "test_wake", "test:"+taskID)
 
@@ -105,7 +105,7 @@ func TestWireOnWake_MissingTaskSkipsRun(t *testing.T) {
 		return nil
 	}
 
-	wireOnWake(store, dir, stub, &stubWM{dir: dir})
+	wireOnWake(store, dir, nil, stub, &stubWM{dir: dir})
 
 	// Wake a task that does not exist in the DB.
 	orchestrator.GlobalDispatcher.Wake("nonexistent-task-id", "test", "test:nonexistent")

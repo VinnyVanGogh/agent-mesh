@@ -214,7 +214,7 @@ func runDaemon(ctx context.Context) error {
 	if repoRoot == "" {
 		slog.Warn("harness_repo_root not configured and STAYPOINT_REPO_ROOT not set; wake harness disabled")
 	} else {
-		wireOnWake(dbStore, repoRoot, nil)
+		wireOnWake(dbStore, repoRoot, httpServer, nil)
 		slog.Info("agent wake dispatcher wired", slog.String("repo_root", repoRoot))
 	}
 
@@ -245,9 +245,10 @@ func runDaemon(ctx context.Context) error {
 // wireOnWake assigns GlobalDispatcher.OnWake so every Wake call launches a
 // harness run for the woken task. Extracted for testability.
 //
-// adapterOverride and wmOverride, when non-nil, replace the production adapter
-// and worktree manager respectively. Pass nil for both in production.
-func wireOnWake(dbStore *db.Store, repoRoot string, adapterOverride orchestrator.AdapterRunFunc, wmOverride ...orchestrator.WorktreeManagerIface) {
+// srv, adapterOverride, and wmOverride, when non-nil, replace the production
+// SSE hub, adapter, and worktree manager respectively. Pass nil for all in tests
+// that don't need step recording or a real adapter.
+func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterOverride orchestrator.AdapterRunFunc, wmOverride ...orchestrator.WorktreeManagerIface) {
 	h := orchestrator.NewHarness(dbStore.DB(), repoRoot)
 	if len(wmOverride) > 0 && wmOverride[0] != nil {
 		h.WM = wmOverride[0]
@@ -299,18 +300,65 @@ func wireOnWake(dbStore *db.Store, repoRoot string, adapterOverride orchestrator
 			}
 		}
 
+		// Build a per-run StepRecorder when a live EventHub is available.
+		// ParseDelta bridges adapter.StreamDelta → orchestrator.StepDelta without
+		// importing the adapter package from inside the orchestrator.
+		var publishFn orchestrator.PublishFunc
+		if srv != nil {
+			hub := srv.Hub()
+			publishFn = func(eventType string, data any) { hub.Publish(eventType, data) }
+		} else {
+			publishFn = func(string, any) {}
+		}
+		idPrefix := taskID
+		if len(taskID) >= 8 {
+			idPrefix = taskID[:8]
+		}
+		runID := fmt.Sprintf("run-%s-%d", idPrefix, time.Now().UnixMilli())
+		sr := orchestrator.NewStepRecorder(dbStore.DB(), publishFn, runID, taskID)
+		sr.EmitWake(reason)
+
+		parseDelta := func(line []byte) ([]orchestrator.StepDelta, error) {
+			raw, err := adapter.AdapterFor("").ParseStreamDelta(line)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]orchestrator.StepDelta, 0, len(raw))
+			for _, d := range raw {
+				sd := orchestrator.StepDelta{
+					Kind:     orchestrator.StepDeltaKind(d.Kind),
+					Text:     d.Text,
+					ToolName: d.ToolName,
+					ToolID:   d.ToolID,
+					IsError:  d.IsError,
+				}
+				if d.Usage != nil {
+					sd.Usage = &orchestrator.StepUsage{
+						InputTokens:  d.Usage.InputTokens,
+						OutputTokens: d.Usage.OutputTokens,
+					}
+				}
+				out = append(out, sd)
+			}
+			return out, nil
+		}
+
 		// Use context.Background() so daemon shutdown does not abruptly kill
 		// in-flight harness work; the dispatcher's Drain() provides the graceful
 		// drain window during shutdown.
 		result, runErr := h.Run(context.Background(), taskID, orchestrator.RunConfig{
-			AgentID:    agentID,
-			WakeReason: reason,
-			RunAdapter: adapterFn,
+			AgentID:      agentID,
+			WakeReason:   reason,
+			RunAdapter:   adapterFn,
+			StepRecorder: sr,
+			ParseDelta:   parseDelta,
 		})
 		if runErr != nil {
 			slog.Error("harness run failed", slog.String("task", taskID), slog.Any("error", runErr))
+			sr.EmitState("error")
 			return
 		}
+		sr.EmitState(result.Disposition)
 		slog.Info("harness run complete",
 			slog.String("task", taskID),
 			slog.String("disposition", result.Disposition),
