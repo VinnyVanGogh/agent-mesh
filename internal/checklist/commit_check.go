@@ -36,6 +36,7 @@ var (
 		"06. Full-Page Task View Mode & Boss Card Cache (STA-213, STA-194)":                   "a4d3bc9",
 		"07. Verify Contracts Visual Feedback & Gemini Telemetry (STA-214, STA-170, STA-175)": "fd25533",
 		"08. Checklist Commit-Hash Gate & DoD Enforcement (STA-236)":                          "7254abb",
+		"09. Quota Seat Stability & Project Card Click-Through (STA-283)":                     "ec80ab5",
 	}
 
 	commitHashRegex = regexp.MustCompile(`\b([0-9a-f]{7,40})\b`)

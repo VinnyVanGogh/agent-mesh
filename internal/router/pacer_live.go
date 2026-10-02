@@ -1,14 +1,13 @@
 package router
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/json"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/config"
@@ -21,9 +20,11 @@ import (
 // failure (no DB, unreadable, stale rows) leaves the pools untouched so routing
 // keeps working on local estimates.
 //
-// The "claude" provider pool is resolved dynamically: the in-process fetcher
-// reads whichever Claude Code account is primary in the local Keychain, which
-// may be either the work or personal seat.
+// The "claude" provider rows come from whichever Claude Code account holds the
+// Keychain credential. They go to one pool, chosen from that account's email,
+// and are applied before the seat-specific rows so a dedicated seat reading
+// always wins. Order is fixed: ranging a map here made the winner random per
+// load, which flipped the dashboard between seats (STA-283).
 func applyLiveQuotas(state *PacerState, now time.Time) {
 	conn := openQuotaDB()
 	if conn == nil {
@@ -31,86 +32,79 @@ func applyLiveQuotas(state *PacerState, now time.Time) {
 	}
 	defer conn.Close()
 	store := quota.Store{DB: conn}
-	pools := map[string]PoolID{
-		"claude":          resolveClaudeLivePool(),
-		"claude_personal": PoolPersonalClaude,
-		"claude_work":     PoolWorkClaude,
-		"gemini":          PoolGeminiNative,
+	pools := []struct {
+		provider string
+		id       PoolID
+	}{
+		{"claude", resolveClaudeLivePool()},
+		{"claude_personal", PoolPersonalClaude},
+		{"claude_work", PoolWorkClaude},
+		{"gemini", PoolGeminiNative},
 	}
-	for provider, id := range pools {
-		rows, err := store.Load(provider)
+	for _, e := range pools {
+		rows, err := store.Load(e.provider)
 		if err != nil || len(rows) == 0 {
 			continue
 		}
-		if p, ok := state.Pools[id]; ok && p != nil {
+		if p, ok := state.Pools[e.id]; ok && p != nil {
 			applyQuotaRows(p, rows, now)
-		}
-	}
-	// In StayPoint, local Keychain credentials under "claude" default to the personal seat.
-	// If the personal pool has not been populated yet, overlay the "claude" rows onto it.
-	if persPool := state.Pools[PoolPersonalClaude]; persPool != nil && !persPool.FiveHour.Known && !persPool.Weekly.Known {
-		if rows, err := store.Load("claude"); err == nil && len(rows) > 0 {
-			applyQuotaRows(persPool, rows, now)
 		}
 	}
 }
 
 // resolveClaudeLivePool returns the pool that should receive quota data from the
-// in-process Claude fetcher. It peeks at the latest statusline-samples.ndjson
-// entry: if the account email looks like a work address (non-gmail, non-personal),
-// the data belongs to the work pool; otherwise the personal pool.
+// in-process Claude fetcher, based on the account Claude Code is logged into
+// (~/.claude.json oauthAccount, the owner of the Keychain credential). It used
+// to peek at the latest statusline sample, but both seats write samples, so the
+// answer alternated whenever they interleaved (STA-283). Unknown accounts
+// default to the personal seat.
 func resolveClaudeLivePool() PoolID {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return PoolPersonalClaude
 	}
-	email := peekLatestSampleEmail(home)
-	if email == "" {
-		return PoolPersonalClaude
-	}
-	lower := strings.ToLower(email)
-	if !strings.Contains(lower, "gmail.com") && !strings.Contains(lower, "personal") {
+	email := strings.ToLower(claudeAccountEmail(home))
+	if email != "" && !strings.Contains(email, "gmail.com") && !strings.Contains(email, "personal") {
 		return PoolWorkClaude
 	}
 	return PoolPersonalClaude
 }
 
-// peekLatestSampleEmail reads the last non-empty line of statusline-samples.ndjson
-// and returns the account_email field, or "" when unavailable.
-func peekLatestSampleEmail(home string) string {
-	path := filepath.Join(home, ".config", "token-telemetry", "statusline-samples.ndjson")
-	f, err := os.Open(path)
+var claudeAccountCache struct {
+	sync.Mutex
+	path  string
+	mtime time.Time
+	email string
+}
+
+// claudeAccountEmail returns oauthAccount.emailAddress from ~/.claude.json,
+// cached on the file's mtime since the file is large and read on every load.
+func claudeAccountEmail(home string) string {
+	path := filepath.Join(home, ".claude.json")
+	fi, err := os.Stat(path)
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil || fi.Size() == 0 {
+	c := &claudeAccountCache
+	c.Lock()
+	defer c.Unlock()
+	if c.path == path && c.mtime.Equal(fi.ModTime()) {
+		return c.email
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return ""
 	}
-	tail := int64(2048)
-	if fi.Size() < tail {
-		tail = fi.Size()
+	var cfg struct {
+		OAuthAccount struct {
+			EmailAddress string `json:"emailAddress"`
+		} `json:"oauthAccount"`
 	}
-	if _, err := f.Seek(fi.Size()-tail, io.SeekStart); err != nil {
+	if json.Unmarshal(data, &cfg) != nil {
 		return ""
 	}
-	buf := make([]byte, tail)
-	n, _ := io.ReadFull(f, buf)
-	lines := bytes.Split(buf[:n], []byte("\n"))
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := bytes.TrimSpace(lines[i])
-		if len(line) == 0 {
-			continue
-		}
-		var s struct {
-			Email string `json:"account_email"`
-		}
-		if json.Unmarshal(line, &s) == nil && s.Email != "" {
-			return s.Email
-		}
-	}
-	return ""
+	c.path, c.mtime, c.email = path, fi.ModTime(), cfg.OAuthAccount.EmailAddress
+	return c.email
 }
 
 func applyQuotaRows(p *QuotaPool, rows []quota.Row, now time.Time) {

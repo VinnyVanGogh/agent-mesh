@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -826,6 +827,11 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 	for _, s := range orgMap {
 		overview.Organizations = append(overview.Organizations, *s)
 	}
+	// orgMap order is random; sort so org cards hold their position between
+	// refreshes instead of reshuffling on every poll (STA-283).
+	sort.Slice(overview.Organizations, func(i, j int) bool {
+		return overview.Organizations[i].Name < overview.Organizations[j].Name
+	})
 }
 
 // gatherTokenTelemetry calculates input/output tokens, cost USD, and breakdowns by model and org.
