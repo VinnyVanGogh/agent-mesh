@@ -5,6 +5,10 @@
 > **Date:** 2026-10-01  
 > **Scope:** STA company only. Other companies (MAN, PER, RUN) stay in Paperclip until post-cutover parity is proven.
 
+## Design Thesis (from STA-200/STA-201)
+
+StayPoint's performance edge over Paperclip comes from **lean context**: task + repo state + minimal harness ≈ ≤4,000 tokens. Paperclip injects heartbeat rules, skill catalogs, and per-agent instruction files before the agent sees the task, causing "lost in the middle" degradation. StayPoint enforces agent behavior in **platform code** (disposition checks, DoD gate, interaction card schema, governance tables), not in prompt boilerplate. This means StayPoint has no concept of "hiring an agent with instructions" — any adapter run on any task gets the same lean context.
+
 ---
 
 ## 1. Current-State Gap Table
@@ -120,20 +124,24 @@ _Both lean on code that already exists; this is wiring, not invention._
 
 > **The earliest point where StayPoint work is tracked in StayPoint.**
 
-Definition: Board can create a task in StayPoint, assign it to the Chief of Staff, the CoS wakes automatically, asks a question via an interaction card, Board responds via the StayPoint web UI, CoS wakes again and marks done — **without ever opening Paperclip or a terminal.**
+Definition: Board can create a task in StayPoint, assign it to an adapter (Claude/Gemini), the adapter wakes automatically, asks a question via an interaction card, Board responds via the StayPoint web UI, adapter wakes again and marks done — **without ever opening Paperclip or a terminal.**
 
 Estimated time from now: **~3 weeks** (M0 ≈ 1 week remaining + M1 ≈ 1 week + M2 ≈ 3 days + M3 ≈ 1 day).
 
 ---
 
-### M4 · Agent directory + per-agent inbox — M — post-dogfood
+### M4 · Adapter status dashboard — M — post-dogfood
 
-- `/api/agents` list endpoint (minimal: id, name, role, current task)
-- Per-agent inbox: `GET /api/tasks?assignedAgent={id}` filter
-- Agent page in web UI showing assigned tasks and last run
-- Re-hire the Chief of Staff and 2–3 engineers in StayPoint
+StayPoint has no "agents with roles and instructions" — it has adapters (claude, gemini, codex) configured to run tasks. The lean-prompt thesis (STA-200/STA-201) is that platform code — disposition checks, governance tables, DoD gate, interaction schema — replaces per-agent instruction injection. There is nothing to "re-hire."
 
-_Full fleet re-hiring (22 agents) is after cutover._
+What to build instead:
+
+- `GET /api/adapters` — lists configured adapters and their current load (active task, last run, last error)
+- Per-adapter task filter: `GET /api/tasks?adapter={claude|gemini|...}`
+- Adapter status cards in web UI (active task, last run timestamp, quota remaining)
+- Per-project adapter preference in config (`staypoint.toml`: `[project.STA] default_adapter = "claude"`)
+
+_No AGENTS.md, no role config, no hiring. Platform enforces discipline in code._
 
 ---
 
