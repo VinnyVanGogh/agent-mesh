@@ -116,7 +116,16 @@ func (h *TasksHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 		"task":         task,
 		"comments":     comments,
 		"dependencies": depGraph,
+		"work_kind":    task.WorkKind,
 	})
+}
+
+// validWorkKinds is the set of accepted work_kind values.
+var validWorkKinds = map[string]bool{
+	"coding":       true,
+	"architecture": true,
+	"planning":     true,
+	"qa":           true,
 }
 
 // CreateTask handles POST /api/tasks
@@ -131,6 +140,7 @@ func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Organization    string  `json:"organization"`
 		Project         string  `json:"project"`
 		AssigneeAgentID string  `json:"assignee_agent_id"`
+		WorkKind        string  `json:"work_kind"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -140,6 +150,11 @@ func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	if strings.TrimSpace(req.Name) == "" {
 		writeError(w, http.StatusBadRequest, "task name is required")
+		return
+	}
+
+	if req.WorkKind != "" && !validWorkKinds[req.WorkKind] {
+		writeError(w, http.StatusBadRequest, "invalid work_kind: must be one of coding, architecture, planning, qa")
 		return
 	}
 
@@ -153,6 +168,7 @@ func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Organization:    req.Organization,
 		Project:         req.Project,
 		AssigneeAgentID: req.AssigneeAgentID,
+		WorkKind:        req.WorkKind,
 	}
 
 	task, err := context.CreateTaskWithOptions(h.db, opts)

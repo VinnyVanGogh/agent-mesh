@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     checkout_run_id TEXT,
     checkout_agent_id TEXT,
     assignee_agent_id TEXT,
+    work_kind      TEXT NOT NULL DEFAULT 'coding',
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     deleted_at     TEXT
@@ -666,6 +667,17 @@ var Migrations = []Migration{
 		Name:    "run_steps_status",
 		Up: func(conn *sql.DB) error {
 			_, err := conn.Exec(`ALTER TABLE run_steps ADD COLUMN status TEXT NOT NULL DEFAULT '';`)
+			if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+				return err
+			}
+			return nil
+		},
+	},
+	{
+		Version: 13,
+		Name:    "task_work_kind",
+		Up: func(conn *sql.DB) error {
+			_, err := conn.Exec(`ALTER TABLE tasks ADD COLUMN work_kind TEXT NOT NULL DEFAULT 'coding';`)
 			if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 				return err
 			}
