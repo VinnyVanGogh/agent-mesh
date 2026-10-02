@@ -6987,6 +6987,32 @@ function renderTaskPage(container, task, comments, interactions) {
     meta.appendChild(lblWrap);
   }
 
+  // ── Run Now button ──
+  const runableStatuses = new Set(['todo', 'backlog', 'blocked', 'in_review']);
+  if (task.id && runableStatuses.has(task.status)) {
+    const runBtn = el('button', 'run-now-btn', '▶ Run Now');
+    runBtn.type = 'button';
+    runBtn.addEventListener('click', async () => {
+      runBtn.disabled = true;
+      runBtn.textContent = 'Starting…';
+      try {
+        const res = await fetch(`/api/tasks/${encodeURIComponent(task.id)}/stage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader() },
+          body: JSON.stringify({ stage: 'in_progress' }),
+        });
+        if (!res.ok) throw new Error(`${res.status}`);
+        runBtn.textContent = '✓ Started';
+        setTimeout(() => openTaskPage(task.id), 800);
+      } catch (err) {
+        runBtn.disabled = false;
+        runBtn.textContent = '▶ Run Now';
+        console.error('run-now failed:', err);
+      }
+    });
+    meta.appendChild(runBtn);
+  }
+
   layout.appendChild(meta);
   container.appendChild(layout);
 }
