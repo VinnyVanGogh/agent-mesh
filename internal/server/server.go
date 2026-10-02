@@ -98,6 +98,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 		// Sessions REST API
 		sessionsH := NewSessionsHandler(s.opts.DB, s.hub)
+		mux.HandleFunc("GET /api/agents", sessionsH.ListAgents)
 		mux.HandleFunc("GET /api/sessions", sessionsH.ListSessions)
 		mux.HandleFunc("POST /api/sessions", sessionsH.RegisterSession)
 		mux.HandleFunc("GET /api/sessions/{id}", sessionsH.GetSession)

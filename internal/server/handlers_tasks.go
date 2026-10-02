@@ -107,14 +107,15 @@ func (h *TasksHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 // CreateTask handles POST /api/tasks
 func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name         string  `json:"name"`
-		RepoPath     string  `json:"repo_path"`
-		GitBranch    string  `json:"git_branch"`
-		AccountRole  string  `json:"account_role"`
-		MaxBudgetUSD float64 `json:"max_budget_usd"`
-		MaxTurns     int     `json:"max_turns"`
-		Organization string  `json:"organization"`
-		Project      string  `json:"project"`
+		Name            string  `json:"name"`
+		RepoPath        string  `json:"repo_path"`
+		GitBranch       string  `json:"git_branch"`
+		AccountRole     string  `json:"account_role"`
+		MaxBudgetUSD    float64 `json:"max_budget_usd"`
+		MaxTurns        int     `json:"max_turns"`
+		Organization    string  `json:"organization"`
+		Project         string  `json:"project"`
+		AssigneeAgentID string  `json:"assignee_agent_id"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -128,14 +129,15 @@ func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := context.TaskCreateOptions{
-		Name:         req.Name,
-		RepoPath:     req.RepoPath,
-		GitBranch:    req.GitBranch,
-		AccountRole:  req.AccountRole,
-		MaxBudgetUSD: req.MaxBudgetUSD,
-		MaxTurns:     req.MaxTurns,
-		Organization: req.Organization,
-		Project:      req.Project,
+		Name:            req.Name,
+		RepoPath:        req.RepoPath,
+		GitBranch:       req.GitBranch,
+		AccountRole:     req.AccountRole,
+		MaxBudgetUSD:    req.MaxBudgetUSD,
+		MaxTurns:        req.MaxTurns,
+		Organization:    req.Organization,
+		Project:         req.Project,
+		AssigneeAgentID: req.AssigneeAgentID,
 	}
 
 	task, err := context.CreateTaskWithOptions(h.db, opts)

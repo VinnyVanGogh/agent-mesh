@@ -33,6 +33,7 @@ type Task struct {
 	ExecutionStage  string  `json:"execution_stage"`
 	CheckoutRunID   string  `json:"checkout_run_id,omitempty"`
 	CheckoutAgentID string  `json:"checkout_agent_id,omitempty"`
+	AssigneeAgentID string  `json:"assignee_agent_id,omitempty"`
 	CreatedAt       string  `json:"created_at"`
 	UpdatedAt       string  `json:"updated_at"`
 	DeletedAt       *string `json:"deleted_at,omitempty"`
@@ -83,15 +84,16 @@ type TaskDependencyGraph struct {
 
 // TaskCreateOptions holds configuration for creating a task with budgets.
 type TaskCreateOptions struct {
-	Name         string
-	RepoPath     string
-	GitBranch    string
-	AccountRole  string
-	MaxBudgetUSD float64
-	MaxTurns     int
-	Organization string
-	Project      string
-	ParentID     string
+	Name            string
+	RepoPath        string
+	GitBranch       string
+	AccountRole     string
+	MaxBudgetUSD    float64
+	MaxTurns        int
+	Organization    string
+	Project         string
+	ParentID        string
+	AssigneeAgentID string
 }
 
 // GetCurrentGitBranch returns the current active git branch for a directory.
@@ -159,10 +161,10 @@ func CreateTaskWithOptions(db *sql.DB, opts TaskCreateOptions) (*Task, error) {
 		INSERT INTO tasks (
 			id, name, repo_path, git_branch, status, account_role,
 			max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-			organization, project, parent_id,
+			organization, project, parent_id, assignee_agent_id,
 			created_at, updated_at
 		)
-		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 0, 0.0, 0, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		VALUES (?, ?, ?, ?, 'active', ?, ?, ?, 0, 0.0, 0, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 	`
 
 	var parentID interface{}
@@ -170,7 +172,12 @@ func CreateTaskWithOptions(db *sql.DB, opts TaskCreateOptions) (*Task, error) {
 		parentID = opts.ParentID
 	}
 
-	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns, opts.Organization, opts.Project, parentID); err != nil {
+	var assigneeAgentID interface{}
+	if opts.AssigneeAgentID != "" {
+		assigneeAgentID = opts.AssigneeAgentID
+	}
+
+	if _, err := db.Exec(query, taskID, name, repoPath, gitBranch, role, opts.MaxBudgetUSD, opts.MaxTurns, opts.Organization, opts.Project, parentID, assigneeAgentID); err != nil {
 		return nil, fmt.Errorf("failed to insert task: %w", err)
 	}
 
@@ -282,7 +289,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 			SELECT id, name, repo_path, git_branch, status, account_role,
 			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 			       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id,
-			       is_blocked, block_reason, created_at, updated_at, deleted_at
+			       assignee_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
 			FROM tasks
 			WHERE status != 'soft_deleted'
 			ORDER BY created_at DESC
@@ -292,7 +299,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 			SELECT id, name, repo_path, git_branch, status, account_role,
 			       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
 			       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id,
-			       is_blocked, block_reason, created_at, updated_at, deleted_at
+			       assignee_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
 			FROM tasks
 			WHERE status = 'active'
 			ORDER BY created_at DESC
@@ -308,7 +315,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 	var tasks []Task
 	for rows.Next() {
 		var t Task
-		var deletedAt, org, proj, blockReason, parentID, checkoutRunID, checkoutAgentID sql.NullString
+		var deletedAt, org, proj, blockReason, parentID, checkoutRunID, checkoutAgentID, assigneeAgentID sql.NullString
 		if err := rows.Scan(
 			&t.ID,
 			&t.Name,
@@ -327,6 +334,7 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 			&t.ExecutionStage,
 			&checkoutRunID,
 			&checkoutAgentID,
+			&assigneeAgentID,
 			&t.IsBlocked,
 			&blockReason,
 			&t.CreatedAt,
@@ -347,14 +355,11 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 		if checkoutAgentID.Valid {
 			t.CheckoutAgentID = checkoutAgentID.String
 		}
+		if assigneeAgentID.Valid {
+			t.AssigneeAgentID = assigneeAgentID.String
+		}
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
-		}
-		if org.Valid {
-			t.Organization = org.String
-		}
-		if proj.Valid {
-			t.Project = proj.String
 		}
 		if org.Valid {
 			t.Organization = org.String
@@ -414,7 +419,8 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 	query := `
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
+		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id,
+		       assignee_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE id = ? OR id = ? OR id LIKE ?
 		ORDER BY created_at DESC
@@ -428,7 +434,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 
 	row := db.QueryRow(query, id, fullID, prefixMatch)
 	var t Task
-	var deletedAt, org, proj, blockReason, parentID, checkoutRunID, checkoutAgentID sql.NullString
+	var deletedAt, org, proj, blockReason, parentID, checkoutRunID, checkoutAgentID, assigneeAgentID sql.NullString
 	if err := row.Scan(
 		&t.ID,
 		&t.Name,
@@ -447,6 +453,7 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 		&t.ExecutionStage,
 		&checkoutRunID,
 		&checkoutAgentID,
+		&assigneeAgentID,
 		&t.IsBlocked,
 		&blockReason,
 		&t.CreatedAt,
@@ -469,6 +476,9 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 	}
 	if checkoutAgentID.Valid {
 		t.CheckoutAgentID = checkoutAgentID.String
+	}
+	if assigneeAgentID.Valid {
+		t.AssigneeAgentID = assigneeAgentID.String
 	}
 	if deletedAt.Valid {
 		t.DeletedAt = &deletedAt.String
@@ -683,7 +693,8 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	query := `
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
+		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id,
+		       assignee_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE status = 'active' AND (repo_path = ? OR repo_path LIKE ?)
 		ORDER BY updated_at DESC
@@ -691,7 +702,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	`
 	row := db.QueryRow(query, cleanPath, cleanPath+"/%")
 	var t Task
-	var deletedAt, org, proj, blockReason, parentID, checkoutRunID, checkoutAgentID sql.NullString
+	var deletedAt, org, proj, blockReason, parentID, checkoutRunID, checkoutAgentID, assigneeAgentID sql.NullString
 	err := row.Scan(
 		&t.ID,
 		&t.Name,
@@ -710,6 +721,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.ExecutionStage,
 		&checkoutRunID,
 		&checkoutAgentID,
+		&assigneeAgentID,
 		&t.IsBlocked,
 		&blockReason,
 		&t.CreatedAt,
@@ -720,14 +732,11 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		if blockReason.Valid {
 			t.BlockReason = blockReason.String
 		}
+		if assigneeAgentID.Valid {
+			t.AssigneeAgentID = assigneeAgentID.String
+		}
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
-		}
-		if org.Valid {
-			t.Organization = org.String
-		}
-		if proj.Valid {
-			t.Project = proj.String
 		}
 		if org.Valid {
 			t.Organization = org.String
@@ -742,7 +751,8 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 	fallbackQuery := `
 		SELECT id, name, repo_path, git_branch, status, account_role,
 		       max_budget_usd, max_turns, spent_tokens, spent_usd, spent_turns,
-		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
+		       organization, project, parent_id, execution_stage, checkout_run_id, checkout_agent_id,
+		       assignee_agent_id, is_blocked, block_reason, created_at, updated_at, deleted_at
 		FROM tasks
 		WHERE status = 'active'
 		ORDER BY updated_at DESC
@@ -767,6 +777,7 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		&t.ExecutionStage,
 		&checkoutRunID,
 		&checkoutAgentID,
+		&assigneeAgentID,
 		&t.IsBlocked,
 		&blockReason,
 		&t.CreatedAt,
@@ -777,14 +788,11 @@ func GetActiveTaskForRepo(db *sql.DB, repoPath string) (*Task, error) {
 		if blockReason.Valid {
 			t.BlockReason = blockReason.String
 		}
+		if assigneeAgentID.Valid {
+			t.AssigneeAgentID = assigneeAgentID.String
+		}
 		if deletedAt.Valid {
 			t.DeletedAt = &deletedAt.String
-		}
-		if org.Valid {
-			t.Organization = org.String
-		}
-		if proj.Valid {
-			t.Project = proj.String
 		}
 		if org.Valid {
 			t.Organization = org.String
