@@ -189,6 +189,32 @@ func (s *Server) getToolsList() []Tool {
 				Required: []string{"task_id", "reason"},
 			},
 		},
+		{
+			Name:        "staypoint_create_interaction",
+			Description: "raise an interaction card on a task (ask_user_questions, request_confirmation, suggest_tasks)",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"task_id": {
+						Type:        "string",
+						Description: "ID of the task to attach the interaction to",
+					},
+					"kind": {
+						Type:        "string",
+						Description: "Interaction kind: ask_user_questions, request_confirmation, or suggest_tasks",
+					},
+					"payload": {
+						Type:        "string",
+						Description: "JSON payload for the interaction card",
+					},
+					"idempotency_key": {
+						Type:        "string",
+						Description: "Optional unique key to prevent duplicate cards",
+					},
+				},
+				Required: []string{"task_id", "kind"},
+			},
+		},
 	}
 }
 
@@ -210,6 +236,8 @@ func (s *Server) handleCallTool(ctx context.Context, params CallToolParams) *Too
 		return s.handleStatus(ctx, params.Arguments)
 	case "staypoint_wake":
 		return s.handleWake(ctx, params.Arguments)
+	case "staypoint_create_interaction":
+		return s.handleCreateInteraction(ctx, params.Arguments)
 	default:
 		return toolError(fmt.Sprintf("unknown tool: %s", params.Name))
 	}
@@ -476,4 +504,43 @@ func (s *Server) handleWake(ctx context.Context, rawArgs json.RawMessage) *ToolC
 	orchestrator.GlobalDispatcher.Wake(args.TaskID, args.Reason, args.IdempotencyKey)
 
 	return toolSuccess("wake dispatched")
+}
+
+func (s *Server) handleCreateInteraction(ctx context.Context, rawArgs json.RawMessage) *ToolCallResult {
+	var args struct {
+		TaskID         string `json:"task_id"`
+		Kind           string `json:"kind"`
+		Payload        string `json:"payload"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if len(rawArgs) > 0 {
+		_ = json.Unmarshal(rawArgs, &args)
+	}
+
+	if strings.TrimSpace(args.TaskID) == "" || strings.TrimSpace(args.Kind) == "" {
+		return toolError("task_id and kind are required")
+	}
+
+	dbConn, err := s.getDB()
+	if err != nil {
+		return toolError(fmt.Sprintf("database error: %v", err))
+	}
+
+	in := &meshContext.TaskInteraction{
+		TaskID:          args.TaskID,
+		InteractionKind: args.Kind,
+		Payload:         args.Payload,
+		IdempotencyKey:  args.IdempotencyKey,
+	}
+
+	created, err := meshContext.CreateInteraction(dbConn, in)
+	if err != nil {
+		return toolError(fmt.Sprintf("create interaction error: %v", err))
+	}
+
+	data, err := json.MarshalIndent(created, "", "  ")
+	if err != nil {
+		return toolError(fmt.Sprintf("json marshal error: %v", err))
+	}
+	return toolSuccess(string(data))
 }

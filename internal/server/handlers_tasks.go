@@ -3,11 +3,14 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/VinnyVanGogh/staypoint/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
+	"github.com/google/uuid"
 )
 
 type TasksHandler struct {
@@ -105,14 +108,15 @@ func (h *TasksHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 // CreateTask handles POST /api/tasks
 func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name         string  `json:"name"`
-		RepoPath     string  `json:"repo_path"`
-		GitBranch    string  `json:"git_branch"`
-		AccountRole  string  `json:"account_role"`
-		MaxBudgetUSD float64 `json:"max_budget_usd"`
-		MaxTurns     int     `json:"max_turns"`
-		Organization string  `json:"organization"`
-		Project      string  `json:"project"`
+		Name            string  `json:"name"`
+		RepoPath        string  `json:"repo_path"`
+		GitBranch       string  `json:"git_branch"`
+		AccountRole     string  `json:"account_role"`
+		MaxBudgetUSD    float64 `json:"max_budget_usd"`
+		MaxTurns        int     `json:"max_turns"`
+		Organization    string  `json:"organization"`
+		Project         string  `json:"project"`
+		AssigneeAgentID string  `json:"assignee_agent_id"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -126,14 +130,15 @@ func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := context.TaskCreateOptions{
-		Name:         req.Name,
-		RepoPath:     req.RepoPath,
-		GitBranch:    req.GitBranch,
-		AccountRole:  req.AccountRole,
-		MaxBudgetUSD: req.MaxBudgetUSD,
-		MaxTurns:     req.MaxTurns,
-		Organization: req.Organization,
-		Project:      req.Project,
+		Name:            req.Name,
+		RepoPath:        req.RepoPath,
+		GitBranch:       req.GitBranch,
+		AccountRole:     req.AccountRole,
+		MaxBudgetUSD:    req.MaxBudgetUSD,
+		MaxTurns:        req.MaxTurns,
+		Organization:    req.Organization,
+		Project:         req.Project,
+		AssigneeAgentID: req.AssigneeAgentID,
 	}
 
 	task, err := context.CreateTaskWithOptions(h.db, opts)
@@ -499,6 +504,9 @@ func (h *TasksHandler) ResolveInteraction(w http.ResponseWriter, r *http.Request
 		})
 	}
 
+	orchestrator.GlobalDispatcher.Wake(id, "interaction_resolved",
+		fmt.Sprintf("interaction_resolved:%s:%d", id, iid))
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(updated)
 }
@@ -542,6 +550,11 @@ func (h *TasksHandler) SetStage(w http.ResponseWriter, r *http.Request) {
 			"task_id": id,
 			"stage":   req.Stage,
 		})
+	}
+
+	if req.Stage == "in_progress" {
+		// Per-click key so each Run Now press can start a new run even within 24 h.
+		orchestrator.GlobalDispatcher.Wake(id, "run_now", "run_now:"+id+":"+uuid.New().String()[:8])
 	}
 
 	w.Header().Set("Content-Type", "application/json")

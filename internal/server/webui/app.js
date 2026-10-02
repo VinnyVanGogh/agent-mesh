@@ -232,8 +232,9 @@ function mdEl(text) {
 }
 
 // ── Fetch helpers ─────────────────────────────────────────
-async function apiFetch(path) {
-  const r = await fetch(path, { headers: authHeader() });
+async function apiFetch(path, options = {}) {
+  const { headers: extraHeaders, ...rest } = options;
+  const r = await fetch(path, { headers: { ...authHeader(), ...extraHeaders }, ...rest });
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.json();
 }
@@ -6706,6 +6707,9 @@ function renderInteractionCards(container, taskId, interactions) {
 
     // Body
     const body = el('div', 'interaction-card-body');
+    // selectedAnswers: map of question index -> selected option string (for ask_user_questions)
+    const selectedAnswers = {};
+
     if (kind === 'request_confirmation') {
       const prompt = payloadObj.prompt || '';
       if (prompt) {
@@ -6715,16 +6719,25 @@ function renderInteractionCards(container, taskId, interactions) {
       }
     } else if (kind === 'ask_user_questions') {
       const qs = payloadObj.questions || [];
-      for (const q of qs) {
+      qs.forEach((q, qi) => {
         const item = el('div', 'interaction-question-item');
         item.appendChild(el('p', '', q.question || ''));
         if (q.options && q.options.length) {
           const opts = el('div', 'interaction-question-opts');
-          for (const opt of q.options) opts.appendChild(el('span', 'interaction-question-opt', opt));
+          for (const opt of q.options) {
+            const btn = el('button', 'interaction-question-opt', opt);
+            btn.addEventListener('click', () => {
+              // toggle selection; only one option per question
+              opts.querySelectorAll('.interaction-question-opt').forEach(b => b.classList.remove('selected'));
+              btn.classList.add('selected');
+              selectedAnswers[qi] = opt;
+            });
+            opts.appendChild(btn);
+          }
           item.appendChild(opts);
         }
         body.appendChild(item);
-      }
+      });
     } else if (kind === 'suggest_tasks') {
       const tasks = payloadObj.tasks || [];
       for (const t of tasks) {
@@ -6743,10 +6756,16 @@ function renderInteractionCards(container, taskId, interactions) {
       acceptBtn.disabled = true;
       rejectBtn.disabled = true;
       try {
+        // Build response payload for ask_user_questions
+        let response;
+        if (kind === 'ask_user_questions') {
+          const qs = payloadObj.questions || [];
+          response = { answers: qs.map((q, qi) => ({ question: q.question || '', selected: selectedAnswers[qi] || null })) };
+        }
         await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/interactions/${interaction.id}/resolve`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status })
+          body: JSON.stringify({ status, ...(response !== undefined ? { response } : {}) })
         });
         card.classList.add('resolved');
         const resolvedBadge = el('span', `interaction-resolved-badge status-${status}`, status === 'accepted' ? '✓ Accepted' : '✗ Rejected');
@@ -6988,7 +7007,7 @@ function renderTaskPage(container, task, comments, interactions) {
   }
 
   // ── Run Now button ──
-  const runableStatuses = new Set(['todo', 'backlog', 'blocked', 'in_review']);
+  const runableStatuses = new Set(['active', 'todo', 'backlog', 'blocked', 'in_review']);
   if (task.id && runableStatuses.has(task.status)) {
     const runBtn = el('button', 'run-now-btn', '▶ Run Now');
     runBtn.type = 'button';
@@ -8386,3 +8405,88 @@ loadAll().then(() => {
 setInterval(() => {
   preloadBossReports(true);
 }, BOSS_REPORT_CACHE_TTL_MS);
+
+// ── Create Task Modal ──────────────────────────────────────
+(function initCreateTaskModal() {
+  const modal   = document.getElementById('create-task-modal');
+  const openBtn = document.getElementById('open-create-task-btn');
+  const closeBtn = document.getElementById('create-task-modal-close');
+  const cancelBtn = document.getElementById('create-task-cancel');
+  const form    = document.getElementById('create-task-form');
+  const errBox  = document.getElementById('create-task-error');
+  const assigneeSel = document.getElementById('ct-assignee');
+  const submitBtn = document.getElementById('create-task-submit');
+
+  if (!modal || !openBtn || !form) return;
+
+  function openModal() {
+    modal.style.display = 'flex';
+    form.reset();
+    errBox.style.display = 'none';
+    submitBtn.disabled = false;
+    // Load agents into dropdown
+    apiFetch('/api/agents').then(data => {
+      const agents = data.agents || [];
+      while (assigneeSel.options.length > 1) assigneeSel.remove(1);
+      for (const a of agents) {
+        const opt = document.createElement('option');
+        opt.value = a.id;
+        opt.textContent = a.label || (a.agent_type + ' / ' + a.id.slice(0, 8));
+        assigneeSel.appendChild(opt);
+      }
+    }).catch(() => {});
+    document.getElementById('ct-name').focus();
+  }
+
+  function closeModal() {
+    modal.style.display = 'none';
+  }
+
+  openBtn.addEventListener('click', openModal);
+  closeBtn.addEventListener('click', closeModal);
+  cancelBtn.addEventListener('click', closeModal);
+  modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && modal.style.display !== 'none') closeModal(); });
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    errBox.style.display = 'none';
+    const name = document.getElementById('ct-name').value.trim();
+    if (!name) { showErr('Task name is required.'); return; }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Creating…';
+
+    const body = {
+      name,
+      assignee_agent_id: assigneeSel.value || '',
+      organization: document.getElementById('ct-org').value.trim(),
+      project:      document.getElementById('ct-project').value.trim(),
+      repo_path:    document.getElementById('ct-repo').value.trim(),
+      git_branch:   document.getElementById('ct-branch').value.trim(),
+      max_budget_usd: parseFloat(document.getElementById('ct-budget').value) || 0,
+      max_turns:    parseInt(document.getElementById('ct-turns').value, 10) || 0,
+    };
+
+    try {
+      const task = await apiFetch('/api/tasks', { method: 'POST', body: JSON.stringify(body) });
+      closeModal();
+      // Refresh task list
+      const fresh = await apiFetch('/api/tasks?status=all').catch(() => ({ tasks: [] }));
+      const taskArr = (fresh.tasks || []);
+      for (const t of taskArr) { state.tasks[t.id] = t; }
+      renderTaskStatusPage();
+      // Navigate to new task
+      if (task && task.id) openDetail(task.id);
+    } catch (err) {
+      showErr(err.message || 'Failed to create task.');
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Create Task';
+    }
+  });
+
+  function showErr(msg) {
+    errBox.textContent = msg;
+    errBox.style.display = 'block';
+  }
+})();
