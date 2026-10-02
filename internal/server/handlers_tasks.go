@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -490,7 +491,11 @@ func (h *TasksHandler) ResolveInteraction(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	updated, err := context.ResolveInteraction(h.db, iid, req.Status, req.Response)
+	updated, err := context.ResolveTaskInteraction(h.db, id, iid, req.Status, req.Response)
+	if errors.Is(err, context.ErrInteractionNotFound) {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

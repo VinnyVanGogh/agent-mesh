@@ -287,6 +287,20 @@ func CreateInteraction(db *sql.DB, in *TaskInteraction) (*TaskInteraction, error
 
 // ResolveInteraction marks an interaction as accepted, rejected, cancelled, or superseded.
 func ResolveInteraction(db *sql.DB, interactionID int, status string, response any) (*TaskInteraction, error) {
+	return resolveInteraction(db, "", interactionID, status, response)
+}
+
+// ResolveTaskInteraction is ResolveInteraction scoped to one task: an
+// interaction that belongs to a different task is reported as
+// ErrInteractionNotFound and left untouched.
+func ResolveTaskInteraction(db *sql.DB, taskID string, interactionID int, status string, response any) (*TaskInteraction, error) {
+	if taskID == "" {
+		return nil, ErrInteractionNotFound
+	}
+	return resolveInteraction(db, taskID, interactionID, status, response)
+}
+
+func resolveInteraction(db *sql.DB, taskID string, interactionID int, status string, response any) (*TaskInteraction, error) {
 	switch status {
 	case InteractionStatusAccepted, InteractionStatusRejected, InteractionStatusCancelled, InteractionStatusSuperseded:
 	default:
@@ -296,6 +310,9 @@ func ResolveInteraction(db *sql.DB, interactionID int, status string, response a
 	existing, err := GetInteraction(db, interactionID)
 	if err != nil {
 		return nil, err
+	}
+	if taskID != "" && existing.TaskID != taskID {
+		return nil, ErrInteractionNotFound
 	}
 
 	if existing.Status != InteractionStatusPending {

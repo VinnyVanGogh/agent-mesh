@@ -4,8 +4,13 @@ package governance
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 )
+
+// ErrNotAssigned is returned when a review or vote comes from an actor who is
+// not assigned to the task as a reviewer or approver.
+var ErrNotAssigned = errors.New("governance: actor is not assigned to this task")
 
 // Config is the per-task governance configuration.
 type Config struct {
@@ -242,6 +247,11 @@ func SubmitReview(db *sql.DB, taskID, reviewerID, decision, notes, actorID strin
 	if !valid[decision] {
 		return nil, fmt.Errorf("governance: invalid review decision %q", decision)
 	}
+	if ok, err := isAssigned(db, "task_reviewers", "reviewer_id", taskID, reviewerID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, fmt.Errorf("%w: %q is not a reviewer", ErrNotAssigned, reviewerID)
+	}
 
 	res, err := db.Exec(
 		`INSERT INTO task_review_decisions (task_id, reviewer_id, decision, notes) VALUES (?, ?, ?, ?)`,
@@ -280,6 +290,11 @@ func SubmitApprovalVote(db *sql.DB, taskID, approverID, vote, reason, actorID st
 	if !valid[vote] {
 		return nil, fmt.Errorf("governance: invalid vote %q", vote)
 	}
+	if ok, err := isAssigned(db, "task_approvers", "approver_id", taskID, approverID); err != nil {
+		return nil, err
+	} else if !ok {
+		return nil, fmt.Errorf("%w: %q is not an approver", ErrNotAssigned, approverID)
+	}
 
 	res, err := db.Exec(
 		`INSERT INTO task_approval_votes (task_id, approver_id, vote, reason) VALUES (?, ?, ?, ?)`,
@@ -301,6 +316,20 @@ func SubmitApprovalVote(db *sql.DB, taskID, approverID, vote, reason, actorID st
 		id,
 	).Scan(&av.ID, &av.TaskID, &av.ApproverID, &av.Vote, &av.Reason, &av.VotedAt)
 	return &av, nil
+}
+
+// isAssigned reports whether actorID appears in table for the task. table and
+// column are package constants, never caller input.
+func isAssigned(db *sql.DB, table, column, taskID, actorID string) (bool, error) {
+	var n int
+	err := db.QueryRow(
+		`SELECT COUNT(*) FROM `+table+` WHERE task_id = ? AND `+column+` = ?`,
+		taskID, actorID,
+	).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("governance: check assignment: %w", err)
+	}
+	return n > 0, nil
 }
 
 // GetSnapshot returns the full governance state for a task.
