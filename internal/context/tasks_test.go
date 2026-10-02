@@ -319,3 +319,87 @@ func TestBlockerGraphAndRationales(t *testing.T) {
 	}
 }
 
+// TestListRunStepsByTask_MultiRunOrdering verifies that steps from different runs
+// are grouped by their run's earliest timestamp, not interleaved by seq.
+// Run A started earlier; run B was inserted first in the DB. The query must
+// return all of run A before any of run B.
+func TestListRunStepsByTask_MultiRunOrdering(t *testing.T) {
+	database := setupTestDB(t)
+	task, err := CreateTask(database, "ordering-test", "/repo", "main", "coder")
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	// Insert run B steps first with a later start time.
+	_, err = database.Exec(`
+		INSERT INTO run_steps (id, run_id, task_id, seq, kind, title, status, started_at, ended_at) VALUES
+		('b1', 'run-B', ?, 1, 'wake',  'wake-B',  'done', '2024-01-01T10:00:10Z', '2024-01-01T10:00:10Z'),
+		('b2', 'run-B', ?, 2, 'think', 'think-B', 'done', '2024-01-01T10:00:11Z', '2024-01-01T10:00:15Z')`,
+		task.ID, task.ID)
+	if err != nil {
+		t.Fatalf("insert run-B: %v", err)
+	}
+
+	// Insert run A steps second with an earlier start time.
+	_, err = database.Exec(`
+		INSERT INTO run_steps (id, run_id, task_id, seq, kind, title, status, started_at, ended_at) VALUES
+		('a1', 'run-A', ?, 1, 'wake',  'wake-A',  'done', '2024-01-01T10:00:00Z', '2024-01-01T10:00:00Z'),
+		('a2', 'run-A', ?, 2, 'think', 'think-A', 'done', '2024-01-01T10:00:01Z', '2024-01-01T10:00:05Z')`,
+		task.ID, task.ID)
+	if err != nil {
+		t.Fatalf("insert run-A: %v", err)
+	}
+
+	steps, err := ListRunStepsByTask(database, task.ID)
+	if err != nil {
+		t.Fatalf("ListRunStepsByTask: %v", err)
+	}
+	if len(steps) != 4 {
+		t.Fatalf("expected 4 steps, got %d", len(steps))
+	}
+	// Expect: a1, a2 (run-A), then b1, b2 (run-B).
+	wantOrder := []string{"a1", "a2", "b1", "b2"}
+	for i, s := range steps {
+		if s.ID != wantOrder[i] {
+			t.Errorf("steps[%d].ID = %q, want %q", i, s.ID, wantOrder[i])
+		}
+	}
+}
+
+// TestListRunStepsByTask_Duration verifies that steps with distinct started_at and
+// ended_at are returned with both fields set so the UI can compute real durations.
+func TestListRunStepsByTask_Duration(t *testing.T) {
+	database := setupTestDB(t)
+	task, err := CreateTask(database, "duration-test", "/repo", "main", "coder")
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	_, err = database.Exec(`
+		INSERT INTO run_steps (id, run_id, task_id, seq, kind, title, status, started_at, ended_at) VALUES
+		('d1', 'run-X', ?, 1, 'think', 'heavy think', 'done',
+		 '2024-01-01T10:00:00Z', '2024-01-01T10:00:05Z')`,
+		task.ID)
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	steps, err := ListRunStepsByTask(database, task.ID)
+	if err != nil {
+		t.Fatalf("ListRunStepsByTask: %v", err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("no steps returned")
+	}
+	s := steps[0]
+	if s.StartedAt == nil || *s.StartedAt == "" {
+		t.Error("StartedAt must be non-nil and non-empty")
+	}
+	if s.EndedAt == nil || *s.EndedAt == "" {
+		t.Error("EndedAt must be non-nil and non-empty")
+	}
+	if s.StartedAt != nil && s.EndedAt != nil && *s.StartedAt == *s.EndedAt {
+		t.Errorf("started_at == ended_at for a 5-second step: %s", *s.StartedAt)
+	}
+}
+
