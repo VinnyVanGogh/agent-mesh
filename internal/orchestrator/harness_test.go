@@ -126,21 +126,22 @@ func initGitRepo(t *testing.T, dir string) {
 	}
 }
 
-// TestClaim_FiresWake verifies that a successful Claim fires GlobalDispatcher.Wake
-// with reason "assigned" and the runID as idempotency key.
-func TestClaim_FiresWake(t *testing.T) {
+// TestClaim_DoesNotFireWake verifies that a successful Claim does NOT fire
+// GlobalDispatcher.Wake. The self-wake was removed (STA-401): it caused a
+// spurious second wireOnWake invocation for the already-running task, which
+// hit ErrConcurrencyCap and wrote "Woke up" + "Finished: error" steps into
+// the timeline via StepRecorder.
+func TestClaim_DoesNotFireWake(t *testing.T) {
 	activeClaims.Store(0)
 
 	db := openTestDB(t)
 	insertTask(t, db, "wake-task", "/tmp")
 	h := &Harness{DB: db}
 
-	type wakeCall struct{ task, reason string }
-	ch := make(chan wakeCall, 1)
-
+	fired := make(chan struct{}, 1)
 	prev := GlobalDispatcher.OnWake
-	GlobalDispatcher.OnWake = func(taskID, reason string) {
-		ch <- wakeCall{taskID, reason}
+	GlobalDispatcher.OnWake = func(_, _ string) {
+		fired <- struct{}{}
 	}
 	t.Cleanup(func() { GlobalDispatcher.OnWake = prev })
 
@@ -151,15 +152,10 @@ func TestClaim_FiresWake(t *testing.T) {
 	defer activeClaims.Add(-1)
 
 	select {
-	case got := <-ch:
-		if got.task != "wake-task" {
-			t.Errorf("expected Wake taskID %q, got %q", "wake-task", got.task)
-		}
-		if got.reason != "assigned" {
-			t.Errorf("expected Wake reason %q, got %q", "assigned", got.reason)
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Fatal("timed out waiting for Wake callback")
+	case <-fired:
+		t.Fatal("Claim must not fire GlobalDispatcher.Wake (STA-401: self-wake removed)")
+	case <-time.After(200 * time.Millisecond):
+		// expected: no wake fired
 	}
 }
 

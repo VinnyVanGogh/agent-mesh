@@ -144,7 +144,6 @@ func (h *Harness) Claim(ctx context.Context, taskID, runID, agentID string) erro
 	}
 
 	slog.Info("task claimed", slog.String("task", taskID), slog.String("run", runID))
-	GlobalDispatcher.Wake(taskID, "assigned", runID)
 	return nil
 }
 
