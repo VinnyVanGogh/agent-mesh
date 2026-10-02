@@ -349,6 +349,111 @@ func TestStepRecorder_WakeStartedAtIsOwnTime(t *testing.T) {
 	}
 }
 
+// TestStepRecorder_EmptyThinkBlockDropped verifies that a thinking delta with empty
+// text does not produce a persisted step (STA-460).
+func TestStepRecorder_EmptyThinkBlockDropped(t *testing.T) {
+	var published []RunStep
+	var mu sync.Mutex
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				published = append(published, s)
+				mu.Unlock()
+			}
+		}
+	}
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+	// Empty thinking block — simulates a redacted/empty thinking block from Claude.
+	r.Feed(StepDelta{Kind: StepDeltaThinking, Text: ""})
+	// A subsequent tool_use should close the (non-existent) think step.
+	r.Feed(StepDelta{Kind: StepDeltaToolUse, ToolName: "Bash", ToolID: "t1"})
+	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "t1"})
+	r.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, s := range published {
+		if s.Kind == StepThink {
+			t.Errorf("expected no think step, but got one with body=%q", s.Body)
+		}
+	}
+}
+
+// TestStepRecorder_EmptyThinkThenRealThink verifies that an empty thinking block
+// followed by a real thinking block produces exactly one non-empty think step.
+func TestStepRecorder_EmptyThinkThenRealThink(t *testing.T) {
+	var published []RunStep
+	var mu sync.Mutex
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				published = append(published, s)
+				mu.Unlock()
+			}
+		}
+	}
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+	r.Feed(StepDelta{Kind: StepDeltaThinking, Text: ""})
+	r.Feed(StepDelta{Kind: StepDeltaThinking, Text: "actual thinking"})
+	r.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	thinkSteps := 0
+	for _, s := range published {
+		if s.Kind == StepThink {
+			thinkSteps++
+			if s.Body == "" {
+				t.Error("think step has empty body")
+			}
+			if s.Body != "actual thinking" {
+				t.Errorf("think body = %q, want %q", s.Body, "actual thinking")
+			}
+		}
+	}
+	if thinkSteps != 1 {
+		t.Errorf("expected 1 think step, got %d", thinkSteps)
+	}
+}
+
+// TestStepRecorder_CloseDropsEmptyThink verifies the defense-in-depth path:
+// a think step that somehow ends up with an empty body is not persisted.
+func TestStepRecorder_CloseDropsEmptyThink(t *testing.T) {
+	var published []RunStep
+	var mu sync.Mutex
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				published = append(published, s)
+				mu.Unlock()
+			}
+		}
+	}
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+	// Directly inject an empty think step to hit the closePendingWithStatusLocked guard.
+	r.mu.Lock()
+	r.seq++
+	r.pending = &openStep{
+		seq:       r.seq,
+		kind:      StepThink,
+		title:     "Thinking",
+		startedAt: time.Now().UTC(),
+	}
+	r.mu.Unlock()
+	r.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, s := range published {
+		if s.Kind == StepThink {
+			t.Errorf("expected empty think step to be dropped, but it was persisted with body=%q", s.Body)
+		}
+	}
+}
+
 // TestStepRecorder_RouteStartedAtIsOwnTime verifies the same property for EmitRoute.
 func TestStepRecorder_RouteStartedAtIsOwnTime(t *testing.T) {
 	var mu sync.Mutex
