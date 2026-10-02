@@ -57,7 +57,9 @@ func TestServer_GovernanceAuthz(t *testing.T) {
 	mustStatus(http.StatusUnprocessableEntity, "POST", "/api/tasks/"+a+"/transition", map[string]any{"to": "done"})
 
 	snap := mustStatus(http.StatusOK, "GET", "/api/tasks/"+a+"/governance", nil)
-	if snap["reviews"] != nil || snap["votes"] != nil {
+	reviews, _ := snap["reviews"].([]any)
+	votes, _ := snap["votes"].([]any)
+	if len(reviews) != 0 || len(votes) != 0 {
 		t.Fatalf("forbidden submissions were recorded: reviews=%v votes=%v", snap["reviews"], snap["votes"])
 	}
 
