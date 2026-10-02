@@ -18,7 +18,6 @@ test.describe('task list', () => {
   });
 
   test('create a task with the New Task form', async ({ page, api }) => {
-    knownBug('STA-347');
     await page.goto('/task-status');
     await page.getByRole('button', { name: '+ New Task' }).click({ timeout: 5_000 });
     const name = `UI created ${Date.now().toString(36)}`;

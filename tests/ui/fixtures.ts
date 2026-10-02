@@ -125,9 +125,6 @@ export function simulateRunSteps(taskId: string): number {
  * cue to delete the entry. STAYPOINT_UI_STRICT=1 ignores this list.
  */
 export const KNOWN_BUGS = {
-  'STA-350': 'Interaction card Accept/Reject send GET instead of POST; question options are not selectable (fix on paperclip/sta-289-v2, not in main)',
-  'STA-347': 'No create-task form in the web UI (form on paperclip/sta-289-v2, not in main)',
-  'STA-348': 'Run Now is hidden for local tasks: they have status "active", which is not in runableStatuses (fix on paperclip/sta-289-v2, not in main)',
   'STA-377': 'Daemon sends named SSE events (event: task_created / run.step) but app.js only listens on onmessage, so the UI never live-updates',
   'STA-378': 'StepRecorder inserts run_steps.status and expects an integer id, but the run_steps table has no status column and a TEXT id: every step insert fails',
   'STA-379': 'With the daemon down, opening a task renders the copy cached at page load with no error or staleness notice (openTaskPage falls back to state.tasks)',

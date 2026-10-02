@@ -1,11 +1,10 @@
-import { test, expect, knownBug, gotoTaskPage } from '../fixtures';
+import { test, expect, gotoTaskPage } from '../fixtures';
 
 // Regression coverage for STA-350: cards must actually resolve, and a
 // question must be answerable by picking one of its options.
 
 test.describe('interaction cards', () => {
   test('Accept resolves a confirmation', async ({ page, api }) => {
-    knownBug('STA-350');
     const task = await api.createTask('Interaction accept');
     const ix = await api.createInteraction(task.id, 'request_confirmation', { prompt: 'Ship the accept path?' });
 
@@ -22,7 +21,6 @@ test.describe('interaction cards', () => {
   });
 
   test('Reject resolves a confirmation', async ({ page, api }) => {
-    knownBug('STA-350');
     const task = await api.createTask('Interaction reject');
     const ix = await api.createInteraction(task.id, 'request_confirmation', { prompt: 'Ship the reject path?' });
 
@@ -35,7 +33,6 @@ test.describe('interaction cards', () => {
   });
 
   test('a question is answered by selecting an option', async ({ page, api }) => {
-    knownBug('STA-350');
     const task = await api.createTask('Interaction question');
     const ix = await api.createInteraction(task.id, 'ask_user_questions', {
       questions: [{ question: 'Which database?', options: ['sqlite', 'postgres'] }],

@@ -4,7 +4,6 @@ import { test, expect, knownBug, gotoTaskPage, simulateRunSteps } from '../fixtu
 // (it POSTs stage=in_progress), so it also covers "status transition via UI".
 
 test('Run Now moves a fresh task to in_progress', async ({ page, api }) => {
-  knownBug('STA-348');
   const task = await api.createTask('Run now');
   expect(task.execution_stage).toBe('todo');
 
