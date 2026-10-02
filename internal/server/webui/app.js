@@ -6489,6 +6489,108 @@ document.getElementById('panel-open')?.addEventListener('click', () => {
   if (state.openDetailTaskId) openTaskPage(state.openDetailTaskId);
 });
 
+// ── Diff pane helpers ──────────────────────────────────────
+async function fetchTaskDiff(taskId, checkpointId) {
+  const qs = checkpointId ? `?checkpoint=${encodeURIComponent(checkpointId)}` : '';
+  try {
+    return await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/diff${qs}`);
+  } catch {
+    return { diff: '', files: [], checkpoint_id: checkpointId || '' };
+  }
+}
+
+async function fetchTaskCheckpoints(taskId) {
+  try {
+    const r = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/checkpoints`);
+    return r.checkpoints || [];
+  } catch {
+    return [];
+  }
+}
+
+function renderDiffPane(container, task, checkpoints, diffData) {
+  container.innerHTML = '';
+
+  const titleRow = el('div', 'diff-pane-title');
+  titleRow.appendChild(document.createTextNode('Diff'));
+  const refreshBtn = el('button', 'diff-pane-refresh-btn', '↺');
+  refreshBtn.title = 'Refresh diff';
+  titleRow.appendChild(refreshBtn);
+  container.appendChild(titleRow);
+
+  // Checkpoint selector buttons
+  const selector = el('div', 'diff-pane-selector');
+  const cpOptions = [{ id: '', label: 'Whole run' }, ...checkpoints.slice(0, 5).map(c => ({
+    id: c.id,
+    label: c.message ? c.message.slice(0, 22) : c.id.slice(0, 8),
+  }))];
+
+  let activeCP = diffData.checkpoint_id || '';
+  const files = diffData.files || [];
+
+  const fileList = el('ul', 'diff-file-list');
+
+  const renderFiles = (filesArr, cpId) => {
+    fileList.innerHTML = '';
+    if (!filesArr || !filesArr.length) {
+      fileList.appendChild(el('li', 'diff-pane-empty', 'No changes since this checkpoint.'));
+      return;
+    }
+    for (const fname of filesArr) {
+      const row = el('li', 'diff-file-row');
+      row.appendChild(el('span', 'diff-file-name', fname));
+      const undoBtn = el('button', 'diff-file-undo-btn', 'Undo');
+      undoBtn.title = `Restore to checkpoint${cpId ? ' ' + cpId.slice(0, 8) : ''}`;
+      undoBtn.addEventListener('click', async () => {
+        undoBtn.disabled = true;
+        undoBtn.textContent = '…';
+        try {
+          await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/checkpoint-undo`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ checkpoint_id: cpId || '' }),
+          });
+          undoBtn.textContent = '✓';
+          // Refresh diff pane
+          const fresh = await fetchTaskDiff(task.id, cpId);
+          renderFiles(fresh.files || [], cpId);
+        } catch {
+          undoBtn.disabled = false;
+          undoBtn.textContent = 'Undo';
+        }
+      });
+      row.appendChild(undoBtn);
+      fileList.appendChild(row);
+    }
+  };
+
+  for (const opt of cpOptions) {
+    const btn = el('button', 'diff-pane-selector-btn', opt.label);
+    if (opt.id === activeCP) btn.classList.add('active');
+    btn.addEventListener('click', async () => {
+      selector.querySelectorAll('.diff-pane-selector-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeCP = opt.id;
+      btn.textContent = '…';
+      const fresh = await fetchTaskDiff(task.id, opt.id);
+      btn.textContent = opt.label;
+      renderFiles(fresh.files || [], opt.id);
+    });
+    selector.appendChild(btn);
+  }
+  container.appendChild(selector);
+
+  renderFiles(files, activeCP);
+  container.appendChild(fileList);
+
+  refreshBtn.addEventListener('click', async () => {
+    refreshBtn.textContent = '…';
+    const fresh = await fetchTaskDiff(task.id, activeCP);
+    refreshBtn.textContent = '↺';
+    renderFiles(fresh.files || [], activeCP);
+  });
+}
+
 // ── Run-step timeline helpers ──────────────────────────────
 
 const STEP_KIND_ICON = {
@@ -6640,11 +6742,13 @@ async function openTaskPage(target, pushHistory = true) {
   const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
 
   try {
-    const [taskResp, commentsResp, stepsResp, interactionsResp] = await Promise.all([
+    const [taskResp, commentsResp, stepsResp, interactionsResp, diffResp, checkpointsResp] = await Promise.all([
       apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}`),
       apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}/comments`).catch(() => ({ comments: [] })),
       (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/run-steps`).catch(() => ({ steps: [] })) : Promise.resolve({ steps: [] })),
-      (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/interactions`).catch(() => ({ interactions: [] })) : Promise.resolve({ interactions: [] }))
+      (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/interactions`).catch(() => ({ interactions: [] })) : Promise.resolve({ interactions: [] })),
+      (!isFleet ? fetchTaskDiff(resolvedId, '') : Promise.resolve({ diff: '', files: [], checkpoint_id: '' })),
+      (!isFleet ? fetchTaskCheckpoints(resolvedId) : Promise.resolve([])),
     ]);
     const task = taskResp.task || taskResp;
     const comments = (taskResp.comments && taskResp.comments.length)
@@ -6653,6 +6757,8 @@ async function openTaskPage(target, pushHistory = true) {
     task.comments = comments;
     task.runSteps = stepsResp?.steps || [];
     const interactions = interactionsResp?.interactions || [];
+    task._diffData = diffResp;
+    task._checkpoints = checkpointsResp;
 
     if (task.id) state.openDetailTaskId = task.id;
 
@@ -6671,7 +6777,7 @@ async function openTaskPage(target, pushHistory = true) {
     if (task.description) state.taskDescriptions[activeId] = task.description;
     state.taskComments[activeId] = comments;
 
-    renderTaskPage(pageContent, task, comments, interactions);
+    renderTaskPage(pageContent, task, comments, interactions, task._diffData, task._checkpoints);
     startChatPoll(activeId);
   } catch (err) {
     const is404 = err && /^404\b/.test(err.message);
@@ -6681,7 +6787,7 @@ async function openTaskPage(target, pushHistory = true) {
         pageContent.innerHTML = '<p style="color:var(--red);padding:2rem">Task not found.</p>';
       }
     } else if (cached && pageContent) {
-      renderTaskPage(pageContent, cached, cached.comments || [], []);
+      renderTaskPage(pageContent, cached, cached.comments || [], [], cached._diffData || null, cached._checkpoints || []);
       const banner = document.createElement('div');
       banner.style.cssText = 'background:var(--red,#c0392b);color:#fff;padding:.5rem 1rem;font-size:.85rem;font-weight:600;';
       banner.textContent = 'Daemon unreachable — showing cached copy. Actions are disabled.';
@@ -6796,7 +6902,7 @@ function renderInteractionCards(container, taskId, interactions) {
   container.appendChild(section);
 }
 
-function renderTaskPage(container, task, comments, interactions) {
+function renderTaskPage(container, task, comments, interactions, diffData, checkpoints) {
   container.innerHTML = '';
 
   // Back bar
@@ -6962,6 +7068,13 @@ function renderTaskPage(container, task, comments, interactions) {
   main.appendChild(chatSection);
 
   layout.appendChild(main);
+
+  // ── Diff sidebar ──
+  const diffPane = el('div', 'task-page-diff');
+  if (!isFleetTaskId(task.id || '')) {
+    renderDiffPane(diffPane, task, checkpoints || [], diffData || { diff: '', files: [], checkpoint_id: '' });
+  }
+  layout.appendChild(diffPane);
 
   // ── Metadata sidebar ──
   const meta = el('div', 'task-page-meta');
