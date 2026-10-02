@@ -189,20 +189,48 @@ if ! "$BINARY" eval-contracts --sprint STA-236 --repo-root "$REPO" 2>&1; then
     echo "  ! eval-contracts failed — daemon will fall back to live evaluation (may be slow without TCC)."
 fi
 
-if launchctl list | grep -q "$LABEL"; then
+# `launchctl print` exits non-zero when the job is not loaded. Do not use
+# `launchctl list | grep -q`: grep exits on the first match, launchctl takes
+# SIGPIPE, and under pipefail the pipeline fails even though the job is there.
+DOMAIN="gui/$(id -u)"
+if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
     echo "→ Stopping $LABEL ..."
     launchctl unload "$PLIST" 2>/dev/null || true
 fi
 
 echo "→ Starting $LABEL ..."
 launchctl load "$PLIST" 2>/dev/null || true
-launchctl kickstart -k "gui/$(id -u)/$LABEL" 2>/dev/null || true
+launchctl kickstart -k "$DOMAIN/$LABEL" 2>/dev/null || true
 
-sleep 2
-if launchctl list | grep -q "$LABEL"; then
-    echo "✓ $LABEL is running."
+# Poll instead of checking once: the daemon can take a few seconds to open its
+# DB and bind the HTTP port. Success means /api/health answers with the commit
+# just built, which also proves the old binary is not the one still serving.
+HEALTH_URL="http://127.0.0.1:41421/api/health"
+START_TIMEOUT="${STAYPOINT_START_TIMEOUT:-20}"
+PID=""
+HEALTH_COMMIT=""
+deadline=$((SECONDS + START_TIMEOUT))
+while [ "$SECONDS" -lt "$deadline" ]; do
+    PID="$(launchctl print "$DOMAIN/$LABEL" 2>/dev/null | awk '!found && $1 == "pid" && $2 == "=" { print $3; found = 1 }' || true)"
+    TOKEN="$(cat "$HOME/.staypoint/auth_token" 2>/dev/null || true)"
+    if [ -n "$PID" ] && [ -n "$TOKEN" ]; then
+        HEALTH_COMMIT="$(curl -s -m 2 -H "Authorization: Bearer $TOKEN" "$HEALTH_URL" 2>/dev/null \
+            | sed -n 's/.*"git_commit":"\([^"]*\)".*/\1/p' || true)"
+        [ "$HEALTH_COMMIT" = "$BUILD_LABEL" ] && break
+    fi
+    sleep 1
+done
+
+if [ -n "$PID" ] && [ "$HEALTH_COMMIT" = "$BUILD_LABEL" ]; then
+    echo "✓ $LABEL is running (pid $PID, /api/health git_commit $HEALTH_COMMIT)."
+elif [ -n "$PID" ] && [ -n "$HEALTH_COMMIT" ]; then
+    echo "✗ $LABEL is up (pid $PID) but /api/health reports $HEALTH_COMMIT, expected $BUILD_LABEL — check /tmp/staypointd.err"
+    exit 1
+elif [ -n "$PID" ]; then
+    echo "✗ $LABEL has pid $PID but /api/health did not answer within ${START_TIMEOUT}s — check /tmp/staypointd.err"
+    exit 1
 else
-    echo "✗ $LABEL failed to start — check /tmp/staypointd.err"
+    echo "✗ $LABEL failed to start within ${START_TIMEOUT}s — check /tmp/staypointd.err"
     exit 1
 fi
 
