@@ -225,6 +225,22 @@ CREATE TABLE IF NOT EXISTS checklist_history (
 );
 
 CREATE INDEX IF NOT EXISTS idx_checklist_history_item ON checklist_history (item_id, id DESC);
+CREATE TABLE IF NOT EXISTS run_steps (
+    id          TEXT PRIMARY KEY,
+    run_id      TEXT NOT NULL,
+    task_id     TEXT REFERENCES tasks(id),
+    seq         INTEGER NOT NULL DEFAULT 0,
+    parent_seq  INTEGER,
+    kind        TEXT NOT NULL DEFAULT '',
+    title       TEXT NOT NULL DEFAULT '',
+    body        TEXT,
+    started_at  TEXT,
+    ended_at    TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps (run_id, seq);
+CREATE INDEX IF NOT EXISTS idx_run_steps_task ON run_steps (task_id, seq);
 ` + ChatSchema
 
 const ChatSchema = `
@@ -600,6 +616,35 @@ var Migrations = []Migration{
 			_ = conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('checklist_items') WHERE name='contract'").Scan(&count)
 			if count == 0 {
 				_, _ = conn.Exec("ALTER TABLE checklist_items ADD COLUMN contract TEXT;")
+			}
+			return nil
+		},
+	},
+	{
+		Version: 10,
+		Name:    "run_steps",
+		Up: func(conn *sql.DB) error {
+			queries := []string{
+				`CREATE TABLE IF NOT EXISTS run_steps (
+					id          TEXT PRIMARY KEY,
+					run_id      TEXT NOT NULL,
+					task_id     TEXT REFERENCES tasks(id),
+					seq         INTEGER NOT NULL DEFAULT 0,
+					parent_seq  INTEGER,
+					kind        TEXT NOT NULL DEFAULT '',
+					title       TEXT NOT NULL DEFAULT '',
+					body        TEXT,
+					started_at  TEXT,
+					ended_at    TEXT,
+					created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				);`,
+				`CREATE INDEX IF NOT EXISTS idx_run_steps_run ON run_steps (run_id, seq);`,
+				`CREATE INDEX IF NOT EXISTS idx_run_steps_task ON run_steps (task_id, seq);`,
+			}
+			for _, q := range queries {
+				if _, err := conn.Exec(q); err != nil {
+					return err
+				}
 			}
 			return nil
 		},

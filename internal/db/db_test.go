@@ -35,6 +35,7 @@ func TestDB_OpenAndSchema(t *testing.T) {
 		"schema_versions", "accounts", "quota_windows", "tasks", "wire_messages",
 		"wire_cursors", "agent_sessions", "agent_working_files", "agent_circuit_breakers",
 		"chat_sessions", "chat_messages", "chat_tool_calls", "session_provider_handles",
+		"run_steps",
 	}
 	for _, tbl := range tables {
 		var count int
@@ -164,5 +165,35 @@ func TestDB_SchemaMigration_FailureRestore(t *testing.T) {
 	_ = store.DB().QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='bad_table';").Scan(&count)
 	if count != 0 {
 		t.Errorf("expected bad_table to be reverted")
+	}
+}
+
+func TestDB_RunSteps(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, err := Open(filepath.Join(tmpDir, "run_steps.db"))
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer store.Close()
+
+	_, err = store.DB().Exec(
+		`INSERT INTO run_steps (id, run_id, seq, kind, title, body, started_at, ended_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"step-1", "run-abc", 1, "tool_call", "Read file", "reading main.go",
+		"2026-10-01T00:00:00.000Z", "2026-10-01T00:00:01.000Z",
+	)
+	if err != nil {
+		t.Fatalf("insert run_steps failed: %v", err)
+	}
+
+	var id, runID, kind, title string
+	var seq int
+	err = store.DB().QueryRow(`SELECT id, run_id, seq, kind, title FROM run_steps WHERE run_id = ?`, "run-abc").
+		Scan(&id, &runID, &seq, &kind, &title)
+	if err != nil {
+		t.Fatalf("SELECT run_steps failed: %v", err)
+	}
+	if id != "step-1" || runID != "run-abc" || seq != 1 || kind != "tool_call" || title != "Read file" {
+		t.Errorf("unexpected row: id=%s run_id=%s seq=%d kind=%s title=%s", id, runID, seq, kind, title)
 	}
 }
