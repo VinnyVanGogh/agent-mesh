@@ -85,6 +85,8 @@ func AdapterFor(provider string) ProviderAdapter {
 	switch provider {
 	case "claude":
 		return ClaudeAdapter{}
+	case "cloud_session":
+		return CloudSessionAdapter{}
 	case "codex":
 		return CodexAdapter{}
 	case "ollama":
@@ -104,6 +106,7 @@ func adapterFor(provider string) ProviderAdapter {
 func Adapters() []ProviderAdapter {
 	return []ProviderAdapter{
 		ClaudeAdapter{},
+		CloudSessionAdapter{},
 		AgyAdapter{},
 		CodexAdapter{},
 		OllamaAdapter{},

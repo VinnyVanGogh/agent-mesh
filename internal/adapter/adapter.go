@@ -264,6 +264,10 @@ func isPoolLocked(pool *router.QuotaPool) bool {
 //
 //	provider=gemini: [gemini, personal-claude]
 //	provider=claude: [personal-claude, gemini]
+//
+// Opt-in provider (no failover):
+//
+//	provider=cloud_session: [cloud_session]  — burns $250 cloud credit, not quota
 func BuildProviderChain(isWork bool, provider string) []providerCandidate {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -287,6 +291,16 @@ func BuildProviderChain(isWork bool, provider string) []providerCandidate {
 		Name:    "personal-claude",
 		PoolID:  router.PoolPersonalClaude,
 		Adapter: ClaudeAdapter{},
+	}
+
+	// cloud_session is opt-in and never participates in failover chains.
+	// It burns the $250 Anthropic-managed cloud credit, not local quota pools.
+	if provider == "cloud_session" {
+		return []providerCandidate{{
+			Name:    "cloud_session",
+			PoolID:  "cloud-session", // not tracked by pacer; isPoolLocked returns false for unknown pools
+			Adapter: CloudSessionAdapter{},
+		}}
 	}
 
 	if isWork {

@@ -35,9 +35,10 @@ type Resolver struct {
 
 // envOverrideKeys lists the environment variables that override each provider binary.
 var envOverrideKeys = map[string]string{
-	"claude": "STAYPOINT_CLAUDE_BIN",
-	"gemini": "STAYPOINT_AGY_BIN",
-	"codex":  "STAYPOINT_CODEX_BIN",
+	"claude":        "STAYPOINT_CLAUDE_BIN",
+	"cloud_session": "STAYPOINT_CLAUDE_BIN",
+	"gemini":        "STAYPOINT_AGY_BIN",
+	"codex":         "STAYPOINT_CODEX_BIN",
 }
 
 // NewDefaultResolver builds a Resolver from the user's staypoint config and environment.

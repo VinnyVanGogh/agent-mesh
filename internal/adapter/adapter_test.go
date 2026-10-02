@@ -760,6 +760,151 @@ func TestFallbackClearsConversationID(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// CloudSessionAdapter Tests
+// =============================================================================
+
+// TestBuildCloudSessionArgs verifies that --cloud and --output-format json are
+// present and that --output-format stream-json is never used.
+func TestBuildCloudSessionArgs(t *testing.T) {
+	opts := ParsedOptions{
+		Prompt:       "do the thing",
+		OutputFormat: "stream-json", // callers may request stream-json; cloud_session must ignore it
+	}
+	args := buildCloudSessionArgs(opts)
+
+	hasCloud := false
+	hasOutputFormatJSON := false
+	hasStreamJSON := false
+	hasDangerousSkip := false
+	prevArg := ""
+	for _, a := range args {
+		if a == "--cloud" {
+			hasCloud = true
+		}
+		if a == "--dangerously-skip-permissions" {
+			hasDangerousSkip = true
+		}
+		if prevArg == "--output-format" {
+			if a == "json" {
+				hasOutputFormatJSON = true
+			}
+			if a == "stream-json" {
+				hasStreamJSON = true
+			}
+		}
+		prevArg = a
+	}
+	if !hasCloud {
+		t.Error("cloud session args must include --cloud")
+	}
+	if !hasOutputFormatJSON {
+		t.Errorf("cloud session args must include --output-format json, got: %v", args)
+	}
+	if hasStreamJSON {
+		t.Errorf("cloud session must NOT use --output-format stream-json (unsupported with --cloud), got: %v", args)
+	}
+	if !hasDangerousSkip {
+		t.Error("cloud session args must include --dangerously-skip-permissions")
+	}
+	// Verify prompt is the last arg
+	if len(args) == 0 || args[len(args)-1] != opts.Prompt {
+		t.Errorf("expected prompt as last arg, got args: %v", args)
+	}
+}
+
+// TestCloudSessionAdapter_Execute runs the adapter with a fake claude binary that
+// emits a cloud session launch JSON and verifies the adapter emits a synthetic
+// stream-json result event with cloud_session_started subtype.
+func TestCloudSessionAdapter_Execute(t *testing.T) {
+	script := `#!/bin/sh
+echo '{"session_id":"test123","url":"https://claude.ai/code/test123"}'
+`
+	f, err := os.CreateTemp("", "dummy-claude-cloud-*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	f.WriteString(script)
+	f.Close()
+	os.Chmod(f.Name(), 0755)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx = context.WithValue(ctx, "testBin", f.Name())
+
+	var stdout, stderr bytes.Buffer
+	pacerState := &router.PacerState{}
+
+	err = RunAdapter(ctx, ".", pacerState, "cloud_session", []string{"--prompt", "do something"}, nil, &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("RunAdapter cloud_session failed: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "cloud_session_started") {
+		t.Errorf("expected cloud_session_started in output, got %q", out)
+	}
+	if !strings.Contains(out, "test123") {
+		t.Errorf("expected session_id test123 in output, got %q", out)
+	}
+	if !strings.Contains(out, "https://claude.ai/code/test123") {
+		t.Errorf("expected URL in output, got %q", out)
+	}
+
+	// Verify ParseStreamDelta handles the emitted line correctly.
+	a := CloudSessionAdapter{}
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		deltas, parseErr := a.ParseStreamDelta([]byte(trimmed))
+		if parseErr != nil {
+			t.Errorf("ParseStreamDelta error on %q: %v", trimmed, parseErr)
+			continue
+		}
+		for _, d := range deltas {
+			if d.Kind == DeltaResult {
+				if d.Status != "cloud_session_started" {
+					t.Errorf("expected status cloud_session_started, got %q", d.Status)
+				}
+				if d.SessionID != "test123" {
+					t.Errorf("expected session_id test123, got %q", d.SessionID)
+				}
+				if !strings.Contains(d.Text, "Cloud session started.") {
+					t.Errorf("expected result text to contain 'Cloud session started.', got %q", d.Text)
+				}
+			}
+		}
+	}
+}
+
+// TestBuildProviderChain_CloudSession verifies that provider=cloud_session yields
+// a single-element chain with no failover, and that the pool ID is not one tracked
+// by the pacer (so it is never quota-locked).
+func TestBuildProviderChain_CloudSession(t *testing.T) {
+	for _, isWork := range []bool{true, false} {
+		chain := BuildProviderChain(isWork, "cloud_session")
+		if len(chain) != 1 {
+			t.Fatalf("isWork=%v: expected single-element chain for cloud_session, got %d", isWork, len(chain))
+		}
+		if chain[0].Name != "cloud_session" {
+			t.Errorf("isWork=%v: expected name cloud_session, got %q", isWork, chain[0].Name)
+		}
+		// Pool must not be a known pacer pool so it is never quota-locked.
+		knownPools := map[router.PoolID]bool{
+			router.PoolGeminiNative:   true,
+			router.PoolWorkClaude:     true,
+			router.PoolPersonalClaude: true,
+			router.Pool3PClaude:       true,
+		}
+		if knownPools[chain[0].PoolID] {
+			t.Errorf("cloud_session pool %q must not be a tracked pacer pool", chain[0].PoolID)
+		}
+	}
+}
+
 func TestCancelProcessGroup_NoOrphans(t *testing.T) {
 	tmpDir := t.TempDir()
 	pidFile := filepath.Join(tmpDir, "child.pid")
