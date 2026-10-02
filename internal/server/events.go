@@ -234,11 +234,14 @@ func (h *EventHub) HandleSSE() http.HandlerFunc {
 }
 
 func writeSSEEvent(w http.ResponseWriter, evt Event) error {
-	dataBytes, err := json.Marshal(evt.Data)
+	// Emit unnamed events (no "event:" line) so EventSource.onmessage fires.
+	// The full Event struct (id, type, data, timestamp) is embedded in the
+	// data payload so the browser can read evt.type from JSON.parse(ev.data).
+	dataBytes, err := json.Marshal(evt)
 	if err != nil {
-		dataBytes = []byte(`"{}"`)
+		return err
 	}
 
-	_, err = fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", evt.ID, evt.Type, string(dataBytes))
+	_, err = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", evt.ID, string(dataBytes))
 	return err
 }
