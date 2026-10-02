@@ -178,7 +178,7 @@ func ListReviewers(db *sql.DB, taskID string) ([]Reviewer, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var reviewers []Reviewer
+	reviewers := []Reviewer{}
 	for rows.Next() {
 		var r Reviewer
 		if err := rows.Scan(&r.ID, &r.TaskID, &r.ReviewerID, &r.ReviewerType, &r.AssignedAt); err != nil {
@@ -225,7 +225,7 @@ func ListApprovers(db *sql.DB, taskID string) ([]Approver, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var approvers []Approver
+	approvers := []Approver{}
 	for rows.Next() {
 		var a Approver
 		if err := rows.Scan(&a.ID, &a.TaskID, &a.ApproverID, &a.ApproverType, &a.AssignedAt); err != nil {
@@ -327,7 +327,7 @@ func GetSnapshot(db *sql.DB, taskID string) (*GovernanceSnapshot, error) {
 		return nil, err
 	}
 	defer reviewRows.Close()
-	var reviews []ReviewDecision
+	reviews := []ReviewDecision{}
 	for reviewRows.Next() {
 		var r ReviewDecision
 		if err := reviewRows.Scan(&r.ID, &r.TaskID, &r.ReviewerID, &r.Decision, &r.Notes, &r.DecidedAt); err != nil {
@@ -345,7 +345,7 @@ func GetSnapshot(db *sql.DB, taskID string) (*GovernanceSnapshot, error) {
 		return nil, err
 	}
 	defer voteRows.Close()
-	var votes []ApprovalVote
+	votes := []ApprovalVote{}
 	for voteRows.Next() {
 		var v ApprovalVote
 		if err := voteRows.Scan(&v.ID, &v.TaskID, &v.ApproverID, &v.Vote, &v.Reason, &v.VotedAt); err != nil {

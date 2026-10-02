@@ -68,6 +68,9 @@ func (h *TasksHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		end = total
 	}
 	slice := filtered[start:end]
+	if slice == nil {
+		slice = []context.Task{}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -334,8 +337,20 @@ func (h *TasksHandler) AddBlocker(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.BlockerID == id {
+		writeError(w, http.StatusBadRequest, "task cannot block itself")
+		return
+	}
+
 	if err := context.AddTaskBlocker(h.db, id, req.BlockerID, req.Rationale); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to add blocker: "+err.Error())
+		switch err {
+		case context.ErrBlockerSelfReference:
+			writeError(w, http.StatusBadRequest, err.Error())
+		case context.ErrBlockerCycle:
+			writeError(w, http.StatusConflict, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to add blocker: "+err.Error())
+		}
 		return
 	}
 
