@@ -52,12 +52,13 @@ type StepUsage struct {
 // StepDelta is the recorder's internal representation of one stream event.
 // It mirrors adapter.StreamDelta but lives in this package to avoid the import cycle.
 type StepDelta struct {
-	Kind     StepDeltaKind
-	Text     string
-	ToolName string
-	ToolID   string
-	IsError  bool
-	Usage    *StepUsage
+	Kind      StepDeltaKind
+	Text      string
+	ToolName  string
+	ToolID    string
+	ToolInput string // raw JSON input for tool_use deltas
+	IsError   bool
+	Usage     *StepUsage
 }
 
 // RunStep is one timeline entry, stored in run_steps and broadcast as run.step SSE.
@@ -234,9 +235,12 @@ func (r *StepRecorder) Feed(d StepDelta) {
 		r.pending = &openStep{
 			seq:       r.seq,
 			kind:      toolUseKind(d.ToolName),
-			title:     toolUseTitle(d.ToolName),
+			title:     extractToolTitle(d.ToolName, d.ToolInput),
 			startedAt: time.Now().UTC(),
 			toolID:    d.ToolID,
+		}
+		if d.ToolInput != "" {
+			r.pending.body.WriteString(d.ToolInput)
 		}
 
 	case StepDeltaToolResult:
@@ -314,6 +318,7 @@ func (r *StepRecorder) openOrReuseThinkLocked(d StepDelta) {
 
 func (r *StepRecorder) accumulateTextLocked(text string) {
 	if r.pending == nil {
+		r.openOrReuseThinkLocked(StepDelta{Kind: StepDeltaThinking, Text: text})
 		return
 	}
 	r.pending.body.WriteString(text)
@@ -391,6 +396,30 @@ func toolUseKind(name string) StepKind {
 	default:
 		return StepRun
 	}
+}
+
+// extractToolTitle extracts a human-readable title from tool input JSON.
+// For Bash: uses "command"; for Read/Edit/Write: uses "file_path".
+// Falls back to toolUseTitle(name) if input is absent or unparseable.
+func extractToolTitle(name, inputJSON string) string {
+	if inputJSON != "" {
+		var m map[string]json.RawMessage
+		if json.Unmarshal([]byte(inputJSON), &m) == nil {
+			if v, ok := m["command"]; ok {
+				var s string
+				if json.Unmarshal(v, &s) == nil && s != "" {
+					return s
+				}
+			}
+			if v, ok := m["file_path"]; ok {
+				var s string
+				if json.Unmarshal(v, &s) == nil && s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return toolUseTitle(name)
 }
 
 // toolUseTitle returns a human-readable title for a tool_use delta.

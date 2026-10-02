@@ -168,6 +168,109 @@ func TestStepRecorder_ErrorToolResult(t *testing.T) {
 	}
 }
 
+func TestExtractToolTitle_Command(t *testing.T) {
+	got := extractToolTitle("Bash", `{"command":"go test ./internal/server/...","description":"run tests"}`)
+	want := "go test ./internal/server/..."
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestExtractToolTitle_FilePath(t *testing.T) {
+	got := extractToolTitle("Edit", `{"file_path":"internal/server/events.go","old_string":"x","new_string":"y"}`)
+	want := "internal/server/events.go"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestExtractToolTitle_Fallback(t *testing.T) {
+	got := extractToolTitle("Bash", "")
+	want := "Run command"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestExtractToolTitle_FallbackBadJSON(t *testing.T) {
+	got := extractToolTitle("Read", "{not json}")
+	want := "Read file"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestStepRecorder_ToolInputInTitle(t *testing.T) {
+	var published []RunStep
+	var mu sync.Mutex
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				published = append(published, s)
+				mu.Unlock()
+			}
+		}
+	}
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+	r.Feed(StepDelta{
+		Kind:      StepDeltaToolUse,
+		ToolName:  "Bash",
+		ToolID:    "t1",
+		ToolInput: `{"command":"go test ./internal/server/...","description":"run tests"}`,
+	})
+	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "t1"})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(published) != 1 {
+		t.Fatalf("expected 1 run.step, got %d", len(published))
+	}
+	s := published[0]
+	if s.Title != "go test ./internal/server/..." {
+		t.Errorf("expected command as title, got %q", s.Title)
+	}
+	if s.Body == "" {
+		t.Error("expected non-empty body with tool input JSON")
+	}
+}
+
+func TestStepRecorder_TextBetweenToolsOpensThink(t *testing.T) {
+	var published []RunStep
+	var mu sync.Mutex
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				published = append(published, s)
+				mu.Unlock()
+			}
+		}
+	}
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+	// Complete one tool pair
+	r.Feed(StepDelta{Kind: StepDeltaToolUse, ToolName: "Bash", ToolID: "t1"})
+	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "t1"})
+	// Text arrives with no pending step — should open a think step
+	r.Feed(StepDelta{Kind: StepDeltaText, Text: "Done. Checking output now."})
+	r.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	thinkFound := false
+	for _, s := range published {
+		if s.Kind == StepThink {
+			thinkFound = true
+			if s.Body != "Done. Checking output now." {
+				t.Errorf("think body = %q, want %q", s.Body, "Done. Checking output now.")
+			}
+		}
+	}
+	if !thinkFound {
+		t.Error("expected a think step from text between tool calls")
+	}
+}
+
 func TestStepRecorder_RouteEmitsStep(t *testing.T) {
 	var published []RunStep
 	var mu sync.Mutex

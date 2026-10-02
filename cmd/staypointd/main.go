@@ -344,11 +344,12 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 			out := make([]orchestrator.StepDelta, 0, len(raw))
 			for _, d := range raw {
 				sd := orchestrator.StepDelta{
-					Kind:     orchestrator.StepDeltaKind(d.Kind),
-					Text:     d.Text,
-					ToolName: d.ToolName,
-					ToolID:   d.ToolID,
-					IsError:  d.IsError,
+					Kind:      orchestrator.StepDeltaKind(d.Kind),
+					Text:      d.Text,
+					ToolName:  d.ToolName,
+					ToolID:    d.ToolID,
+					ToolInput: d.ToolInput,
+					IsError:   d.IsError,
 				}
 				if d.Usage != nil {
 					sd.Usage = &orchestrator.StepUsage{
