@@ -177,3 +177,103 @@ func TestSetupLoggerRedactsSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestWithComponent(t *testing.T) {
+	var buf bytes.Buffer
+	base := SetupLogger("INFO", "json", &buf)
+	l := WithComponent(base, "harness")
+	l.Info("test message")
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("expected valid JSON, got error: %v, raw: %q", err, buf.String())
+	}
+	if parsed["component"] != "harness" {
+		t.Errorf("expected component=harness, got %v", parsed["component"])
+	}
+}
+
+func TestWithRunContext(t *testing.T) {
+	var buf bytes.Buffer
+	base := SetupLogger("INFO", "json", &buf)
+	l := WithRunContext(base, "task-123", "run-456", "claude")
+	l.Info("run started")
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("expected valid JSON, got error: %v, raw: %q", err, buf.String())
+	}
+	if parsed["task_id"] != "task-123" {
+		t.Errorf("expected task_id=task-123, got %v", parsed["task_id"])
+	}
+	if parsed["run_id"] != "run-456" {
+		t.Errorf("expected run_id=run-456, got %v", parsed["run_id"])
+	}
+	if parsed["agent"] != "claude" {
+		t.Errorf("expected agent=claude, got %v", parsed["agent"])
+	}
+}
+
+func TestWithComponent_InheritsParentAttrs(t *testing.T) {
+	var buf bytes.Buffer
+	base := SetupLogger("INFO", "json", &buf)
+	// Set an attr on the parent before calling WithComponent.
+	parent := base.With(slog.String("env", "production"))
+	l := WithComponent(parent, "server")
+	l.Info("serving")
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("expected valid JSON, got error: %v, raw: %q", err, buf.String())
+	}
+	if parsed["component"] != "server" {
+		t.Errorf("expected component=server, got %v", parsed["component"])
+	}
+	if parsed["env"] != "production" {
+		t.Errorf("expected env=production inherited from parent, got %v", parsed["env"])
+	}
+}
+
+func TestWithRunContext_InheritsParentAttrs(t *testing.T) {
+	var buf bytes.Buffer
+	base := SetupLogger("INFO", "json", &buf)
+	parent := base.With(slog.String("env", "staging"))
+	l := WithRunContext(parent, "task-789", "run-999", "gemini")
+	l.Info("run check")
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("expected valid JSON, got error: %v, raw: %q", err, buf.String())
+	}
+	if parsed["task_id"] != "task-789" {
+		t.Errorf("expected task_id=task-789, got %v", parsed["task_id"])
+	}
+	if parsed["env"] != "staging" {
+		t.Errorf("expected env=staging inherited from parent, got %v", parsed["env"])
+	}
+}
+
+func TestWithRunContext_CombinedWithComponent(t *testing.T) {
+	var buf bytes.Buffer
+	base := SetupLogger("INFO", "json", &buf)
+	l := WithComponent(base, "harness")
+	l = WithRunContext(l, "task-abc", "run-def", "claude")
+	l.Info("harness run event")
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("expected valid JSON, got error: %v, raw: %q", err, buf.String())
+	}
+	if parsed["component"] != "harness" {
+		t.Errorf("expected component=harness, got %v", parsed["component"])
+	}
+	if parsed["task_id"] != "task-abc" {
+		t.Errorf("expected task_id=task-abc, got %v", parsed["task_id"])
+	}
+	if parsed["run_id"] != "run-def" {
+		t.Errorf("expected run_id=run-def, got %v", parsed["run_id"])
+	}
+	if parsed["agent"] != "claude" {
+		t.Errorf("expected agent=claude, got %v", parsed["agent"])
+	}
+}
