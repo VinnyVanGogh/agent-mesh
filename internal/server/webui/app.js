@@ -232,8 +232,9 @@ function mdEl(text) {
 }
 
 // ── Fetch helpers ─────────────────────────────────────────
-async function apiFetch(path) {
-  const r = await fetch(path, { headers: authHeader() });
+async function apiFetch(path, options = {}) {
+  const { headers: extraHeaders, ...rest } = options;
+  const r = await fetch(path, { headers: { ...authHeader(), ...extraHeaders }, ...rest });
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   return r.json();
 }
@@ -6706,6 +6707,9 @@ function renderInteractionCards(container, taskId, interactions) {
 
     // Body
     const body = el('div', 'interaction-card-body');
+    // selectedAnswers: map of question index -> selected option string (for ask_user_questions)
+    const selectedAnswers = {};
+
     if (kind === 'request_confirmation') {
       const prompt = payloadObj.prompt || '';
       if (prompt) {
@@ -6715,16 +6719,25 @@ function renderInteractionCards(container, taskId, interactions) {
       }
     } else if (kind === 'ask_user_questions') {
       const qs = payloadObj.questions || [];
-      for (const q of qs) {
+      qs.forEach((q, qi) => {
         const item = el('div', 'interaction-question-item');
         item.appendChild(el('p', '', q.question || ''));
         if (q.options && q.options.length) {
           const opts = el('div', 'interaction-question-opts');
-          for (const opt of q.options) opts.appendChild(el('span', 'interaction-question-opt', opt));
+          for (const opt of q.options) {
+            const btn = el('button', 'interaction-question-opt', opt);
+            btn.addEventListener('click', () => {
+              // toggle selection; only one option per question
+              opts.querySelectorAll('.interaction-question-opt').forEach(b => b.classList.remove('selected'));
+              btn.classList.add('selected');
+              selectedAnswers[qi] = opt;
+            });
+            opts.appendChild(btn);
+          }
           item.appendChild(opts);
         }
         body.appendChild(item);
-      }
+      });
     } else if (kind === 'suggest_tasks') {
       const tasks = payloadObj.tasks || [];
       for (const t of tasks) {
@@ -6743,10 +6756,16 @@ function renderInteractionCards(container, taskId, interactions) {
       acceptBtn.disabled = true;
       rejectBtn.disabled = true;
       try {
+        // Build response payload for ask_user_questions
+        let response;
+        if (kind === 'ask_user_questions') {
+          const qs = payloadObj.questions || [];
+          response = { answers: qs.map((q, qi) => ({ question: q.question || '', selected: selectedAnswers[qi] || null })) };
+        }
         await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/interactions/${interaction.id}/resolve`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status })
+          body: JSON.stringify({ status, ...(response !== undefined ? { response } : {}) })
         });
         card.classList.add('resolved');
         const resolvedBadge = el('span', `interaction-resolved-badge status-${status}`, status === 'accepted' ? '✓ Accepted' : '✗ Rejected');
@@ -6988,7 +7007,7 @@ function renderTaskPage(container, task, comments, interactions) {
   }
 
   // ── Run Now button ──
-  const runableStatuses = new Set(['todo', 'backlog', 'blocked', 'in_review']);
+  const runableStatuses = new Set(['active', 'todo', 'backlog', 'blocked', 'in_review']);
   if (task.id && runableStatuses.has(task.status)) {
     const runBtn = el('button', 'run-now-btn', '▶ Run Now');
     runBtn.type = 'button';
