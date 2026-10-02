@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // AuditEvent types for the governance_audit_log.
@@ -51,9 +52,10 @@ func LogEvent(db *sql.DB, taskID, actorID, eventType string, fromState, toState 
 	return err
 }
 
-// GetAuditLog returns the full governance audit trail for a task, newest first.
+// GetAuditLog returns the combined audit trail for a task (governance events +
+// activity-log entries), sorted newest first.
 func GetAuditLog(db *sql.DB, taskID string) ([]AuditEntry, error) {
-	rows, err := db.Query(
+	govRows, err := db.Query(
 		`SELECT id, task_id, actor_id, event_type, from_state, to_state, payload, created_at
 		 FROM governance_audit_log
 		 WHERE task_id = ?
@@ -63,13 +65,13 @@ func GetAuditLog(db *sql.DB, taskID string) ([]AuditEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer govRows.Close()
 
 	var entries []AuditEntry
-	for rows.Next() {
+	for govRows.Next() {
 		var e AuditEntry
 		var fromState, toState, payloadStr sql.NullString
-		if err := rows.Scan(&e.ID, &e.TaskID, &e.ActorID, &e.EventType, &fromState, &toState, &payloadStr, &e.CreatedAt); err != nil {
+		if err := govRows.Scan(&e.ID, &e.TaskID, &e.ActorID, &e.EventType, &fromState, &toState, &payloadStr, &e.CreatedAt); err != nil {
 			return nil, err
 		}
 		if fromState.Valid {
@@ -86,5 +88,44 @@ func GetAuditLog(db *sql.DB, taskID string) ([]AuditEntry, error) {
 		}
 		entries = append(entries, e)
 	}
-	return entries, rows.Err()
+	if err := govRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Merge activity_log (comments, interactions, run events) into the audit trail.
+	actRows, err := db.Query(
+		`SELECT id, task_id, event_type, details, created_at
+		 FROM activity_log
+		 WHERE task_id = ?`,
+		taskID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer actRows.Close()
+
+	for actRows.Next() {
+		var e AuditEntry
+		var details string
+		if err := actRows.Scan(&e.ID, &e.TaskID, &e.EventType, &details, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		if details != "" {
+			e.Payload = map[string]string{"details": details}
+		}
+		entries = append(entries, e)
+	}
+	if err := actRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Sort combined slice newest first.
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].CreatedAt != entries[j].CreatedAt {
+			return entries[i].CreatedAt > entries[j].CreatedAt
+		}
+		return entries[i].ID > entries[j].ID
+	})
+
+	return entries, nil
 }

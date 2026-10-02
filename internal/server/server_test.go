@@ -975,4 +975,73 @@ func TestServer_REST_Interactions(t *testing.T) {
 	}
 }
 
+// TestServer_REST_AuditMergesActivity verifies STA-358: GET /api/tasks/{id}/audit
+// returns both governance events and activity-log entries (comments, interactions).
+func TestServer_REST_AuditMergesActivity(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	client := &http.Client{}
+	auth := func(r *http.Request) *http.Request { r.Header.Set("Authorization", "Bearer "+token); return r }
+
+	// create task
+	req, _ := http.NewRequest(http.MethodPost, srv.URL()+"/api/tasks",
+		bytes.NewReader([]byte(`{"name":"audit-test","repo_path":"/tmp/audit-test"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(auth(req))
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create task: %v %d", err, resp.StatusCode)
+	}
+	var ct map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&ct)
+	resp.Body.Close()
+	taskID := ct["id"].(string)
+
+	// post a comment
+	req, _ = http.NewRequest(http.MethodPost, srv.URL()+"/api/tasks/"+taskID+"/comments",
+		bytes.NewReader([]byte(`{"author":"planner","message":"plan: do the thing"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ = client.Do(auth(req))
+	resp.Body.Close()
+
+	// create + resolve an interaction
+	req, _ = http.NewRequest(http.MethodPost, srv.URL()+"/api/tasks/"+taskID+"/interactions",
+		bytes.NewReader([]byte(`{"kind":"request_confirmation","payload":"{\"prompt\":\"Merge?\"}","idempotency_key":"audit-ix"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ = client.Do(auth(req))
+	var ix map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&ix)
+	resp.Body.Close()
+	ixID := fmt.Sprintf("%v", ix["id"])
+
+	req, _ = http.NewRequest(http.MethodPost, srv.URL()+"/api/tasks/"+taskID+"/interactions/"+ixID+"/resolve",
+		bytes.NewReader([]byte(`{"status":"accepted","response":{"confirmed":true}}`)))
+	req.Header.Set("Content-Type", "application/json")
+	resp, _ = client.Do(auth(req))
+	resp.Body.Close()
+
+	// fetch audit log
+	req, _ = http.NewRequest(http.MethodGet, srv.URL()+"/api/tasks/"+taskID+"/audit", nil)
+	resp, err = client.Do(auth(req))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("audit: %v %d", err, resp.StatusCode)
+	}
+	var ar map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&ar)
+	resp.Body.Close()
+
+	entries, _ := ar["audit_log"].([]any)
+	types := ""
+	for _, e := range entries {
+		if em, ok := e.(map[string]any); ok {
+			types += em["event_type"].(string) + " "
+		}
+	}
+	if !strings.Contains(types, "comment") {
+		t.Errorf("audit_log missing comment event; got types: %s", types)
+	}
+	if !strings.Contains(types, "interaction") {
+		t.Errorf("audit_log missing interaction event; got types: %s", types)
+	}
+}
+
 
