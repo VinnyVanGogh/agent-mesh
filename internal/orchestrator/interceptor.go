@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -155,44 +154,60 @@ func (ic *Interceptor) checkGitSync(ctx context.Context, _, wtPath, _ string) (s
 // checkMutexLease prevents concurrent deployment collisions by checking
 // whether another task already holds an active in_progress claim on a
 // work product that overlaps with the current task's repo root.
+//
+// Worktree sub-paths (repo_path LIKE repoRoot+'/.worktrees/%') are excluded so
+// that rig/dogfood tasks running in a .worktrees/ branch do not block the parent
+// checkout from completing.
 func (ic *Interceptor) checkMutexLease(_ context.Context, taskID, _, repoRoot string) (string, error) {
 	if ic.DB == nil {
 		return "", nil
 	}
-	// A live lease = active task in_progress that shares the same canonical repo
-	// root: exact match, or one path is a prefix of the other.  Using basename
-	// GLOB (*<name>*) over-matches unrelated worktrees (e.g. *agent-mesh* hits
-	// every .worktrees/* path).  Excluding non-active status means a
-	// soft_deleted/cancelled task never holds the lock even when its
-	// execution_stage was not reset before deletion.
-	var n int
+	var identifier string
 	err := ic.DB.QueryRow(
-		`SELECT COUNT(1) FROM tasks
+		`SELECT COALESCE(NULLIF(name,''), id) FROM tasks
 		  WHERE execution_stage = 'in_progress'
 		    AND status = 'active'
 		    AND id != ?
 		    AND (repo_path = ?
 		         OR repo_path GLOB ? || '/*'
-		         OR ? GLOB repo_path || '/*')`,
-		taskID, repoRoot, repoRoot, repoRoot,
-	).Scan(&n)
+		         OR ? GLOB repo_path || '/*')
+		    AND repo_path NOT LIKE ? || '/.worktrees/%'
+		  LIMIT 1`,
+		taskID, repoRoot, repoRoot, repoRoot, repoRoot,
+	).Scan(&identifier)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
 	if err != nil {
 		return "", err
 	}
-	if n > 0 {
-		return fmt.Sprintf("Can't mark done: another task is currently running on repo '%s'. Wait for it to finish or clear the stale checkout, then emit [[TASK_COMPLETE]] again.", filepath.Base(repoRoot)), nil
-	}
-	return "", nil
+	return fmt.Sprintf("task %s is still in_progress on the same repo; stop or cancel it first", identifier), nil
 }
 
-// buildDiagnostic formats failed checks into a self-correcting agent message.
+// buildDiagnostic formats failed checks into a plain-English self-correcting message.
 func buildDiagnostic(failed []string) string {
 	var sb strings.Builder
 	sb.WriteString("**Can't complete: the following checks failed.**\n\n")
 	sb.WriteString("Fix each item below and emit `[[TASK_COMPLETE]]` again.\n\n")
 	for i, f := range failed {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, f))
+		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, plainEnglishCheck(f)))
 	}
 	sb.WriteString("\nTask stays `in_progress` until these are resolved.")
 	return sb.String()
+}
+
+// plainEnglishCheck converts a raw failure reason into an actionable plain-English sentence.
+func plainEnglishCheck(reason string) string {
+	switch {
+	case strings.HasPrefix(reason, "task ") && strings.Contains(reason, "still in_progress"):
+		return reason + "."
+	case strings.HasPrefix(reason, "no work product") || strings.HasPrefix(reason, "No work product"):
+		return "No work product registered. Register at least one (PR link, commit, or file) before marking done."
+	case strings.Contains(reason, "uncommitted change"):
+		return "The worktree has uncommitted changes. Commit or stash them, then retry."
+	case strings.Contains(reason, "ahead of remote"):
+		return "The branch has unpushed commits. Run `git push`, then retry."
+	default:
+		return reason
+	}
 }
