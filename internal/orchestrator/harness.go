@@ -250,52 +250,10 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 
 	result := &RunResult{TaskID: taskID, RunID: runID}
 
-	// Git pre-flight: fetch, dirty check, fast-forward.
-	// A failure is logged as a timeline comment and blocks the run.
-	{
-		gfCtx, gfCancel := context.WithTimeout(ctx, 60*time.Second)
-		gfResult, gfErr := gitgate.PreFlight(gfCtx, wtPath, "main")
-		gfCancel()
-		gfSummary := "git-preflight: "
-		if gfErr != nil {
-			gfSummary += "error: " + gfErr.Error()
-		} else if !gfResult.OK {
-			gfSummary += "FAILED — " + strings.Join(gfResult.Errors, "; ")
-		} else {
-			gfSummary += "ok (" + strings.Join(gfResult.Details, " | ") + ")"
-		}
-		runLog.Info("git preflight", slog.String("result", gfSummary))
-		_, _ = h.DB.ExecContext(ctx,
-			`INSERT INTO task_comments (task_id, author, message) VALUES (?, 'harness', ?)`,
-			taskID, gfSummary,
-		)
-		if gfErr != nil || (gfResult != nil && !gfResult.OK) {
-			result.Disposition = "in_progress"
-			result.DiagnosticMsg = gfSummary
-			if sr != nil {
-				sr.EmitState("in_progress")
-				sr.Close()
-			}
-			cleanCtx2, cleanCancel2 := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cleanCancel2()
-			now2 := time.Now().UTC().Format(time.RFC3339Nano)
-			_, _ = h.DB.ExecContext(cleanCtx2,
-				`UPDATE tasks SET execution_stage='in_progress', updated_at=? WHERE id=?`,
-				now2, taskID,
-			)
-			_, _ = h.DB.ExecContext(cleanCtx2,
-				`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, 'run_complete', ?)`,
-				taskID, "disposition=in_progress turns=0 reason=git_preflight_failed",
-			)
-			return result, nil
-		}
-	}
-
 	// Pre-flight cumulative budget check: if the task has already exhausted its
 	// max_turns or max_budget_usd across prior runs, skip the adapter entirely.
-	// The external hook enforces the same gate, but when it blocks the harness
-	// cannot observe why — the run silently ends in_progress. This check makes
-	// the exhaustion explicit before any adapter invocation.
+	// Run this before the git preflight so an already-exhausted task is capped
+	// immediately without requiring a valid git repo.
 	{
 		var spentTurns, dbMaxTurns int
 		var spentUSD, dbMaxBudget float64
@@ -338,6 +296,47 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 				)
 				return result, nil
 			}
+		}
+	}
+
+	// Git pre-flight: fetch, dirty check, fast-forward.
+	// A failure is logged as a timeline comment and blocks the run.
+	{
+		gfCtx, gfCancel := context.WithTimeout(ctx, 60*time.Second)
+		gfResult, gfErr := gitgate.PreFlight(gfCtx, wtPath, "main")
+		gfCancel()
+		gfSummary := "git-preflight: "
+		if gfErr != nil {
+			gfSummary += "error: " + gfErr.Error()
+		} else if !gfResult.OK {
+			gfSummary += "FAILED — " + strings.Join(gfResult.Errors, "; ")
+		} else {
+			gfSummary += "ok (" + strings.Join(gfResult.Details, " | ") + ")"
+		}
+		runLog.Info("git preflight", slog.String("result", gfSummary))
+		_, _ = h.DB.ExecContext(ctx,
+			`INSERT INTO task_comments (task_id, author, message) VALUES (?, 'harness', ?)`,
+			taskID, gfSummary,
+		)
+		if gfErr != nil || (gfResult != nil && !gfResult.OK) {
+			result.Disposition = "in_progress"
+			result.DiagnosticMsg = gfSummary
+			if sr != nil {
+				sr.EmitState("in_progress")
+				sr.Close()
+			}
+			cleanCtx2, cleanCancel2 := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cleanCancel2()
+			now2 := time.Now().UTC().Format(time.RFC3339Nano)
+			_, _ = h.DB.ExecContext(cleanCtx2,
+				`UPDATE tasks SET execution_stage='in_progress', updated_at=? WHERE id=?`,
+				now2, taskID,
+			)
+			_, _ = h.DB.ExecContext(cleanCtx2,
+				`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, 'run_complete', ?)`,
+				taskID, "disposition=in_progress turns=0 reason=git_preflight_failed",
+			)
+			return result, nil
 		}
 	}
 
