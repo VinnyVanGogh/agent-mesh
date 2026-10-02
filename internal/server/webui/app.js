@@ -7154,6 +7154,45 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
     meta.appendChild(runBtn);
   }
 
+  // ── Mark done button (in_review only) ──
+  if (task.id && (task.execution_stage === 'in_review' || task.status === 'in_review')) {
+    const doneError = el('div', 'mark-done-error');
+    doneError.style.display = 'none';
+
+    const doneBtn = el('button', 'mark-done-btn', '✓ Mark done');
+    doneBtn.type = 'button';
+    doneBtn.addEventListener('click', async () => {
+      doneBtn.disabled = true;
+      doneBtn.textContent = 'Marking done…';
+      doneError.style.display = 'none';
+      try {
+        const res = await fetch(`/api/tasks/${encodeURIComponent(task.id)}/done`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader() },
+        });
+        if (!res.ok) {
+          let msg = `Error ${res.status}`;
+          try { const j = await res.json(); msg = j.error || j.message || msg; } catch { /* ignore */ }
+          doneError.textContent = msg;
+          doneError.style.display = 'block';
+          doneBtn.disabled = false;
+          doneBtn.textContent = '✓ Mark done';
+          return;
+        }
+        doneBtn.textContent = '✓ Done';
+        setTimeout(() => openTaskPage(task.id), 800);
+      } catch (err) {
+        doneError.textContent = err.message || 'Request failed';
+        doneError.style.display = 'block';
+        doneBtn.disabled = false;
+        doneBtn.textContent = '✓ Mark done';
+        console.error('mark-done failed:', err);
+      }
+    });
+    meta.appendChild(doneBtn);
+    meta.appendChild(doneError);
+  }
+
   layout.appendChild(meta);
   container.appendChild(layout);
 }

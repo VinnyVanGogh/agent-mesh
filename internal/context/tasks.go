@@ -387,9 +387,6 @@ func ListTasks(db *sql.DB, includeAll bool) ([]Task, error) {
 			}
 			for i := range tasks {
 				tasks[i].Comments = commentsMap[tasks[i].ID]
-				if len(tasks[i].Comments) > 0 {
-					tasks[i].Description = tasks[i].Comments[0].Message
-				}
 			}
 		}
 
@@ -497,8 +494,6 @@ func GetTask(db *sql.DB, id string) (*Task, error) {
 	var content string
 	if err := db.QueryRow(`SELECT content FROM task_documents WHERE task_id = ? AND doc_key = 'description' ORDER BY version DESC LIMIT 1`, t.ID).Scan(&content); err == nil {
 		t.Description = content
-	} else if len(t.Comments) > 0 {
-		t.Description = t.Comments[0].Message
 	}
 	return &t, nil
 }
