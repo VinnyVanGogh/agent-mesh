@@ -339,8 +339,8 @@ func TestInterceptor_BlocksDoneOnNoWorkProducts(t *testing.T) {
 	if approved {
 		t.Fatal("interceptor should have rejected: no work products")
 	}
-	if diag == nil || !strings.Contains(diag.Message, "work products") {
-		t.Fatalf("expected work-products diagnostic, got: %v", diag)
+	if diag == nil || !strings.Contains(diag.Message, "work product") {
+		t.Fatalf("expected work-product diagnostic, got: %v", diag)
 	}
 }
 
@@ -362,6 +362,61 @@ func TestInterceptor_ApprovesWithWorkProduct(t *testing.T) {
 	}
 	if !approved {
 		t.Fatalf("interceptor should have approved; diag: %v", diag)
+	}
+}
+
+// TestInterceptor_WorktreeDoesNotBlockParent verifies that a rig task running in
+// a .worktrees/ sub-path does NOT prevent the parent checkout from completing (STA-438).
+func TestInterceptor_WorktreeDoesNotBlockParent(t *testing.T) {
+	db := openTestDB(t)
+	repoRoot := "/home/agent/agent-mesh"
+	rigPath := repoRoot + "/.worktrees/sta343-rig-2224"
+
+	// Insert the rig task as in_progress on the sub-worktree path.
+	insertTask(t, db, "rig-task", rigPath)
+	_, _ = db.Exec(`UPDATE tasks SET execution_stage='in_progress', status='active' WHERE id='rig-task'`)
+
+	// Parent task has a work product registered.
+	insertTask(t, db, "parent-task", repoRoot)
+	_, _ = db.Exec(`INSERT INTO task_work_products (task_id, product_type, reference) VALUES ('parent-task', 'commit', 'abc123')`)
+
+	ic := NewInterceptor(db)
+	ic.Guards = []GuardFunc{ic.checkWorkProducts, ic.checkMutexLease}
+
+	approved, diag, err := ic.InterceptCompletion(context.Background(), "parent-task", "", repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !approved {
+		t.Fatalf("rig worktree must not block parent checkout; diag: %v", diag)
+	}
+}
+
+// TestInterceptor_MutexBlocksOnSameRepo verifies that a sibling task (not in a
+// .worktrees/ sub-path) still blocks the parent from completing.
+func TestInterceptor_MutexBlocksOnSameRepo(t *testing.T) {
+	db := openTestDB(t)
+	repoRoot := "/home/agent/agent-mesh"
+
+	// Sibling task in_progress on the same root (not a worktree path).
+	insertTask(t, db, "sibling-task", repoRoot)
+	_, _ = db.Exec(`UPDATE tasks SET execution_stage='in_progress', status='active', name='STA-99 some work' WHERE id='sibling-task'`)
+
+	insertTask(t, db, "blocked-task", repoRoot)
+	_, _ = db.Exec(`INSERT INTO task_work_products (task_id, product_type, reference) VALUES ('blocked-task', 'commit', 'def456')`)
+
+	ic := NewInterceptor(db)
+	ic.Guards = []GuardFunc{ic.checkMutexLease}
+
+	approved, diag, err := ic.InterceptCompletion(context.Background(), "blocked-task", "", repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved {
+		t.Fatal("sibling in_progress on same repo root must block completion")
+	}
+	if diag == nil || !strings.Contains(diag.Message, "STA-99") {
+		t.Fatalf("diagnostic must name the blocking task; got: %v", diag)
 	}
 }
 
