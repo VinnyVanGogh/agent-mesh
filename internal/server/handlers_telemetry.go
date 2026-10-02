@@ -325,12 +325,18 @@ func (h *TelemetryHandler) GetFleetTaskComments(w http.ResponseWriter, r *http.R
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"comments":[]}`))
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+		return
+	}
 	var raw json.RawMessage
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		w.Header().Set("Content-Type", "application/json")

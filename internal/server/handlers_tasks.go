@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -11,6 +12,15 @@ import (
 	"github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
 )
+
+// isNotFound returns true when err signals a missing entity.
+func isNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found")
+}
 
 type TasksHandler struct {
 	db  *sql.DB
@@ -165,7 +175,11 @@ func (h *TasksHandler) GetComments(w http.ResponseWriter, r *http.Request) {
 
 	comments, err := context.GetTaskComments(h.db, id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 
@@ -205,7 +219,11 @@ func (h *TasksHandler) AddComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := context.AddTaskComment(h.db, id, req.Author, req.Message); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to add comment: "+err.Error())
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to add comment: "+err.Error())
+		}
 		return
 	}
 
@@ -231,7 +249,13 @@ func (h *TasksHandler) MarkDone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := context.MarkTaskDone(h.db, id); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to mark task done: "+err.Error())
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else if strings.Contains(err.Error(), "without a registered work product") {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to mark task done: "+err.Error())
+		}
 		return
 	}
 
@@ -287,7 +311,11 @@ func (h *TasksHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to block task: "+err.Error())
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to block task: "+err.Error())
+		}
 		return
 	}
 
@@ -335,7 +363,11 @@ func (h *TasksHandler) AddBlocker(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := context.AddTaskBlocker(h.db, id, req.BlockerID, req.Rationale); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to add blocker: "+err.Error())
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to add blocker: "+err.Error())
+		}
 		return
 	}
 
@@ -357,7 +389,11 @@ func (h *TasksHandler) RemoveBlocker(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := context.RemoveTaskBlocker(h.db, id, bid); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to remove blocker: "+err.Error())
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to remove blocker: "+err.Error())
+		}
 		return
 	}
 
@@ -378,7 +414,11 @@ func (h *TasksHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := context.UnblockTask(h.db, id); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to unblock task: "+err.Error())
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to unblock task: "+err.Error())
+		}
 		return
 	}
 
@@ -444,7 +484,11 @@ func (h *TasksHandler) CreateInteraction(w http.ResponseWriter, r *http.Request)
 
 	created, err := context.CreateInteraction(h.db, in)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
 
@@ -491,7 +535,11 @@ func (h *TasksHandler) ResolveInteraction(w http.ResponseWriter, r *http.Request
 
 	updated, err := context.ResolveInteraction(h.db, iid, req.Status, req.Response)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		if errors.Is(err, context.ErrInteractionNotFound) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
 
@@ -540,7 +588,11 @@ func (h *TasksHandler) SetStage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := context.SetTaskExecutionStage(h.db, id, req.Stage); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update task stage: "+err.Error())
+		if isNotFound(err) {
+			writeError(w, http.StatusNotFound, err.Error())
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to update task stage: "+err.Error())
+		}
 		return
 	}
 
@@ -568,6 +620,11 @@ func (h *TasksHandler) GetRunSteps(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+
+	if _, err := context.GetTask(h.db, id); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
