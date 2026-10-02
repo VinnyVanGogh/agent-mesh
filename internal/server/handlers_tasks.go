@@ -10,6 +10,7 @@ import (
 
 	"github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
+	"github.com/google/uuid"
 )
 
 type TasksHandler struct {
@@ -552,7 +553,8 @@ func (h *TasksHandler) SetStage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Stage == "in_progress" {
-		orchestrator.GlobalDispatcher.Wake(id, "run_now", "run_now:"+id)
+		// Per-click key so each Run Now press can start a new run even within 24 h.
+		orchestrator.GlobalDispatcher.Wake(id, "run_now", "run_now:"+id+":"+uuid.New().String()[:8])
 	}
 
 	w.Header().Set("Content-Type", "application/json")

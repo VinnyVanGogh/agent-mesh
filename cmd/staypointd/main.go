@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/VinnyVanGogh/staypoint/internal/adapter"
 	"github.com/VinnyVanGogh/staypoint/internal/config"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/ipc"
@@ -144,13 +146,12 @@ func runDaemon(ctx context.Context) error {
 		return fmt.Errorf("ensure data dir: %w", err)
 	}
 
-	// 0. Recovery Scan
-	dbConn, err := db.Open(cfg.DBPath)
+	// 0. Open persistent DB; used by recovery scan, harness, and HTTP server.
+	dbStore, err := db.Open(cfg.DBPath)
 	if err != nil {
-		return fmt.Errorf("failed to open database for recovery scan: %w", err)
+		return fmt.Errorf("failed to open database: %w", err)
 	}
-	_ = orchestrator.RecoveryScan(ctx, dbConn.DB())
-	dbConn.Close()
+	_ = orchestrator.RecoveryScan(ctx, dbStore.DB())
 
 	// 1. Start Rate Limit Notifier
 	notifier := telemetry.NewNotifier()
@@ -180,38 +181,94 @@ func runDaemon(ctx context.Context) error {
 	}
 
 	// 4. Start HTTP & SSE Local Daemon Server (127.0.0.1 only)
-	dbStore, err := db.Open(cfg.DBPath)
+	tokenPath := filepath.Join(cfg.DataDir, "auth_token")
+	httpServer, err := server.New(server.Options{
+		BindHost:     "127.0.0.1",
+		Port:         41421,
+		TokenPath:    tokenPath,
+		DB:           dbStore.DB(),
+		GitCommit:    GitCommit,
+		CORSAllowAll: cfg.CORSAllowAll,
+	})
 	if err != nil {
-		slog.Warn("Failed to open database for HTTP server", slog.Any("error", err))
+		slog.Warn("Failed to initialize HTTP server", slog.Any("error", err))
+	} else if err := httpServer.Start(); err != nil {
+		slog.Warn("Failed to start HTTP server", slog.Any("error", err))
 	} else {
-		tokenPath := filepath.Join(cfg.DataDir, "auth_token")
-		httpServer, err := server.New(server.Options{
-			BindHost:     "127.0.0.1",
-			Port:         41421,
-			TokenPath:    tokenPath,
-			DB:           dbStore.DB(),
-			GitCommit:    GitCommit,
-			CORSAllowAll: cfg.CORSAllowAll,
-		})
-		if err != nil {
-			slog.Warn("Failed to initialize HTTP server", slog.Any("error", err))
-		} else if err := httpServer.Start(); err != nil {
-			slog.Warn("Failed to start HTTP server", slog.Any("error", err))
-		} else {
-			slog.Info("HTTP and SSE server active",
-				slog.String("url", httpServer.URL()),
-				slog.String("token_path", tokenPath),
-			)
-			go func() {
-				<-ctx.Done()
-				shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				defer cancel()
-				_ = httpServer.Shutdown(shutCtx)
-				_ = dbStore.Close()
-			}()
-		}
+		slog.Info("HTTP and SSE server active",
+			slog.String("url", httpServer.URL()),
+			slog.String("token_path", tokenPath),
+		)
 	}
+
+	// 5. Wire GlobalDispatcher.OnWake to launch harness runs.
+	repoRoot := cfg.WorkRepoRoot
+	wireOnWake(ctx, dbStore, repoRoot)
+	slog.Info("agent wake dispatcher wired", slog.String("repo_root", repoRoot))
+
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if httpServer != nil {
+			_ = httpServer.Shutdown(shutCtx)
+		}
+		_ = dbStore.Close()
+	}()
 
 	slog.Info("Background daemon ready and running")
 	return watcher.Start(ctx)
+}
+
+// wireOnWake assigns GlobalDispatcher.OnWake so every Wake call launches a
+// harness run for the woken task. Extracted for testability.
+func wireOnWake(ctx context.Context, dbStore *db.Store, repoRoot string) {
+	h := orchestrator.NewHarness(dbStore.DB(), repoRoot)
+	orchestrator.GlobalDispatcher.OnWake = func(taskID, reason string) {
+		var agentID string
+		_ = dbStore.DB().QueryRowContext(ctx,
+			"SELECT COALESCE(assignee_agent_id,'') FROM tasks WHERE id=?", taskID,
+		).Scan(&agentID)
+		if agentID == "" {
+			agentID = "local"
+		}
+
+		sessID := "paperclip-" + taskID
+		if len(taskID) >= 8 {
+			sessID = "paperclip-" + taskID[:8]
+		}
+
+		adapterFn := func(runCtx context.Context, cwd, prov string, rawArgs, extraEnv []string, stdout, stderr io.Writer) error {
+			agentType := prov
+			if agentType == "" {
+				agentType = "claude"
+			}
+			_ = telemetry.HeartbeatSession(dbStore.DB(), telemetry.AgentSession{
+				ID:        sessID,
+				AgentType: agentType,
+				RepoPath:  cwd,
+				PID:       os.Getpid(),
+			})
+			if len(extraEnv) > 0 {
+				runCtx = adapter.WithExtraEnv(runCtx, extraEnv)
+			}
+			return adapter.RunAdapter(runCtx, cwd, nil, prov, rawArgs, nil, stdout, stderr)
+		}
+
+		runCfg := orchestrator.RunConfig{
+			AgentID:    agentID,
+			WakeReason: reason,
+			RunAdapter: adapterFn,
+		}
+		result, runErr := h.Run(ctx, taskID, runCfg)
+		if runErr != nil {
+			slog.Error("harness run failed", slog.String("task", taskID), slog.Any("error", runErr))
+			return
+		}
+		slog.Info("harness run complete",
+			slog.String("task", taskID),
+			slog.String("disposition", result.Disposition),
+			slog.Int("turns", result.Turns),
+		)
+	}
 }
