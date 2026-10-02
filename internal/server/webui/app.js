@@ -6692,49 +6692,52 @@ function renderInteractionCards(container, taskId, interactions) {
   section.appendChild(el('div', 'task-page-section-title', `Pending (${pending.length})`));
 
   for (const interaction of pending) {
-    const card = el('div', 'interaction-card');
-    card.style.cssText = 'border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:1rem;margin-bottom:.75rem;background:var(--card-bg,#fff)';
+    const kind = interaction.interaction_kind || '';
+    const card = el('div', `interaction-card kind-${kind}`);
 
     let payloadObj = {};
     try { payloadObj = JSON.parse(interaction.payload || '{}'); } catch { /* ignore */ }
 
-    const kind = interaction.interaction_kind;
+    // Header
     const kindLabel = { ask_user_questions: 'Questions', request_confirmation: 'Confirmation', suggest_tasks: 'Suggested Tasks' }[kind] || kind;
-    const kindBadge = el('span', 'card-id', kindLabel);
-    kindBadge.style.marginBottom = '.5rem';
-    card.appendChild(kindBadge);
+    const header = el('div', 'interaction-card-header');
+    header.appendChild(el('span', `interaction-kind-badge kind-${kind}`, kindLabel));
+    card.appendChild(header);
 
-    // Render payload content
+    // Body
+    const body = el('div', 'interaction-card-body');
     if (kind === 'request_confirmation') {
       const prompt = payloadObj.prompt || '';
-      if (prompt) card.appendChild(mdEl(prompt));
+      if (prompt) {
+        const pd = el('div', 'interaction-prompt');
+        pd.appendChild(mdEl(prompt));
+        body.appendChild(pd);
+      }
     } else if (kind === 'ask_user_questions') {
       const qs = payloadObj.questions || [];
       for (const q of qs) {
-        const qEl = el('p', '', q.question || '');
-        qEl.style.fontWeight = '600';
-        card.appendChild(qEl);
+        const item = el('div', 'interaction-question-item');
+        item.appendChild(el('p', '', q.question || ''));
         if (q.options && q.options.length) {
-          const ul = el('ul', '');
-          ul.style.margin = '.25rem 0 .5rem 1rem';
-          for (const opt of q.options) ul.appendChild(el('li', '', opt));
-          card.appendChild(ul);
+          const opts = el('div', 'interaction-question-opts');
+          for (const opt of q.options) opts.appendChild(el('span', 'interaction-question-opt', opt));
+          item.appendChild(opts);
         }
+        body.appendChild(item);
       }
     } else if (kind === 'suggest_tasks') {
       const tasks = payloadObj.tasks || [];
       for (const t of tasks) {
-        const tEl = el('div', '');
-        tEl.style.cssText = 'padding:.25rem 0;border-bottom:1px solid var(--border,#eee)';
-        tEl.appendChild(el('strong', '', t.title || ''));
-        if (t.description) tEl.appendChild(el('p', 'panel-field-muted', t.description));
-        card.appendChild(tEl);
+        const item = el('div', 'interaction-task-item');
+        item.appendChild(el('div', 'interaction-task-title', t.title || ''));
+        if (t.description) item.appendChild(el('div', 'interaction-task-desc', t.description));
+        body.appendChild(item);
       }
     }
+    card.appendChild(body);
 
-    // Buttons
-    const btnRow = el('div', '');
-    btnRow.style.cssText = 'display:flex;gap:.5rem;margin-top:.75rem';
+    // Actions
+    const actions = el('div', 'interaction-card-actions');
 
     const resolveInteraction = async (status) => {
       acceptBtn.disabled = true;
@@ -6745,25 +6748,21 @@ function renderInteractionCards(container, taskId, interactions) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status })
         });
-        card.style.opacity = '0.5';
-        card.style.pointerEvents = 'none';
-        const badge = el('span', 'card-id', status === 'accepted' ? '✓ Accepted' : '✗ Rejected');
-        badge.style.marginLeft = '.5rem';
-        btnRow.appendChild(badge);
+        card.classList.add('resolved');
+        const resolvedBadge = el('span', `interaction-resolved-badge status-${status}`, status === 'accepted' ? '✓ Accepted' : '✗ Rejected');
+        header.appendChild(resolvedBadge);
       } catch { acceptBtn.disabled = false; rejectBtn.disabled = false; }
     };
 
-    const acceptBtn = el('button', 'btn-primary', 'Accept');
-    acceptBtn.style.cssText = 'padding:.35rem .75rem;background:var(--green,#22c55e);color:#fff;border:none;border-radius:6px;cursor:pointer';
+    const acceptBtn = el('button', 'interaction-accept-btn', 'Accept');
     acceptBtn.addEventListener('click', () => resolveInteraction('accepted'));
 
-    const rejectBtn = el('button', '', 'Reject');
-    rejectBtn.style.cssText = 'padding:.35rem .75rem;background:var(--muted-bg,#f1f5f9);border:1px solid var(--border,#e2e8f0);border-radius:6px;cursor:pointer';
+    const rejectBtn = el('button', 'interaction-reject-btn', 'Reject');
     rejectBtn.addEventListener('click', () => resolveInteraction('rejected'));
 
-    btnRow.appendChild(acceptBtn);
-    btnRow.appendChild(rejectBtn);
-    card.appendChild(btnRow);
+    actions.appendChild(acceptBtn);
+    actions.appendChild(rejectBtn);
+    card.appendChild(actions);
     section.appendChild(card);
   }
   container.appendChild(section);
