@@ -71,11 +71,77 @@ func setupE2ETestRepo(t *testing.T) (repoDir, homeDir string) {
 	return repoDir, homeDir
 }
 
+// Paperclip agents run the suite with their heartbeat PAPERCLIP_* credentials
+// exported, and the client falls back to the live local control plane when
+// PAPERCLIP_API_URL is unset. Commands the suite drives must reach neither, so
+// the helpers below swap in an address that refuses connections. Set
+// STAYPOINT_TEST_LIVE_PAPERCLIP=1 to deliberately run against the caller's board.
+const (
+	paperclipLiveOptInEnv = "STAYPOINT_TEST_LIVE_PAPERCLIP"
+	unreachablePaperclip  = "http://127.0.0.1:1"
+)
+
+var isolatedPaperclipEnv = map[string]string{
+	"PAPERCLIP_API_URL":    unreachablePaperclip,
+	"PAPERCLIP_API_KEY":    "",
+	"PAPERCLIP_COMPANY_ID": "",
+	"PAPERCLIP_PROJECT_ID": "",
+}
+
+func paperclipLiveOptIn() bool {
+	return os.Getenv(paperclipLiveOptInEnv) == "1"
+}
+
+// isolatedEnviron returns env with every PAPERCLIP_* variable dropped and the
+// API URL pointed at an unreachable address, unless the caller opted in.
+func isolatedEnviron(env []string) []string {
+	if paperclipLiveOptIn() {
+		return env
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "PAPERCLIP_") {
+			out = append(out, kv)
+		}
+	}
+	return append(out, "PAPERCLIP_API_URL="+unreachablePaperclip)
+}
+
+// isolatePaperclipInProcess applies the same isolation to this process for an
+// in-process command run and returns a func that restores the prior values.
+func isolatePaperclipInProcess() (restore func()) {
+	if paperclipLiveOptIn() {
+		return func() {}
+	}
+	saved := make(map[string]*string, len(isolatedPaperclipEnv))
+	for k, v := range isolatedPaperclipEnv {
+		if old, ok := os.LookupEnv(k); ok {
+			saved[k] = &old
+		} else {
+			saved[k] = nil
+		}
+		if v == "" {
+			_ = os.Unsetenv(k)
+		} else {
+			_ = os.Setenv(k, v)
+		}
+	}
+	return func() {
+		for k, old := range saved {
+			if old == nil {
+				_ = os.Unsetenv(k)
+			} else {
+				_ = os.Setenv(k, *old)
+			}
+		}
+	}
+}
+
 func execStaypoint(t *testing.T, dir, home string, stdin string, args ...string) (string, error) {
 	t.Helper()
 	cmd := exec.Command(testBinaryPath, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "HOME="+home)
+	cmd.Env = append(isolatedEnviron(os.Environ()), "HOME="+home)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

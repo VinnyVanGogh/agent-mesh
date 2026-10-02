@@ -36,8 +36,10 @@ func runInProcess(t *testing.T, dir string, args ...string) string {
 		outChan <- buf.String()
 	}()
 
+	restoreEnv := isolatePaperclipInProcess()
 	rootCmd.SetArgs(args)
 	_ = rootCmd.Execute()
+	restoreEnv()
 
 	_ = w.Close()
 	os.Stdout = oldStdout
