@@ -616,8 +616,8 @@ func TestBuildDiagnostic(t *testing.T) {
 			t.Errorf("diagnostic missing check: %q", c)
 		}
 	}
-	if !strings.Contains(msg, "BLOCKED") {
-		t.Error("diagnostic should mention BLOCKED")
+	if !strings.Contains(msg, "Can't complete") {
+		t.Error("diagnostic should open with Can't complete")
 	}
 	if !strings.Contains(msg, "in_progress") {
 		t.Error("diagnostic should mention in_progress")
