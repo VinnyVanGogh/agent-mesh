@@ -1301,3 +1301,38 @@ func GetTaskActivityLog(db *sql.DB, taskID string) ([]ActivityLog, error) {
 	return logs, rows.Err()
 }
 
+// RunStep represents a single step emitted during a task run.
+type RunStep struct {
+	ID        string  `json:"id"`
+	RunID     string  `json:"run_id"`
+	TaskID    string  `json:"task_id,omitempty"`
+	Seq       int     `json:"seq"`
+	ParentSeq *int    `json:"parent_seq,omitempty"`
+	Kind      string  `json:"kind"`
+	Title     string  `json:"title"`
+	Body      *string `json:"body,omitempty"`
+	StartedAt *string `json:"started_at,omitempty"`
+	EndedAt   *string `json:"ended_at,omitempty"`
+	CreatedAt string  `json:"created_at"`
+}
+
+// ListRunStepsByTask returns all run_steps for a given task, ordered by seq ascending.
+func ListRunStepsByTask(db *sql.DB, taskID string) ([]RunStep, error) {
+	query := `SELECT id, run_id, COALESCE(task_id,''), seq, parent_seq, kind, title, body, started_at, ended_at, created_at
+	          FROM run_steps WHERE task_id = ? ORDER BY seq ASC`
+	rows, err := db.Query(query, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var steps []RunStep
+	for rows.Next() {
+		var s RunStep
+		if err := rows.Scan(&s.ID, &s.RunID, &s.TaskID, &s.Seq, &s.ParentSeq, &s.Kind, &s.Title, &s.Body, &s.StartedAt, &s.EndedAt, &s.CreatedAt); err != nil {
+			return nil, err
+		}
+		steps = append(steps, s)
+	}
+	return steps, rows.Err()
+}
+

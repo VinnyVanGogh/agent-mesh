@@ -552,3 +552,26 @@ func (h *TasksHandler) SetStage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetRunSteps handles GET /api/tasks/{id}/run-steps
+func (h *TasksHandler) GetRunSteps(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+
+	steps, err := context.ListRunStepsByTask(h.db, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if steps == nil {
+		steps = []context.RunStep{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"steps": steps,
+	})
+}
+

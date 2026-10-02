@@ -349,6 +349,14 @@ function handleEvent(evt) {
   if (state.events.length > state.maxEvents) state.events.pop();
 
   const type = evt.type || '';
+  if (type === 'run.step' && evt.data) {
+    const step = evt.data;
+    const tid = step.task_id;
+    if (tid && state.openDetailTaskId === tid) {
+      appendRunStepToTimeline(tid, step);
+    }
+    return;
+  }
   if (type.startsWith('task.') && evt.data) {
     const t = evt.data;
     if (t.id) state.tasks[t.id] = Object.assign(state.tasks[t.id] || {}, t);
@@ -6480,6 +6488,119 @@ document.getElementById('panel-open')?.addEventListener('click', () => {
   if (state.openDetailTaskId) openTaskPage(state.openDetailTaskId);
 });
 
+// ── Run-step timeline helpers ──────────────────────────────
+
+const STEP_KIND_ICON = {
+  think:      '🧠',
+  run:        '⚙️',
+  edit:       '✏️',
+  checkpoint: '📌',
+  state:      '💾',
+  tool:       '🔧',
+  error:      '❌',
+  result:     '✅',
+};
+
+function stepKindIcon(kind) {
+  return STEP_KIND_ICON[kind] || '▶';
+}
+
+function fmtDuration(ms) {
+  if (ms === null || ms === undefined || isNaN(ms)) return '—';
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60000);
+  const s = Math.floor((ms % 60000) / 1000);
+  return `${m}m ${s}s`;
+}
+
+function buildTimelineStats(task, steps, elapsedMs, isStuck) {
+  const wrap = el('div', 'timeline-stats-inner');
+  const stat = (label, value, cls) => {
+    const s = el('span', `timeline-stat${cls ? ' ' + cls : ''}`);
+    s.appendChild(el('span', 'timeline-stat-label', label));
+    s.appendChild(el('span', 'timeline-stat-val', String(value)));
+    return s;
+  };
+  wrap.appendChild(stat('Steps', steps.length));
+  wrap.appendChild(stat('Elapsed', fmtDuration(elapsedMs)));
+  const spentUsd = task.spent_usd || 0;
+  const spentTok = task.spent_tokens || 0;
+  if (spentUsd > 0 || spentTok > 0) {
+    wrap.appendChild(stat('Cost', fmtCurrency(spentUsd)));
+    wrap.appendChild(stat('Tokens', fmtCompactNum(spentTok)));
+  }
+  if (isStuck) {
+    wrap.appendChild(stat('⚠️ Stuck', '>5 min no step', 'timeline-stat-warn'));
+  }
+  return wrap;
+}
+
+function buildRunStepRow(s) {
+  const row = el('div', `timeline-row timeline-row-${s.kind || 'unknown'}`);
+  row.setAttribute('data-step-id', s.id);
+
+  const summary = el('div', 'timeline-row-summary');
+  summary.style.cursor = s.body ? 'pointer' : 'default';
+
+  const icon = el('span', 'timeline-icon', stepKindIcon(s.kind));
+  const kindBadge = el('span', `timeline-kind timeline-kind-${s.kind || 'unknown'}`, s.kind || 'step');
+  const title = el('span', 'timeline-title', s.title || '(step)');
+  const ts = el('span', 'timeline-ts', s.created_at ? fmtTime(s.created_at) : '');
+
+  const dur = (s.started_at && s.ended_at)
+    ? fmtDuration(new Date(s.ended_at).getTime() - new Date(s.started_at).getTime())
+    : null;
+  const durEl = dur ? el('span', 'timeline-dur', dur) : null;
+
+  summary.appendChild(icon);
+  summary.appendChild(kindBadge);
+  summary.appendChild(title);
+  if (durEl) summary.appendChild(durEl);
+  summary.appendChild(ts);
+  row.appendChild(summary);
+
+  if (s.body) {
+    const body = el('pre', 'timeline-body hidden', s.body);
+    row.appendChild(body);
+    summary.addEventListener('click', () => body.classList.toggle('hidden'));
+  }
+  return row;
+}
+
+function appendRunStepToTimeline(taskId, step) {
+  const stepList = document.getElementById(`timeline-steps-${taskId}`);
+  if (!stepList) return;
+  // Remove empty placeholder
+  const empty = stepList.querySelector('.timeline-empty');
+  if (empty) empty.remove();
+  stepList.appendChild(buildRunStepRow(step));
+
+  // Update section title count
+  const section = document.getElementById(`timeline-section-${taskId}`);
+  if (section) {
+    const titleEl = section.querySelector('.task-page-section-title');
+    if (titleEl) {
+      const current = stepList.querySelectorAll('.timeline-row').length;
+      titleEl.textContent = `Timeline (${current})`;
+    }
+  }
+
+  // Refresh stats bar
+  const statsBar = document.getElementById(`timeline-stats-${taskId}`);
+  if (statsBar) {
+    const task = state.tasks[taskId] || {};
+    const allRows = Array.from(stepList.querySelectorAll('.timeline-row'));
+    const stepCount = allRows.length;
+    const createdAtMs = task.created_at ? new Date(task.created_at).getTime() : null;
+    const elapsedMs = createdAtMs ? Date.now() - createdAtMs : null;
+    const isStuck = false;
+    const fakeSteps = new Array(stepCount);
+    statsBar.innerHTML = '';
+    statsBar.appendChild(buildTimelineStats({ ...task, runSteps: fakeSteps }, fakeSteps, elapsedMs, isStuck));
+  }
+}
+
 // ── Full-page task view ────────────────────────────────────
 
 async function openTaskPage(target, pushHistory = true) {
@@ -6518,15 +6639,17 @@ async function openTaskPage(target, pushHistory = true) {
   const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
 
   try {
-    const [taskResp, commentsResp] = await Promise.all([
+    const [taskResp, commentsResp, stepsResp] = await Promise.all([
       apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}`),
-      apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}/comments`).catch(() => ({ comments: [] }))
+      apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}/comments`).catch(() => ({ comments: [] })),
+      (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/run-steps`).catch(() => ({ steps: [] })) : Promise.resolve({ steps: [] }))
     ]);
     const task = taskResp.task || taskResp;
     const comments = (taskResp.comments && taskResp.comments.length)
       ? taskResp.comments
       : (commentsResp?.comments || (Array.isArray(commentsResp) ? commentsResp : []));
     task.comments = comments;
+    task.runSteps = stepsResp?.steps || [];
 
     if (task.id) state.openDetailTaskId = task.id;
 
@@ -6617,6 +6740,37 @@ function renderTaskPage(container, task, comments) {
     notesSection.appendChild(mdEl(notesVal));
     main.appendChild(notesSection);
   }
+
+  // ── Timeline ──────────────────────────────────────────────
+  const runSteps = task.runSteps || [];
+  const timelineSection = el('div', 'task-page-section');
+  timelineSection.id = `timeline-section-${task.id}`;
+  timelineSection.setAttribute('data-task-id', task.id || '');
+  timelineSection.appendChild(el('div', 'task-page-section-title', `Timeline${runSteps.length ? ` (${runSteps.length})` : ''}`));
+
+  // Stats bar
+  const statsBar = el('div', 'timeline-stats-bar');
+  statsBar.id = `timeline-stats-${task.id}`;
+  statsBar.setAttribute('data-task-id', task.id || '');
+  const createdAtMs = task.created_at ? new Date(task.created_at).getTime() : null;
+  const lastStepAt = runSteps.length ? new Date(runSteps[runSteps.length - 1].created_at).getTime() : null;
+  const elapsedMs = lastStepAt && createdAtMs ? lastStepAt - createdAtMs : null;
+  const isStuck = runSteps.length > 0 && (Date.now() - (lastStepAt || 0)) > 5 * 60 * 1000 && task.status !== 'done';
+  statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, isStuck));
+  timelineSection.appendChild(statsBar);
+
+  // Step rows
+  const stepList = el('div', 'timeline-steps');
+  stepList.id = `timeline-steps-${task.id}`;
+  if (runSteps.length === 0) {
+    stepList.appendChild(el('p', 'panel-field-muted timeline-empty', 'No steps yet. Steps will appear here during a run.'));
+  } else {
+    for (const s of runSteps) {
+      stepList.appendChild(buildRunStepRow(s));
+    }
+  }
+  timelineSection.appendChild(stepList);
+  main.appendChild(timelineSection);
 
   // Activity / comments
   if (comments && comments.length) {
