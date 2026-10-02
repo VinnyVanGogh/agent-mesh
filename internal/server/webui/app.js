@@ -6639,10 +6639,11 @@ async function openTaskPage(target, pushHistory = true) {
   const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
 
   try {
-    const [taskResp, commentsResp, stepsResp] = await Promise.all([
+    const [taskResp, commentsResp, stepsResp, interactionsResp] = await Promise.all([
       apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}`),
       apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}/comments`).catch(() => ({ comments: [] })),
-      (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/run-steps`).catch(() => ({ steps: [] })) : Promise.resolve({ steps: [] }))
+      (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/run-steps`).catch(() => ({ steps: [] })) : Promise.resolve({ steps: [] })),
+      (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/interactions`).catch(() => ({ interactions: [] })) : Promise.resolve({ interactions: [] }))
     ]);
     const task = taskResp.task || taskResp;
     const comments = (taskResp.comments && taskResp.comments.length)
@@ -6650,6 +6651,7 @@ async function openTaskPage(target, pushHistory = true) {
       : (commentsResp?.comments || (Array.isArray(commentsResp) ? commentsResp : []));
     task.comments = comments;
     task.runSteps = stepsResp?.steps || [];
+    const interactions = interactionsResp?.interactions || [];
 
     if (task.id) state.openDetailTaskId = task.id;
 
@@ -6668,12 +6670,12 @@ async function openTaskPage(target, pushHistory = true) {
     if (task.description) state.taskDescriptions[activeId] = task.description;
     state.taskComments[activeId] = comments;
 
-    renderTaskPage(pageContent, task, comments);
+    renderTaskPage(pageContent, task, comments, interactions);
     startChatPoll(activeId);
   } catch {
     const cached = matchedTask || state.tasks[resolvedId] || state.tasks[targetId];
     if (cached && pageContent) {
-      renderTaskPage(pageContent, cached, cached.comments || []);
+      renderTaskPage(pageContent, cached, cached.comments || [], []);
       startChatPoll(cached.id || resolvedId);
     } else if (pageContent) {
       pageContent.innerHTML = '<p style="color:var(--red);padding:2rem">Task not found or failed to load.</p>';
@@ -6681,7 +6683,93 @@ async function openTaskPage(target, pushHistory = true) {
   }
 }
 
-function renderTaskPage(container, task, comments) {
+function renderInteractionCards(container, taskId, interactions) {
+  const pending = (interactions || []).filter(i => i.status === 'pending');
+  if (!pending.length) return;
+
+  const section = el('div', 'task-page-section');
+  section.id = 'interaction-cards-section';
+  section.appendChild(el('div', 'task-page-section-title', `Pending (${pending.length})`));
+
+  for (const interaction of pending) {
+    const card = el('div', 'interaction-card');
+    card.style.cssText = 'border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:1rem;margin-bottom:.75rem;background:var(--card-bg,#fff)';
+
+    let payloadObj = {};
+    try { payloadObj = JSON.parse(interaction.payload || '{}'); } catch { /* ignore */ }
+
+    const kind = interaction.interaction_kind;
+    const kindLabel = { ask_user_questions: 'Questions', request_confirmation: 'Confirmation', suggest_tasks: 'Suggested Tasks' }[kind] || kind;
+    const kindBadge = el('span', 'card-id', kindLabel);
+    kindBadge.style.marginBottom = '.5rem';
+    card.appendChild(kindBadge);
+
+    // Render payload content
+    if (kind === 'request_confirmation') {
+      const prompt = payloadObj.prompt || '';
+      if (prompt) card.appendChild(mdEl(prompt));
+    } else if (kind === 'ask_user_questions') {
+      const qs = payloadObj.questions || [];
+      for (const q of qs) {
+        const qEl = el('p', '', q.question || '');
+        qEl.style.fontWeight = '600';
+        card.appendChild(qEl);
+        if (q.options && q.options.length) {
+          const ul = el('ul', '');
+          ul.style.margin = '.25rem 0 .5rem 1rem';
+          for (const opt of q.options) ul.appendChild(el('li', '', opt));
+          card.appendChild(ul);
+        }
+      }
+    } else if (kind === 'suggest_tasks') {
+      const tasks = payloadObj.tasks || [];
+      for (const t of tasks) {
+        const tEl = el('div', '');
+        tEl.style.cssText = 'padding:.25rem 0;border-bottom:1px solid var(--border,#eee)';
+        tEl.appendChild(el('strong', '', t.title || ''));
+        if (t.description) tEl.appendChild(el('p', 'panel-field-muted', t.description));
+        card.appendChild(tEl);
+      }
+    }
+
+    // Buttons
+    const btnRow = el('div', '');
+    btnRow.style.cssText = 'display:flex;gap:.5rem;margin-top:.75rem';
+
+    const resolveInteraction = async (status) => {
+      acceptBtn.disabled = true;
+      rejectBtn.disabled = true;
+      try {
+        await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/interactions/${interaction.id}/resolve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status })
+        });
+        card.style.opacity = '0.5';
+        card.style.pointerEvents = 'none';
+        const badge = el('span', 'card-id', status === 'accepted' ? '✓ Accepted' : '✗ Rejected');
+        badge.style.marginLeft = '.5rem';
+        btnRow.appendChild(badge);
+      } catch { acceptBtn.disabled = false; rejectBtn.disabled = false; }
+    };
+
+    const acceptBtn = el('button', 'btn-primary', 'Accept');
+    acceptBtn.style.cssText = 'padding:.35rem .75rem;background:var(--green,#22c55e);color:#fff;border:none;border-radius:6px;cursor:pointer';
+    acceptBtn.addEventListener('click', () => resolveInteraction('accepted'));
+
+    const rejectBtn = el('button', '', 'Reject');
+    rejectBtn.style.cssText = 'padding:.35rem .75rem;background:var(--muted-bg,#f1f5f9);border:1px solid var(--border,#e2e8f0);border-radius:6px;cursor:pointer';
+    rejectBtn.addEventListener('click', () => resolveInteraction('rejected'));
+
+    btnRow.appendChild(acceptBtn);
+    btnRow.appendChild(rejectBtn);
+    card.appendChild(btnRow);
+    section.appendChild(card);
+  }
+  container.appendChild(section);
+}
+
+function renderTaskPage(container, task, comments, interactions) {
   container.innerHTML = '';
 
   // Back bar
@@ -6771,6 +6859,9 @@ function renderTaskPage(container, task, comments) {
   }
   timelineSection.appendChild(stepList);
   main.appendChild(timelineSection);
+
+  // Interaction cards (pending ask_user_questions / request_confirmation / suggest_tasks)
+  renderInteractionCards(main, task.id || '', interactions || []);
 
   // Activity / comments
   if (comments && comments.length) {
