@@ -6673,13 +6673,22 @@ async function openTaskPage(target, pushHistory = true) {
 
     renderTaskPage(pageContent, task, comments, interactions);
     startChatPoll(activeId);
-  } catch {
+  } catch (err) {
+    const is404 = err && /^404\b/.test(err.message);
     const cached = matchedTask || state.tasks[resolvedId] || state.tasks[targetId];
-    if (cached && pageContent) {
+    if (is404) {
+      if (pageContent) {
+        pageContent.innerHTML = '<p style="color:var(--red);padding:2rem">Task not found.</p>';
+      }
+    } else if (cached && pageContent) {
       renderTaskPage(pageContent, cached, cached.comments || [], []);
-      startChatPoll(cached.id || resolvedId);
+      const banner = document.createElement('div');
+      banner.style.cssText = 'background:var(--red,#c0392b);color:#fff;padding:.5rem 1rem;font-size:.85rem;font-weight:600;';
+      banner.textContent = 'Daemon unreachable — showing cached copy. Actions are disabled.';
+      pageContent.prepend(banner);
+      pageContent.querySelectorAll('button,input,textarea').forEach(el => { el.disabled = true; });
     } else if (pageContent) {
-      pageContent.innerHTML = '<p style="color:var(--red);padding:2rem">Task not found or failed to load.</p>';
+      pageContent.innerHTML = '<p style="color:var(--red);padding:2rem">Failed to load — daemon may be unreachable.</p>';
     }
   }
 }
