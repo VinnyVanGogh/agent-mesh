@@ -436,6 +436,13 @@ function viewToPath(viewName, orgName) {
   return `/${viewName}`;
 }
 
+function projectSlug(task) {
+  const p = task.project;
+  if (!p) return 'default';
+  if (typeof p !== 'object') return String(p) || 'default';
+  return p.urlKey || p.slug || p.name || p.id || 'default';
+}
+
 function taskToPath(task) {
   if (!task) return '/';
   const ident = task.identifier || task.id || '';
@@ -457,7 +464,7 @@ function taskToPath(task) {
   if (!org) {
     org = 'STA';
   }
-  const project = task.project || 'default';
+  const project = projectSlug(task);
   return `/tasks/${encodeURIComponent(org)}/${encodeURIComponent(project)}/${encodeURIComponent(ident)}`;
 }
 
@@ -592,6 +599,7 @@ function navigateTo(viewName, orgName = null, pushHistory = true) {
     if (viewName === 'checklist')    loadChecklistSprints().then(() => loadChecklist());
     if (viewName === 'overview')     renderOverview();
     if (viewName === 'kanban')       renderKanban();
+    if (viewName === 'task-page')    { /* content rendered by openTaskPage() */ }
     if (viewName === 'boss') {
       renderBoss();
       preloadBossReports(true);
@@ -614,11 +622,19 @@ document.querySelectorAll('.sidebar-item').forEach(btn => {
   });
 });
 
-window.addEventListener('popstate', () => {
+window.addEventListener('popstate', (e) => {
   const route = pathToRoute();
   if (route.taskId || route.identifier) {
-    navigateTo(route.view, route.org, false);
-    openDetail(route, false);
+    if (e.state?.taskPage === false) {
+      // Sidebar mode (in-app navigation)
+      const panel = document.getElementById('detail-panel');
+      if (panel) panel.classList.remove('hidden');
+      navigateTo(route.view, route.org, false);
+      openDetail(route, false);
+    } else {
+      // Full-page mode (direct link, "Open" button, or back/forward)
+      openTaskPage(route, false);
+    }
   } else {
     document.getElementById('detail-panel')?.classList.add('hidden');
     stopChatPoll();
@@ -5734,8 +5750,8 @@ async function refreshChatMessages(taskId) {
     const comments = cr.comments || (Array.isArray(cr) ? cr : []);
     state.taskComments[taskId] = comments;
     if (state.tasks[taskId]) state.tasks[taskId].comments = comments;
-    const messagesDiv = document.getElementById('panel-chat-messages');
-    const titleEl = document.querySelector('#panel-chat-section .panel-section-title');
+    const messagesDiv = document.getElementById('panel-chat-messages') || document.getElementById('page-chat-messages');
+    const titleEl = document.querySelector('#panel-chat-section .panel-section-title') || document.querySelector('#page-chat-section .panel-section-title');
     if (!messagesDiv) return;
     const atBottom = messagesDiv.scrollHeight - messagesDiv.scrollTop <= messagesDiv.clientHeight + 30;
     renderChatMessages(messagesDiv, comments);
@@ -6316,9 +6332,9 @@ async function openDetail(target, pushHistory = true, orgHint = null, projectHin
     : `/tasks/${encodeURIComponent(orgHint || 'STA')}/${encodeURIComponent(projectHint || 'default')}/${encodeURIComponent(targetId)}`;
 
   if (pushHistory && window.location.pathname !== canonicalPath) {
-    history.pushState({ taskId: resolvedId, canonicalPath }, '', canonicalPath);
+    history.pushState({ taskId: resolvedId, canonicalPath, taskPage: false }, '', canonicalPath);
   } else if (!pushHistory && (window.location.pathname.startsWith('/tasks/') || window.location.pathname.startsWith('/issues/')) && window.location.pathname !== canonicalPath) {
-    history.replaceState({ taskId: resolvedId, canonicalPath }, '', canonicalPath);
+    history.replaceState({ taskId: resolvedId, canonicalPath, taskPage: false }, '', canonicalPath);
   }
 
   const isFleet = isFleetTaskId(resolvedId);
@@ -6346,7 +6362,7 @@ async function openDetail(target, pushHistory = true, orgHint = null, projectHin
     // Ensure browser URL displays the fully resolved canonical hierarchical path
     const finalCanonicalPath = taskToPath(task);
     if (window.location.pathname !== finalCanonicalPath && (window.location.pathname.startsWith('/tasks/') || window.location.pathname.startsWith('/issues/'))) {
-      history.replaceState({ taskId: task.id, canonicalPath: finalCanonicalPath }, '', finalCanonicalPath);
+      history.replaceState({ taskId: task.id, canonicalPath: finalCanonicalPath, taskPage: false }, '', finalCanonicalPath);
     }
 
     // Also fetch native StayPoint governance snapshot if available
@@ -6446,6 +6462,276 @@ function closeDetailPanel() {
 
 document.getElementById('panel-close')?.addEventListener('click', closeDetailPanel);
 document.getElementById('panel-expand')?.addEventListener('click', toggleDetailFullPage);
+document.getElementById('panel-open')?.addEventListener('click', () => {
+  if (state.openDetailTaskId) openTaskPage(state.openDetailTaskId);
+});
+
+// ── Full-page task view ────────────────────────────────────
+
+async function openTaskPage(target, pushHistory = true) {
+  // Close sidebar if open
+  const panel = document.getElementById('detail-panel');
+  if (panel) panel.classList.add('hidden');
+  stopChatPoll();
+
+  let targetId = target;
+  let orgHint = null;
+  let projectHint = null;
+  if (typeof target === 'object' && target !== null) {
+    orgHint = target.org || target.organization || null;
+    projectHint = target.project || target.projectHint || null;
+    targetId = target.identifier || target.taskId || target.id;
+  }
+
+  const matchedTask = findTask(targetId, orgHint, projectHint);
+  const resolvedId = matchedTask ? matchedTask.id : (targetId || '');
+  state.openDetailTaskId = resolvedId;
+
+  const canonicalPath = matchedTask
+    ? taskToPath(matchedTask)
+    : `/tasks/${encodeURIComponent(orgHint || 'STA')}/${encodeURIComponent(projectHint || 'default')}/${encodeURIComponent(targetId || '')}`;
+
+  if (pushHistory && window.location.pathname !== canonicalPath) {
+    history.pushState({ taskId: resolvedId, canonicalPath, taskPage: true }, '', canonicalPath);
+  }
+
+  navigateTo('task-page', null, false);
+
+  const pageContent = document.getElementById('task-page-content');
+  if (pageContent) pageContent.innerHTML = '<p style="color:var(--muted);padding:2rem">Loading…</p>';
+
+  const isFleet = isFleetTaskId(resolvedId);
+  const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
+
+  try {
+    const [taskResp, commentsResp] = await Promise.all([
+      apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}`),
+      apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}/comments`).catch(() => ({ comments: [] }))
+    ]);
+    const task = taskResp.task || taskResp;
+    const comments = (taskResp.comments && taskResp.comments.length)
+      ? taskResp.comments
+      : (commentsResp?.comments || (Array.isArray(commentsResp) ? commentsResp : []));
+    task.comments = comments;
+
+    if (task.id) state.openDetailTaskId = task.id;
+
+    const finalPath = taskToPath(task);
+    if (pushHistory && window.location.pathname !== finalPath) {
+      history.replaceState({ taskId: task.id, canonicalPath: finalPath, taskPage: true }, '', finalPath);
+    }
+
+    try {
+      const govResp = await apiFetch(`/api/tasks/${encodeURIComponent(task.id || resolvedId)}/governance`);
+      if (govResp && !govResp.error) task.governance = govResp;
+    } catch { /* governance optional */ }
+
+    const activeId = task.id || resolvedId;
+    state.tasks[activeId] = { ...(state.tasks[activeId] || {}), ...task };
+    if (task.description) state.taskDescriptions[activeId] = task.description;
+    state.taskComments[activeId] = comments;
+
+    renderTaskPage(pageContent, task, comments);
+    startChatPoll(activeId);
+  } catch {
+    const cached = matchedTask || state.tasks[resolvedId] || state.tasks[targetId];
+    if (cached && pageContent) {
+      renderTaskPage(pageContent, cached, cached.comments || []);
+      startChatPoll(cached.id || resolvedId);
+    } else if (pageContent) {
+      pageContent.innerHTML = '<p style="color:var(--red);padding:2rem">Task not found or failed to load.</p>';
+    }
+  }
+}
+
+function renderTaskPage(container, task, comments) {
+  container.innerHTML = '';
+
+  // Back bar
+  const backBar = el('div', 'task-page-back-bar');
+  const backBtn = el('button', 'task-page-back-btn', '← Back');
+  backBtn.addEventListener('click', () => {
+    stopChatPoll();
+    state.openDetailTaskId = null;
+    history.back();
+  });
+  backBar.appendChild(backBtn);
+
+  const ident = task.identifier || (task.id ? `#${task.id.slice(0, 8)}` : '');
+  if (ident) {
+    const breadcrumb = el('span', 'task-page-breadcrumb', ident);
+    backBar.appendChild(breadcrumb);
+  }
+  container.appendChild(backBar);
+
+  // Two-column layout
+  const layout = el('div', 'task-page-layout');
+
+  // ── Main column ──
+  const main = el('div', 'task-page-main');
+
+  // Title
+  const titleEl = el('h1', 'task-page-title', task.title || task.name || '(untitled)');
+  main.appendChild(titleEl);
+
+  // Status/priority pills row
+  const pillsRow = el('div', 'task-page-pills');
+  if (task.status) pillsRow.appendChild(statusPill(task.status));
+  if (task.priority) pillsRow.appendChild(statusPill(task.priority));
+  if (ident) {
+    const identBadge = el('span', 'card-id', ident);
+    pillsRow.appendChild(identBadge);
+  }
+  main.appendChild(pillsRow);
+
+  // Description
+  const descSection = el('div', 'task-page-section');
+  descSection.appendChild(el('div', 'task-page-section-title', 'Description'));
+  let desc = (task.description || '').trim();
+  if (desc) {
+    descSection.appendChild(mdEl(desc));
+  } else {
+    descSection.appendChild(el('p', 'panel-field-muted', 'No description provided.'));
+  }
+  main.appendChild(descSection);
+
+  // Notes (if any)
+  const notesVal = task.notes || '';
+  if (notesVal) {
+    const notesSection = el('div', 'task-page-section');
+    notesSection.appendChild(el('div', 'task-page-section-title', 'Notes'));
+    notesSection.appendChild(mdEl(notesVal));
+    main.appendChild(notesSection);
+  }
+
+  // Activity / comments
+  if (comments && comments.length) {
+    const actSection = el('div', 'task-page-section');
+    actSection.appendChild(el('div', 'task-page-section-title', `Activity (${comments.length})`));
+    for (const c of comments) {
+      const authorType = (c.authorType || c.author_type || '').toLowerCase();
+      const isAgent = authorType === 'agent' || authorType === 'system';
+      const authorLabel = isAgent
+        ? (c.authorName || c.author_name || 'Agent')
+        : (c.author || 'User');
+      const ts = c.createdAt || c.created_at || c.timestamp || '';
+      const row = el('div', `chat-msg ${isAgent ? 'chat-msg-agent' : 'chat-msg-user'}`);
+      row.appendChild(el('div', 'chat-msg-meta', `${authorLabel}${ts ? ' · ' + fmtDateTime(ts) : ''}`));
+      const bubble = el('div', 'chat-msg-bubble');
+      bubble.appendChild(mdEl(c.body || c.message || ''));
+      row.appendChild(bubble);
+      actSection.appendChild(row);
+    }
+    main.appendChild(actSection);
+  }
+
+  // Agent interaction (chat)
+  const chatSection = el('div', 'task-page-section');
+  chatSection.id = 'page-chat-section';
+  chatSection.appendChild(el('div', 'task-page-section-title', 'Send to Agent'));
+
+  const messagesDiv = el('div', 'chat-messages');
+  messagesDiv.id = 'page-chat-messages';
+  messagesDiv.style.maxHeight = '320px';
+  if (!comments || !comments.length) {
+    messagesDiv.appendChild(el('p', 'panel-field-muted', 'No messages yet.'));
+  }
+  chatSection.appendChild(messagesDiv);
+
+  const compose = el('div', 'chat-compose');
+  const textarea = document.createElement('textarea');
+  textarea.className = 'chat-textarea';
+  textarea.placeholder = 'Message the agent… (⌘↵ to send)';
+  textarea.rows = 3;
+  textarea.addEventListener('input', () => {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.max(56, Math.min(300, textarea.scrollHeight)) + 'px';
+  });
+  const sendBtn = el('button', 'chat-send-btn', 'Send');
+  sendBtn.type = 'button';
+  const taskId = task.id || (state.openDetailTaskId || '');
+
+  const doSend = async () => {
+    const body = textarea.value.trim();
+    if (!body) return;
+    textarea.value = '';
+    textarea.style.height = '';
+    sendBtn.disabled = true;
+    try {
+      await sendComment(taskId, body);
+      await refreshChatMessages(taskId);
+    } catch { /* silent */ } finally {
+      sendBtn.disabled = false;
+      textarea.focus();
+    }
+  };
+  sendBtn.addEventListener('click', doSend);
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); doSend(); }
+  });
+
+  compose.appendChild(textarea);
+  compose.appendChild(sendBtn);
+  chatSection.appendChild(compose);
+  main.appendChild(chatSection);
+
+  layout.appendChild(main);
+
+  // ── Metadata sidebar ──
+  const meta = el('div', 'task-page-meta');
+
+  const addMetaField = (label, value) => {
+    if (!value && value !== 0) return;
+    const field = el('div', 'panel-field');
+    field.appendChild(el('div', 'panel-field-label', label));
+    if (typeof value === 'string') {
+      field.appendChild(el('div', 'panel-field-value', value));
+    } else {
+      field.appendChild(value);
+    }
+    meta.appendChild(field);
+  };
+
+  addMetaField('Status', task.status);
+  addMetaField('Priority', task.priority);
+  addMetaField('Assignee', task.assignee_name || task.checkout_agent_id || null);
+  addMetaField('Project', projectSlug(task) !== 'default' ? projectSlug(task) : null);
+  addMetaField('Org', task.organization || null);
+  addMetaField('Stage', task.execution_stage || null);
+  addMetaField('Spend',
+    (task.spent_usd || task.spent_tokens)
+      ? `${fmtCurrency(task.spent_usd || 0)} · ${fmtCompactNum(task.spent_tokens || 0)} tokens`
+      : null);
+  addMetaField('Budget',
+    (task.max_budget_usd || task.max_turns)
+      ? `${fmtCurrency(task.max_budget_usd || 0)} · ${task.max_turns || 50} turns max`
+      : null);
+  addMetaField('Internal ID', task.id || null);
+
+  // Labels
+  let labels = task.labels;
+  if (typeof labels === 'string') {
+    try { labels = JSON.parse(labels); } catch { labels = labels ? [labels] : []; }
+  }
+  if (Array.isArray(labels) && labels.length) {
+    const lblWrap = el('div', 'panel-field');
+    lblWrap.appendChild(el('div', 'panel-field-label', 'Labels'));
+    const badgeContainer = el('div');
+    badgeContainer.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;';
+    for (const l of labels) {
+      const name = typeof l === 'object' ? l.name : l;
+      const color = typeof l === 'object' && l.color ? l.color : '#38bdf8';
+      const badge = el('span', 'task-label-badge', name);
+      badge.style.cssText = `font-size:0.75rem;padding:2px 8px;border-radius:12px;font-weight:600;background:${color}22;border:1px solid ${color};color:${color};`;
+      badgeContainer.appendChild(badge);
+    }
+    lblWrap.appendChild(badgeContainer);
+    meta.appendChild(lblWrap);
+  }
+
+  layout.appendChild(meta);
+  container.appendChild(layout);
+}
 
 document.addEventListener('click', (e) => {
   const panel = document.getElementById('detail-panel');
@@ -6454,8 +6740,8 @@ document.addEventListener('click', (e) => {
   if (Date.now() - lastDetailOpenTime < 150) return;
   // If clicked inside the detail panel, do not close
   if (panel.contains(e.target)) return;
-  // If clicked on close or expand button, ignore
-  if (e.target.closest('#panel-close') || e.target.closest('#panel-expand')) return;
+  // If clicked on close, expand, or open button, ignore
+  if (e.target.closest('#panel-close') || e.target.closest('#panel-expand') || e.target.closest('#panel-open')) return;
   closeDetailPanel();
 });
 
@@ -7799,9 +8085,11 @@ loadAll().then(() => {
   preloadBossReports(false);
 
   const initialRoute = pathToRoute();
-  navigateTo(initialRoute.view, initialRoute.org, false);
   if (initialRoute.taskId || initialRoute.identifier) {
-    openDetail(initialRoute, false);
+    // Direct deep link or refresh on a task URL → render full page
+    openTaskPage(initialRoute, false);
+  } else {
+    navigateTo(initialRoute.view, initialRoute.org, false);
   }
   connectSSE();
   updateDevTourToggleUI();
