@@ -5870,6 +5870,17 @@ async function sendComment(taskId, body) {
 }
 
 // ── Detail panel (Right sidebar / Properties) ─────────────
+const WORK_KIND_LABELS = {
+  coding:       'Coding & review — Claude Opus, backup Gemini 3.1 Pro',
+  architecture: 'Architecture — Gemini 3.1 Pro, backup Claude Opus',
+  planning:     'Planning & docs — Gemini Flash, backup Claude Sonnet',
+  qa:           'QA & testing — Gemini Flash, backup Claude Sonnet',
+};
+
+function workKindLabel(kind) {
+  return WORK_KIND_LABELS[kind] || kind || null;
+}
+
 function addPanelField(content, label, value) {
   if (!value && value !== 0) return;
   const field = el('div', 'panel-field');
@@ -5952,8 +5963,9 @@ function renderDetailContent(content, task) {
   if (task.priority)                 addPanelField(content, 'Priority',   task.priority);
   if (task.organization)             addPanelField(content, 'Org',        task.organization);
   addPanelField(content, 'Stage',    task.execution_stage || task.status);
-  addPanelField(content, 'Assignee', task.assignee_name || task.checkout_agent_id || null);
-  addPanelField(content, 'Project',  task.project || null);
+  addPanelField(content, 'Assignee',     task.assignee_name || task.checkout_agent_id || null);
+  addPanelField(content, 'Kind of work', workKindLabel(task.work_kind));
+  addPanelField(content, 'Project',      task.project || null);
   addPanelField(content, 'Goal',     task.goal_title || task.goal_id ? (task.goal_title || task.goal_id?.slice(0, 12)) : null);
   addPanelField(content, 'Repo',     task.repo_path ? `${task.repo_path} (${task.git_branch || 'main'})` : null);
 
@@ -8620,7 +8632,7 @@ setInterval(() => {
   const cancelBtn = document.getElementById('create-task-cancel');
   const form    = document.getElementById('create-task-form');
   const errBox  = document.getElementById('create-task-error');
-  const assigneeSel = document.getElementById('ct-assignee');
+  const workKindSel = document.getElementById('ct-work-kind');
   const submitBtn = document.getElementById('create-task-submit');
 
   if (!modal || !openBtn || !form) return;
@@ -8628,19 +8640,9 @@ setInterval(() => {
   function openModal() {
     modal.style.display = 'flex';
     form.reset();
+    if (workKindSel) workKindSel.value = 'coding';
     errBox.style.display = 'none';
     submitBtn.disabled = false;
-    // Load agents into dropdown
-    apiFetch('/api/agents').then(data => {
-      const agents = data.agents || [];
-      while (assigneeSel.options.length > 1) assigneeSel.remove(1);
-      for (const a of agents) {
-        const opt = document.createElement('option');
-        opt.value = a.id;
-        opt.textContent = a.label || (a.agent_type + ' / ' + a.id.slice(0, 8));
-        assigneeSel.appendChild(opt);
-      }
-    }).catch(() => {});
     document.getElementById('ct-name').focus();
   }
 
@@ -8665,7 +8667,7 @@ setInterval(() => {
 
     const body = {
       name,
-      assignee_agent_id: assigneeSel.value || '',
+      work_kind: (workKindSel && workKindSel.value) || 'coding',
       organization: document.getElementById('ct-org').value.trim(),
       project:      document.getElementById('ct-project').value.trim(),
       repo_path:    document.getElementById('ct-repo').value.trim(),
