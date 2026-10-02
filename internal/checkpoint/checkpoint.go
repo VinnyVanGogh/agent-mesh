@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -295,6 +296,77 @@ func DiffCheckpoint(ctx context.Context, workDir, checkpointID string) (string, 
 	}
 
 	return runGit(ctx, rootDir, nil, "diff", targetRef, "--stat")
+}
+
+// DiffCheckpointFiles returns per-file add/remove counts between the working tree
+// and the specified checkpoint using git diff --numstat.
+func DiffCheckpointFiles(ctx context.Context, workDir, checkpointID string) ([]FileDiffStat, error) {
+	rootDir, _, err := getGitPaths(ctx, workDir)
+	if err != nil {
+		return nil, err
+	}
+
+	targetRef := resolveCheckpointRef(checkpointID)
+	out, err := runGit(ctx, rootDir, nil, "diff", targetRef, "--numstat")
+	if err != nil {
+		return nil, err
+	}
+
+	var stats []FileDiffStat
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
+			continue
+		}
+		added, _ := strconv.Atoi(parts[0])
+		removed, _ := strconv.Atoi(parts[1])
+		stats = append(stats, FileDiffStat{Path: parts[2], Added: added, Removed: removed})
+	}
+	return stats, nil
+}
+
+// resolveCheckpointRef converts a short checkpoint ID to a git ref or SHA.
+func resolveCheckpointRef(checkpointID string) string {
+	if strings.HasPrefix(checkpointID, "refs/") || len(checkpointID) == 40 {
+		return checkpointID
+	}
+	if checkpointID == "" || checkpointID == "latest" {
+		return "refs/staypoint/checkpoints/latest"
+	}
+	return checkpointID
+}
+
+// RestoreFile restores a single file from the specified checkpoint into the working tree.
+func RestoreFile(ctx context.Context, workDir, checkpointID, filePath string) error {
+	if filePath == "" {
+		return fmt.Errorf("file path is required")
+	}
+	rootDir, _, err := getGitPaths(ctx, workDir)
+	if err != nil {
+		return err
+	}
+
+	targetRef := resolveCheckpointRef(checkpointID)
+
+	// Resolve short ID to full ref if needed
+	if !strings.HasPrefix(targetRef, "refs/") && len(targetRef) != 40 {
+		refs, refErr := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname)", fmt.Sprintf("refs/staypoint/checkpoints/*/%s", targetRef))
+		if refErr == nil && len(strings.TrimSpace(refs)) > 0 {
+			targetRef = strings.TrimSpace(refs)
+		}
+	}
+
+	sha, err := runGit(ctx, rootDir, nil, "rev-parse", targetRef)
+	if err != nil {
+		return fmt.Errorf("checkpoint not found: %s", checkpointID)
+	}
+
+	_, err = runGit(ctx, rootDir, nil, "checkout", strings.TrimSpace(sha), "--", filePath)
+	return err
 }
 
 // PruneCheckpoints deletes older checkpoint refs, keeping keepLast checkpoints.

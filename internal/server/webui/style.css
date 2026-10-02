@@ -3101,6 +3101,23 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
   white-space: nowrap;
   font-size: 11px;
 }
+.diff-file-stats {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.diff-file-stat-add {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: #22c55e;
+  font-weight: 600;
+}
+.diff-file-stat-del {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: #ef4444;
+  font-weight: 600;
+}
 .diff-file-undo-btn {
   font-size: 10px;
   padding: 2px 7px;

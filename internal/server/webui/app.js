@@ -6539,37 +6539,52 @@ function renderDiffPane(container, task, checkpoints, diffData) {
   }))];
 
   let activeCP = diffData.checkpoint_id || '';
-  const files = diffData.files || [];
+  const fileStats = diffData.file_stats || (diffData.files || []).map(f => ({ path: f, added: 0, removed: 0 }));
 
   const fileList = el('ul', 'diff-file-list');
 
-  const renderFiles = (filesArr, cpId) => {
+  const renderFiles = (statsArr, cpId) => {
     fileList.innerHTML = '';
-    if (!filesArr || !filesArr.length) {
+    if (!statsArr || !statsArr.length) {
       fileList.appendChild(el('li', 'diff-pane-empty', 'No changes since this checkpoint.'));
       return;
     }
-    for (const fname of filesArr) {
+    for (const stat of statsArr) {
+      const fname = stat.path || stat;
       const row = el('li', 'diff-file-row');
       row.appendChild(el('span', 'diff-file-name', fname));
-      const undoBtn = el('button', 'diff-file-undo-btn', 'Undo');
-      undoBtn.title = `Restore to checkpoint${cpId ? ' ' + cpId.slice(0, 8) : ''}`;
+
+      // Per-file line stats
+      const statsWrap = el('span', 'diff-file-stats');
+      if (stat.added > 0) {
+        const add = el('span', 'diff-file-stat-add', `+${stat.added}`);
+        statsWrap.appendChild(add);
+      }
+      if (stat.removed > 0) {
+        const del = el('span', 'diff-file-stat-del', `-${stat.removed}`);
+        statsWrap.appendChild(del);
+      }
+      if (stat.added > 0 || stat.removed > 0) row.appendChild(statsWrap);
+
+      const undoBtn = el('button', 'diff-file-undo-btn', '↺ Undo');
+      undoBtn.title = `Restore ${fname} to checkpoint${cpId ? ' ' + cpId.slice(0, 8) : ''}`;
       undoBtn.addEventListener('click', async () => {
         undoBtn.disabled = true;
         undoBtn.textContent = '…';
         try {
-          await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/checkpoint-undo`, {
+          await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/checkpoint-restore-file`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ checkpoint_id: cpId || '' }),
+            body: JSON.stringify({ checkpoint_id: cpId || '', file_path: fname }),
           });
           undoBtn.textContent = '✓';
-          // Refresh diff pane
-          const fresh = await fetchTaskDiff(task.id, cpId);
-          renderFiles(fresh.files || [], cpId);
+          setTimeout(async () => {
+            const fresh = await fetchTaskDiff(task.id, cpId);
+            renderFiles(fresh.file_stats || (fresh.files || []).map(f => ({ path: f, added: 0, removed: 0 })), cpId);
+          }, 400);
         } catch {
           undoBtn.disabled = false;
-          undoBtn.textContent = 'Undo';
+          undoBtn.textContent = '↺ Undo';
         }
       });
       row.appendChild(undoBtn);
@@ -6587,20 +6602,20 @@ function renderDiffPane(container, task, checkpoints, diffData) {
       btn.textContent = '…';
       const fresh = await fetchTaskDiff(task.id, opt.id);
       btn.textContent = opt.label;
-      renderFiles(fresh.files || [], opt.id);
+      renderFiles(fresh.file_stats || (fresh.files || []).map(f => ({ path: f, added: 0, removed: 0 })), opt.id);
     });
     selector.appendChild(btn);
   }
   container.appendChild(selector);
 
-  renderFiles(files, activeCP);
+  renderFiles(fileStats, activeCP);
   container.appendChild(fileList);
 
   refreshBtn.addEventListener('click', async () => {
     refreshBtn.textContent = '…';
     const fresh = await fetchTaskDiff(task.id, activeCP);
     refreshBtn.textContent = '↺';
-    renderFiles(fresh.files || [], activeCP);
+    renderFiles(fresh.file_stats || (fresh.files || []).map(f => ({ path: f, added: 0, removed: 0 })), activeCP);
   });
 }
 

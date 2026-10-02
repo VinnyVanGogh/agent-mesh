@@ -681,7 +681,7 @@ func (h *TasksHandler) GetTaskCheckpoints(w http.ResponseWriter, r *http.Request
 }
 
 // GetTaskDiff handles GET /api/tasks/{id}/diff?checkpoint={id}
-// Returns diff stat and parsed file list between working tree and the named checkpoint.
+// Returns diff stat, per-file stats, and file list between working tree and the named checkpoint.
 func (h *TasksHandler) GetTaskDiff(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -697,35 +697,60 @@ func (h *TasksHandler) GetTaskDiff(w http.ResponseWriter, r *http.Request) {
 
 	stat, err := checkpoint.DiffCheckpoint(r.Context(), task.RepoPath, cpID)
 	if err != nil {
-		// no git repo or no checkpoint — return empty diff
 		stat = ""
 	}
 
-	files := parseDiffStatFiles(stat)
+	fileStats, err := checkpoint.DiffCheckpointFiles(r.Context(), task.RepoPath, cpID)
+	if err != nil {
+		fileStats = []checkpoint.FileDiffStat{}
+	}
+
+	// Build plain file list for backwards compatibility.
+	files := make([]string, len(fileStats))
+	for i, s := range fileStats {
+		files[i] = s.Path
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"diff":          stat,
 		"files":         files,
+		"file_stats":    fileStats,
 		"checkpoint_id": cpID,
 	})
 }
 
-// parseDiffStatFiles extracts file paths from `git diff --stat` output.
-func parseDiffStatFiles(stat string) []string {
-	var files []string
-	for _, line := range strings.Split(stat, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, " ") {
-			continue // summary line or blank
-		}
-		parts := strings.Split(line, "|")
-		if len(parts) < 2 {
-			continue
-		}
-		files = append(files, strings.TrimSpace(parts[0]))
+// RestoreFileHandler handles POST /api/tasks/{id}/checkpoint-restore-file
+// Restores a single file from the given checkpoint into the working tree.
+func (h *TasksHandler) RestoreFileHandler(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
 	}
-	return files
+	task, err := context.GetTask(h.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	var req struct {
+		CheckpointID string `json:"checkpoint_id"`
+		FilePath     string `json:"file_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.FilePath == "" {
+		writeError(w, http.StatusBadRequest, "file_path is required")
+		return
+	}
+	if err := checkpoint.RestoreFile(r.Context(), task.RepoPath, req.CheckpointID, req.FilePath); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("restore failed: %s", err))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "file_path": req.FilePath})
 }
 
 // UndoTaskCheckpoint handles POST /api/tasks/{id}/checkpoint-undo

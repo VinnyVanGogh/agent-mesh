@@ -89,6 +89,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/tasks/{id}/checkpoints", tasksH.GetTaskCheckpoints)
 		mux.HandleFunc("GET /api/tasks/{id}/diff", tasksH.GetTaskDiff)
 		mux.HandleFunc("POST /api/tasks/{id}/checkpoint-undo", tasksH.UndoTaskCheckpoint)
+		mux.HandleFunc("POST /api/tasks/{id}/checkpoint-restore-file", tasksH.RestoreFileHandler)
 		mux.HandleFunc("GET /api/tasks/{id}/interactions", tasksH.ListInteractions)
 		mux.HandleFunc("POST /api/tasks/{id}/interactions", tasksH.CreateInteraction)
 		mux.HandleFunc("POST /api/tasks/{id}/interactions/{iid}/resolve", tasksH.ResolveInteraction)
