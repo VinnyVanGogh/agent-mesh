@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/VinnyVanGogh/staypoint/internal/checkpoint"
 	"github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
 	"github.com/google/uuid"
@@ -635,6 +636,113 @@ func (h *TasksHandler) SetStage(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetRunSteps handles GET /api/tasks/{id}/run-steps
+// GetTaskCheckpoints handles GET /api/tasks/{id}/checkpoints
+func (h *TasksHandler) GetTaskCheckpoints(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+	task, err := context.GetTask(h.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	limitStr := r.URL.Query().Get("limit")
+	limit := 20
+	if limitStr != "" {
+		if v, err2 := strconv.Atoi(limitStr); err2 == nil && v > 0 {
+			limit = v
+		}
+	}
+	checkpoints, err := checkpoint.ListCheckpoints(r.Context(), task.RepoPath, limit)
+	if err != nil {
+		// not a git repo or no checkpoints yet — return empty list
+		checkpoints = []checkpoint.Checkpoint{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"checkpoints": checkpoints})
+}
+
+// GetTaskDiff handles GET /api/tasks/{id}/diff?checkpoint={id}
+// Returns diff stat and parsed file list between working tree and the named checkpoint.
+func (h *TasksHandler) GetTaskDiff(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+	task, err := context.GetTask(h.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	cpID := r.URL.Query().Get("checkpoint")
+
+	stat, err := checkpoint.DiffCheckpoint(r.Context(), task.RepoPath, cpID)
+	if err != nil {
+		// no git repo or no checkpoint — return empty diff
+		stat = ""
+	}
+
+	files := parseDiffStatFiles(stat)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"diff":          stat,
+		"files":         files,
+		"checkpoint_id": cpID,
+	})
+}
+
+// parseDiffStatFiles extracts file paths from `git diff --stat` output.
+func parseDiffStatFiles(stat string) []string {
+	var files []string
+	for _, line := range strings.Split(stat, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, " ") {
+			continue // summary line or blank
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) < 2 {
+			continue
+		}
+		files = append(files, strings.TrimSpace(parts[0]))
+	}
+	return files
+}
+
+// UndoTaskCheckpoint handles POST /api/tasks/{id}/checkpoint-undo
+func (h *TasksHandler) UndoTaskCheckpoint(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+	task, err := context.GetTask(h.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	var req struct {
+		CheckpointID string `json:"checkpoint_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	result, err := checkpoint.Undo(r.Context(), checkpoint.UndoOptions{
+		WorkDir:      task.RepoPath,
+		CheckpointID: req.CheckpointID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("undo failed: %s", err))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(result)
+}
+
 func (h *TasksHandler) GetRunSteps(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
