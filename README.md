@@ -706,6 +706,26 @@ Benchmark: **1.8ms** execution time (compiled pure Go, sub-process safe).
 
 ---
 
+## API End-to-End Suite (Postman / newman)
+
+`tests/api/` holds a Postman collection that exercises every route of the daemon HTTP API: happy paths, edge cases (missing fields, unknown IDs, invalid transitions, duplicates, ordering, unauthenticated calls) and one full task workflow from create to audit.
+
+**Run it headless** (needs Go, Python 3, and `newman` or Node's `npx`):
+
+```bash
+scripts/api-e2e.sh                      # whole suite; exits non-zero on any failure
+scripts/api-e2e.sh --folder "01 Tasks"  # one folder (repeatable)
+E2E_JUNIT=api-e2e.xml scripts/api-e2e.sh  # also write a JUnit report
+```
+
+The script builds `cmd/staypoint-apitest-server`, starts it on a fresh SQLite file in a temp dir with `HOME` re-pointed there, and starts a Paperclip stub for the `/api/fleet/*` proxies. It never opens `~/.staypoint/staypoint.db`, never talks to the real `staypointd` socket, and never calls the live Paperclip API.
+
+**Open it in Postman:** run `scripts/api-e2e.sh --serve`. It starts the same throwaway daemon and stub and prints `baseUrl` and `token`. Import `tests/api/staypoint.postman_collection.json` and `tests/api/staypoint.postman_environment.json`, paste the two values into the environment, and run the folders in order (later folders reuse IDs saved by earlier ones). Ctrl-C stops the daemon and deletes its temp DB. Folder 13 (SSE) is for manual use in Postman; the headless run checks SSE with `curl`.
+
+Tests named `[STA-nnn] ...` fail until that daemon bug is fixed (STA-355 to STA-358 at the time of writing).
+
+The collection is generated: edit `tests/api/build_collection.py`, then run `python3 tests/api/build_collection.py`. The script fails if the JSON is stale or if a route registered in `internal/server` has no request in the collection.
+
 ## Technical Architecture & Design Decisions
 
 ### 1. Pure Go SQLite (Zero CGO)
