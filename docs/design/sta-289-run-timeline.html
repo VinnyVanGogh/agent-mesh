@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StayPoint · Live Run Timeline (STA-289) · Design</title>
+<style>
+:root {
+  --bg: #0d1117; --surface: #161b22; --surface-2: #1c2230; --border: #30363d; --border-light: #484f58;
+  --text: #f0f6fc; --muted: #8b949e; --accent: #8b5cf6; --accent-light: #a78bfa; --cyan: #38bdf8;
+  --green: #3fb950; --yellow: #d29922; --amber: #f59e0b; --red: #f85149; --blue: #58a6ff; --gold: #fbbf24;
+  --radius: 10px; --shadow: 0 8px 32px rgba(0,0,0,.45);
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; }
+body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: -1;
+  background: radial-gradient(900px 500px at 15% -10%, rgba(139,92,246,.18), transparent 60%),
+              radial-gradient(800px 500px at 100% 0%, rgba(56,189,248,.10), transparent 60%); }
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+a { color: var(--accent-light); }
+
+/* ---------- page chrome ---------- */
+.hero { padding: 40px 48px 8px; max-width: 1480px; margin: 0 auto; }
+.eyebrow { color: var(--accent-light); font-weight: 600; letter-spacing: .12em; text-transform: uppercase; font-size: 12px; }
+.hero h1 { margin: 6px 0 8px; font-size: 34px; letter-spacing: -.02em;
+  background: linear-gradient(90deg, #fff, #c4b5fd 55%, #7dd3fc); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.hero p { color: var(--muted); max-width: 900px; margin: 0; font-size: 15px; }
+.asks { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 22px 0 6px; }
+.ask { background: linear-gradient(180deg, var(--surface), rgba(22,27,34,.6)); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 14px; }
+.ask b { display: block; font-size: 13px; }
+.ask span { color: var(--muted); font-size: 12.5px; }
+.ask .n { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  background: rgba(139,92,246,.2); color: var(--accent-light); font-size: 11px; margin-right: 6px; }
+
+.tabs { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); background: rgba(13,17,23,.78);
+  border-bottom: 1px solid var(--border); }
+.tabs nav { max-width: 1480px; margin: 0 auto; padding: 0 48px; display: flex; gap: 4px; }
+.tabs button { background: none; border: 0; color: var(--muted); padding: 14px 16px; font: inherit; cursor: pointer;
+  border-bottom: 2px solid transparent; }
+.tabs button.on { color: var(--text); border-color: var(--accent); }
+.tabs button:hover { color: var(--text); }
+section.view { display: none; max-width: 1480px; margin: 0 auto; padding: 28px 48px 64px; }
+section.view.on { display: block; animation: fade .25s ease; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.caption { color: var(--muted); margin: 0 0 16px; max-width: 980px; }
+.caption b { color: var(--text); }
+
+/* ---------- mockup frame ---------- */
+.frame { border: 1px solid var(--border); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); background: var(--bg); }
+.chrome { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #11161d; border-bottom: 1px solid var(--border); }
+.dot { width: 11px; height: 11px; border-radius: 50%; }
+.url { margin-left: 12px; flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+  padding: 3px 10px; color: var(--muted); font-family: var(--mono); font-size: 12px; }
+
+.taskhead { display: flex; align-items: center; gap: 14px; padding: 16px 20px 12px; border-bottom: 1px solid var(--border); }
+.taskhead .id { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.taskhead h2 { margin: 0; font-size: 18px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.pill.run { background: rgba(56,189,248,.12); color: var(--cyan); border: 1px solid rgba(56,189,248,.35); }
+.pill.pending { background: rgba(245,158,11,.12); color: var(--amber); border: 1px solid rgba(245,158,11,.4); }
+.pill.paused { background: rgba(210,153,34,.15); color: var(--gold); border: 1px solid rgba(251,191,36,.4); }
+.pill .pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.4s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+.spacer { flex: 1; }
+.btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 7px;
+  padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.btn:hover { border-color: var(--border-light); }
+.btn.warn { color: var(--gold); border-color: rgba(251,191,36,.35); }
+.btn.stop { color: var(--red); border-color: rgba(248,81,73,.35); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+kbd { font-family: var(--mono); font-size: 10.5px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+
+.stats { display: grid; grid-template-columns: repeat(7, 1fr); border-bottom: 1px solid var(--border); background: #0f141b; }
+.stat { padding: 10px 16px; border-right: 1px solid var(--border); }
+.stat:last-child { border-right: 0; }
+.stat .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.stat .v { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.stat .v small { font-size: 12px; color: var(--muted); font-weight: 500; }
+.plus { color: var(--green); } .minus { color: var(--red); }
+
+.workspace { display: grid; grid-template-columns: 1fr 420px; min-height: 640px; }
+.timeline { padding: 18px 20px 8px; border-right: 1px solid var(--border); overflow: auto; max-height: 760px; }
+.diffpane { background: #0f141b; overflow: auto; max-height: 760px; }
+
+/* timeline items */
+.tl { position: relative; padding-left: 26px; }
+.tl::before { content: ""; position: absolute; left: 9px; top: 6px; bottom: 6px; width: 2px;
+  background: linear-gradient(var(--border), var(--border)); }
+.node { position: relative; margin: 0 0 6px; }
+.node > .row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; cursor: pointer; }
+.node > .row:hover { background: var(--surface); }
+.node .ic { position: absolute; left: -26px; top: 7px; width: 20px; height: 20px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; background: var(--bg); border: 2px solid var(--border-light); }
+.node.ok .ic { border-color: var(--green); color: var(--green); }
+.node.live .ic { border-color: var(--cyan); color: var(--cyan); box-shadow: 0 0 0 4px rgba(56,189,248,.15); }
+.node.fail .ic { border-color: var(--red); color: var(--red); }
+.node.wait .ic { border-style: dashed; color: var(--muted); }
+.node.cp .ic { border-color: var(--accent); color: var(--accent-light); }
+.row .chev { color: var(--muted); width: 12px; transition: transform .15s; font-size: 10px; }
+.node.open > .row .chev { transform: rotate(90deg); }
+.row .title { flex: 1; }
+.row .title .sub { color: var(--muted); }
+.row .tag { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+.row .tag.edit { color: var(--blue); border-color: rgba(88,166,255,.4); }
+.row .tag.read { color: var(--muted); }
+.row .tag.run { color: var(--gold); border-color: rgba(251,191,36,.35); }
+.row .tag.think { color: var(--accent-light); border-color: rgba(167,139,250,.35); }
+.row .tag.pass { color: var(--green); border-color: rgba(63,185,80,.4); }
+.row .tag.failt { color: var(--red); border-color: rgba(248,81,73,.4); }
+.row .dur { color: var(--muted); font-family: var(--mono); font-size: 12px; min-width: 52px; text-align: right; font-variant-numeric: tabular-nums; }
+.node.live > .row .dur { color: var(--cyan); }
+.children { display: none; margin: 2px 0 8px 22px; }
+.node.open > .children { display: block; }
+.detail { margin: 2px 0 8px 22px; border: 1px solid var(--border); background: var(--surface); border-radius: 8px;
+  padding: 10px 12px; color: #c9d1d9; display: none; }
+.node.open > .detail { display: block; }
+.detail.think { border-left: 3px solid var(--accent); font-style: italic; color: #d2c8f7; }
+.detail pre { margin: 0; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; color: #c9d1d9; }
+.detail .out { color: var(--muted); margin-top: 6px; }
+.group > .row { font-weight: 600; }
+.group > .row .meta { color: var(--muted); font-weight: 400; font-size: 12px; }
+.queued { margin: 10px 0 4px 0; padding: 9px 12px; border-radius: 8px; border: 1px dashed rgba(251,191,36,.45);
+  background: rgba(251,191,36,.06); color: var(--gold); font-size: 13px; display: none; }
+.queued.show { display: block; animation: fade .2s; }
+.typing { display: inline-flex; gap: 3px; margin-left: 4px; }
+.typing i { width: 4px; height: 4px; border-radius: 50%; background: var(--cyan); animation: pulse 1s infinite; }
+.typing i:nth-child(2) { animation-delay: .2s; } .typing i:nth-child(3) { animation-delay: .4s; }
+
+.composer { border-top: 1px solid var(--border); padding: 12px 20px; display: flex; gap: 10px; align-items: center; background: #0f141b; }
+.composer input { flex: 1; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 8px;
+  padding: 9px 12px; font: inherit; }
+.composer input:focus { outline: none; border-color: var(--accent); }
+
+/* diff sidebar */
+.dhead { padding: 14px 16px 10px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: #0f141b; z-index: 1; }
+.dhead b { font-size: 13px; }
+.dhead .seg { display: flex; gap: 4px; margin-top: 8px; }
+.dhead .seg button { flex: 1; font-size: 12px; padding: 4px; border-radius: 6px; border: 1px solid var(--border); background: none; color: var(--muted); cursor: pointer; font: inherit; font-size: 12px; }
+.dhead .seg button.on { color: var(--text); background: var(--surface); }
+.files { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.file { display: flex; justify-content: space-between; padding: 4px 8px; border-radius: 6px; font-family: var(--mono); font-size: 12px; cursor: pointer; color: #c9d1d9; }
+.file:hover, .file.sel { background: var(--surface); }
+.file .n { font-size: 11.5px; }
+.hunk { font-family: var(--mono); font-size: 12px; padding: 8px 0; overflow-x: auto; tab-size: 2; }
+.hunk .fh { padding: 6px 16px; color: var(--text); font-weight: 600; border-bottom: 1px solid var(--border); margin-bottom: 4px; display: flex; justify-content: space-between; }
+.hunk .fh .undo { font-weight: 400; color: var(--accent-light); cursor: pointer; font-family: inherit; }
+.ln { display: grid; grid-template-columns: 34px 1fr; white-space: pre; }
+.ln span:first-child { color: #6e7681; text-align: right; padding-right: 10px; user-select: none; }
+.ln.add { background: rgba(63,185,80,.13); } .ln.add span:last-child { color: #aff5b4; }
+.ln.del { background: rgba(248,81,73,.13); } .ln.del span:last-child { color: #ffc1bb; }
+.ln.at { color: var(--cyan); background: rgba(56,189,248,.06); }
+.flash { animation: flash 1s ease; }
+@keyframes flash { 0% { background: rgba(139,92,246,.35); } 100% { background: transparent; } }
+
+/* ---------- diagrams ---------- */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; box-shadow: var(--shadow); margin-bottom: 22px; }
+.card h3 { margin: 0 0 4px; font-size: 16px; }
+.card .caption { margin-bottom: 12px; }
+svg text { font-family: -apple-system, BlinkMacSystemFont, "Inter", sans-serif; }
+svg .mono { font-family: ui-monospace, Menlo, monospace; }
+.flow { stroke-dasharray: 6 6; animation: dash 1.2s linear infinite; }
+@keyframes dash { to { stroke-dashoffset: -12; } }
+.legend { display: flex; gap: 18px; color: var(--muted); font-size: 12.5px; margin-top: 10px; flex-wrap: wrap; }
+.legend i { display: inline-block; width: 14px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+
+/* plan */
+.phases { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.phase { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; position: relative; }
+.phase .p { font-size: 11px; color: var(--accent-light); letter-spacing: .1em; text-transform: uppercase; font-weight: 700; }
+.phase h4 { margin: 4px 0 8px; }
+.phase ul { margin: 0; padding-left: 18px; color: #c9d1d9; font-size: 13px; }
+.phase li { margin: 3px 0; }
+.phase .maps { margin-top: 10px; font-size: 12px; color: var(--muted); }
+table.trace { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.trace th, table.trace td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.trace th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+.ex { color: var(--green); } .nw { color: var(--accent-light); }
+footer { color: var(--muted); font-size: 12px; text-align: center; padding: 20px 0 40px; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="eyebrow">StayPoint · STA-289 · Design proposal</div>
+  <h1>See every step. Steer at any step.</h1>
+  <p>Replaces the "working…" spinner with a live, expandable run timeline. One message starts the whole job; it still runs on its own, but every task, subtask, thought, command and edit stays visible, and you can pause or redirect it at the next clean step boundary.</p>
+  <div class="asks">
+    <div class="ask"><b><span class="n">1</span>Timeline &amp; transparency</b><span>Nested tasks → subtasks → steps. Expand any step to see its thinking, command or edit.</span></div>
+    <div class="ask"><b><span class="n">2</span>Interact &amp; pause</b><span>Message any time. "Pause after this step" stops at the next boundary, like Claude Code.</span></div>
+    <div class="ask"><b><span class="n">3</span>Execution stats</b><span>Total and per-step time, files read and edited, lines added and removed, tokens, cost.</span></div>
+    <div class="ask"><b><span class="n">4</span>Diff sidebar</b><span>Right-hand diff on the full task page with per-file undo, like Claude Code's side panel.</span></div>
+  </div>
+</header>
+
+<div class="tabs"><nav>
+  <button class="on" data-v="mock">① Task page (interactive mockup)</button>
+  <button data-v="arch">② How it works (architecture)</button>
+  <button data-v="seq">③ Pause &amp; interrupt (sequence + states)</button>
+  <button data-v="plan">④ Build plan</button>
+</nav></div>
+
+<!-- =============================== MOCKUP =============================== -->
+<section class="view on" id="mock">
+  <p class="caption"><b>Try it:</b> click any row to expand it. Click an edit step to jump to its diff. Press <b>Pause after this step</b> or send a message to see how queued input behaves. The timer and the live step tick in real time.</p>
+  <div class="frame">
+    <div class="chrome">
+      <span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span>
+      <span class="url">localhost:7420/ui/#/tasks/STA-312</span>
+    </div>
+
+    <div class="taskhead">
+      <div>
+        <div class="id">STA-312 · assigned to Feature Developer (claude · sonnet)</div>
+        <h2>Add rate-limit headers to the events API</h2>
+      </div>
+      <span class="pill run" id="statePill"><span class="pulse"></span><span id="stateText">Running</span></span>
+      <div class="spacer"></div>
+      <button class="btn warn" id="pauseBtn">⏸ Pause after this step <kbd>Esc</kbd></button>
+      <button class="btn stop" id="stopBtn">■ Stop now <kbd>Esc Esc</kbd></button>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><div class="k">Elapsed</div><div class="v" id="elapsed">4:12</div></div>
+      <div class="stat"><div class="k">Current step</div><div class="v" id="stepElapsed">0:18</div></div>
+      <div class="stat"><div class="k">Files read</div><div class="v">14</div></div>
+      <div class="stat"><div class="k">Files edited</div><div class="v">3</div></div>
+      <div class="stat"><div class="k">Lines</div><div class="v"><span class="plus">+43</span> <span class="minus">−6</span></div></div>
+      <div class="stat"><div class="k">Commands</div><div class="v">9 <small>8 ✓ 1 ✗</small></div></div>
+      <div class="stat"><div class="k">Tokens · cost</div><div class="v">61k <small>$0.38</small></div></div>
+    </div>
+
+    <div class="workspace">
+      <div class="timeline">
+        <div class="tl" id="tl"></div>
+        <div class="queued" id="queued"></div>
+      </div>
+
+      <aside class="diffpane">
+        <div class="dhead">
+          <b>3 files changed</b> <span class="plus">+43</span> <span class="minus">−6</span>
+          <div class="seg"><button class="on">Whole run</button><button>This step</button><button>Since checkpoint</button></div>
+        </div>
+        <div class="files" id="files"></div>
+        <div id="hunks"></div>
+      </aside>
+    </div>
+
+    <div class="composer">
+      <input id="msg" placeholder="Message the agent. Delivered at the next step boundary, never mid-command.">
+      <button class="btn primary" id="sendBtn">Send ↵</button>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== ARCHITECTURE =============================== -->
+<section class="view" id="arch">
+  <p class="caption"><b>Container view (C4 level 2).</b> The solid lanes carry what the agent does up to your screen. The amber lane carries what you do back down to the agent. Green boxes already exist in the repo; violet boxes are what STA-289 adds.</p>
+  <div class="card">
+    <svg viewBox="0 0 1380 600" width="100%" role="img" aria-label="Architecture diagram">
+      <defs>
+        <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker>
+        <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#f59e0b"/></marker>
+        <linearGradient id="gNew" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a1f4a"/><stop offset="1" stop-color="#1d1733"/></linearGradient>
+        <linearGradient id="gOld" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#14261a"/><stop offset="1" stop-color="#0f1c14"/></linearGradient>
+        <linearGradient id="gUi" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1b2d45"/><stop offset="1" stop-color="#241b45"/></linearGradient>
+        <filter id="glow"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+
+      <!-- zones -->
+      <rect x="20" y="20" width="300" height="560" rx="16" fill="none" stroke="#30363d" stroke-dasharray="4 6"/>
+      <text x="40" y="48" fill="#8b949e" font-size="12" letter-spacing="2">AGENT PROCESS</text>
+      <rect x="350" y="20" width="700" height="560" rx="16" fill="none" stroke="#30363d" stroke-dasharray="4 6"/>
+      <text x="370" y="48" fill="#8b949e" font-size="12" letter-spacing="2">STAYPOINTD (Go daemon)</text>
+      <rect x="1080" y="20" width="280" height="560" rx="16" fill="none" stroke="#30363d" stroke-dasharray="4 6"/>
+      <text x="1100" y="48" fill="#8b949e" font-size="12" letter-spacing="2">BROWSER</text>
+
+      <!-- CLI -->
+      <rect x="50" y="80" width="240" height="120" rx="12" fill="#161b22" stroke="#484f58"/>
+      <text x="70" y="110" fill="#f0f6fc" font-size="15" font-weight="700">Vendor CLI</text>
+      <text x="70" y="132" fill="#8b949e" font-size="12.5" class="mono">claude · gemini · codex</text>
+      <text x="70" y="156" fill="#c9d1d9" font-size="12.5">think → tool → result → repeat</text>
+      <text x="70" y="178" fill="#8b949e" font-size="12">stdout: stream-json</text>
+
+      <!-- Adapter -->
+      <rect x="50" y="250" width="240" height="110" rx="12" fill="url(#gOld)" stroke="#3fb950"/>
+      <text x="70" y="280" fill="#f0f6fc" font-size="15" font-weight="700">Adapter</text>
+      <text x="70" y="302" fill="#7ee787" font-size="12.5" class="mono">ParseStreamDelta()</text>
+      <text x="70" y="324" fill="#c9d1d9" font-size="12">thinking · tool_use · tool_result</text>
+      <text x="70" y="342" fill="#c9d1d9" font-size="12">usage · result · error</text>
+
+      <!-- Hook gate -->
+      <rect x="50" y="410" width="240" height="140" rx="12" fill="url(#gNew)" stroke="#8b5cf6"/>
+      <text x="70" y="440" fill="#f0f6fc" font-size="15" font-weight="700">Step gate</text>
+      <text x="70" y="462" fill="#c4b5fd" font-size="12.5" class="mono">PreToolUse hook / stdin</text>
+      <text x="70" y="486" fill="#c9d1d9" font-size="12">Holds before the next tool call</text>
+      <text x="70" y="504" fill="#c9d1d9" font-size="12">when a pause is requested, and</text>
+      <text x="70" y="522" fill="#c9d1d9" font-size="12">delivers queued messages there.</text>
+
+      <!-- Harness / StepRecorder -->
+      <rect x="380" y="80" width="300" height="150" rx="12" fill="url(#gNew)" stroke="#8b5cf6"/>
+      <text x="400" y="110" fill="#f0f6fc" font-size="15" font-weight="700">StepRecorder</text>
+      <text x="400" y="132" fill="#c4b5fd" font-size="12.5" class="mono">orchestrator/harness.go · Run</text>
+      <text x="400" y="156" fill="#c9d1d9" font-size="12">Groups deltas into steps:</text>
+      <text x="400" y="174" fill="#c9d1d9" font-size="12">tool_use + tool_result = 1 step,</text>
+      <text x="400" y="192" fill="#c9d1d9" font-size="12">thinking = 1 step. Stamps start/end,</text>
+      <text x="400" y="210" fill="#c9d1d9" font-size="12">parent task, subtask.</text>
+
+      <!-- Stats -->
+      <rect x="720" y="80" width="300" height="150" rx="12" fill="url(#gNew)" stroke="#8b5cf6"/>
+      <text x="740" y="110" fill="#f0f6fc" font-size="15" font-weight="700">RunStats</text>
+      <text x="740" y="132" fill="#c4b5fd" font-size="12.5" class="mono">aggregated per step</text>
+      <text x="740" y="156" fill="#c9d1d9" font-size="12">elapsed total and per step</text>
+      <text x="740" y="174" fill="#c9d1d9" font-size="12">files read / edited (by tool)</text>
+      <text x="740" y="192" fill="#c9d1d9" font-size="12">lines +/− (git diff --numstat)</text>
+      <text x="740" y="210" fill="#c9d1d9" font-size="12">tokens, cost, commands ✓/✗</text>
+
+      <!-- DB -->
+      <path d="M400,280 a120,16 0 0,1 240,0 v80 a120,16 0 0,1 -240,0 z" fill="url(#gNew)" stroke="#8b5cf6"/>
+      <ellipse cx="520" cy="280" rx="120" ry="16" fill="#2a1f4a" stroke="#8b5cf6"/>
+      <text x="420" y="320" fill="#f0f6fc" font-size="15" font-weight="700">run_steps</text>
+      <text x="420" y="342" fill="#c9d1d9" font-size="12">SQLite · replayable history</text>
+
+      <!-- Checkpoint -->
+      <rect x="720" y="270" width="300" height="110" rx="12" fill="url(#gOld)" stroke="#3fb950"/>
+      <text x="740" y="300" fill="#f0f6fc" font-size="15" font-weight="700">Checkpoint</text>
+      <text x="740" y="322" fill="#7ee787" font-size="12.5" class="mono">internal/checkpoint</text>
+      <text x="740" y="346" fill="#c9d1d9" font-size="12">git snapshot after each edit step:</text>
+      <text x="740" y="364" fill="#c9d1d9" font-size="12">diff for sidebar, per-file undo</text>
+
+      <!-- Control -->
+      <rect x="380" y="430" width="300" height="120" rx="12" fill="url(#gNew)" stroke="#f59e0b"/>
+      <text x="400" y="460" fill="#f0f6fc" font-size="15" font-weight="700">RunControl</text>
+      <text x="400" y="482" fill="#fcd34d" font-size="12.5" class="mono">POST /api/runs/{id}/control</text>
+      <text x="400" y="506" fill="#c9d1d9" font-size="12">pause_after_step · resume · stop</text>
+      <text x="400" y="524" fill="#c9d1d9" font-size="12">message (queued to next boundary)</text>
+
+      <!-- SSE hub -->
+      <rect x="720" y="430" width="300" height="120" rx="12" fill="url(#gOld)" stroke="#3fb950"/>
+      <text x="740" y="460" fill="#f0f6fc" font-size="15" font-weight="700">Events hub</text>
+      <text x="740" y="482" fill="#7ee787" font-size="12.5" class="mono">GET /api/events (SSE)</text>
+      <text x="740" y="506" fill="#c9d1d9" font-size="12">+ new types: run.step, run.stats,</text>
+      <text x="740" y="524" fill="#c9d1d9" font-size="12">run.state, run.diff</text>
+
+      <!-- UI -->
+      <rect x="1100" y="80" width="240" height="470" rx="14" fill="url(#gUi)" stroke="#58a6ff" filter="url(#glow)"/>
+      <text x="1120" y="112" fill="#f0f6fc" font-size="15" font-weight="700">Task page</text>
+      <text x="1120" y="132" fill="#8b949e" font-size="12">STA-282 · webui/app.js</text>
+      <rect x="1120" y="150" width="200" height="60" rx="8" fill="#0d1117" stroke="#30363d"/>
+      <text x="1134" y="174" fill="#f0f6fc" font-size="13" font-weight="600">Stats bar</text>
+      <text x="1134" y="194" fill="#8b949e" font-size="11.5">time · files · lines · cost</text>
+      <rect x="1120" y="222" width="200" height="130" rx="8" fill="#0d1117" stroke="#30363d"/>
+      <text x="1134" y="246" fill="#f0f6fc" font-size="13" font-weight="600">Timeline</text>
+      <text x="1134" y="266" fill="#8b949e" font-size="11.5">task ▸ subtask ▸ step</text>
+      <circle cx="1140" cy="290" r="5" fill="#3fb950"/><rect x="1152" y="286" width="120" height="8" rx="4" fill="#30363d"/>
+      <circle cx="1140" cy="312" r="5" fill="#3fb950"/><rect x="1152" y="308" width="90" height="8" rx="4" fill="#30363d"/>
+      <circle cx="1140" cy="334" r="5" fill="#38bdf8"><animate attributeName="opacity" values="1;.3;1" dur="1.4s" repeatCount="indefinite"/></circle><rect x="1152" y="330" width="140" height="8" rx="4" fill="#30363d"/>
+      <rect x="1120" y="364" width="200" height="80" rx="8" fill="#0d1117" stroke="#30363d"/>
+      <text x="1134" y="388" fill="#f0f6fc" font-size="13" font-weight="600">Diff sidebar</text>
+      <rect x="1134" y="400" width="170" height="8" rx="2" fill="rgba(248,81,73,.35)"/>
+      <rect x="1134" y="414" width="170" height="8" rx="2" fill="rgba(63,185,80,.35)"/>
+      <rect x="1134" y="428" width="120" height="8" rx="2" fill="rgba(63,185,80,.35)"/>
+      <rect x="1120" y="456" width="200" height="74" rx="8" fill="#0d1117" stroke="#f59e0b"/>
+      <text x="1134" y="480" fill="#fcd34d" font-size="13" font-weight="600">Composer + controls</text>
+      <text x="1134" y="500" fill="#8b949e" font-size="11.5">message · pause · stop</text>
+      <text x="1134" y="518" fill="#8b949e" font-size="11.5">Esc / Esc Esc</text>
+
+      <!-- data flow arrows -->
+      <path d="M170,200 V250" stroke="#8b949e" stroke-width="2" fill="none" marker-end="url(#a)" class="flow"/>
+      <path d="M290,300 C340,300 340,160 380,160" stroke="#8b949e" stroke-width="2" fill="none" marker-end="url(#a)" class="flow"/>
+      <text x="300" y="232" fill="#8b949e" font-size="11">deltas</text>
+      <path d="M680,155 H720" stroke="#8b949e" stroke-width="2" fill="none" marker-end="url(#a)" class="flow"/>
+      <path d="M520,230 V264" stroke="#8b949e" stroke-width="2" fill="none" marker-end="url(#a)" class="flow"/>
+      <path d="M640,210 C690,250 690,300 720,320" stroke="#8b949e" stroke-width="2" fill="none" marker-end="url(#a)" class="flow"/>
+      <text x="668" y="268" fill="#8b949e" font-size="11">edit step</text>
+      <path d="M870,230 V270" stroke="#8b949e" stroke-width="0" fill="none"/>
+      <path d="M1020,155 C1060,155 1060,180 1100,180" stroke="#8b949e" stroke-width="2" fill="none" marker-end="url(#a)" class="flow"/>
+      <path d="M870,380 V430" stroke="#8b949e" stroke-width="2" fill="none" marker-end="url(#a)" class="flow"/>
+      <path d="M640,330 C680,330 680,470 720,470" stroke="#8b949e" stroke-width="2" fill="none" marker-end="url(#a)" class="flow"/>
+      <path d="M1020,490 C1060,490 1060,300 1100,300" stroke="#58a6ff" stroke-width="2.5" fill="none" marker-end="url(#a)" class="flow"/>
+      <text x="1030" y="410" fill="#58a6ff" font-size="11" transform="rotate(-90 1050 410)">SSE push</text>
+
+      <!-- control arrows (amber) -->
+      <path d="M1120,520 C1060,575 760,580 680,520" stroke="#f59e0b" stroke-width="2.5" fill="none" marker-end="url(#aa)" class="flow"/>
+      <text x="760" y="596" fill="#f59e0b" font-size="11.5">you: message / pause / stop</text>
+      <path d="M380,490 H290" stroke="#f59e0b" stroke-width="2.5" fill="none" marker-end="url(#aa)" class="flow"/>
+      <path d="M110,410 V360 M110,250 V230 M110,230 L110,200" stroke="#f59e0b" stroke-width="0" fill="none"/>
+      <path d="M70,410 C30,360 30,240 60,200" stroke="#f59e0b" stroke-width="2.5" fill="none" marker-end="url(#aa)" class="flow"/>
+      <text x="22" y="320" fill="#f59e0b" font-size="11" transform="rotate(-90 32 320)">hold / inject</text>
+    </svg>
+    <div class="legend">
+      <span><i style="background:#14261a;border:1px solid #3fb950"></i>Exists today (verified in repo)</span>
+      <span><i style="background:#2a1f4a;border:1px solid #8b5cf6"></i>New for STA-289</span>
+      <span><i style="background:#f59e0b"></i>Control path (you → agent)</span>
+      <span><i style="background:#58a6ff"></i>Live push (agent → you)</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>What one step looks like on the wire</h3>
+    <p class="caption">Every timeline row is one <code>run.step</code> event. The same record is saved to <code>run_steps</code>, so reopening a finished task replays the exact same timeline.</p>
+<pre class="mono" style="margin:0;color:#c9d1d9;background:#0d1117;border:1px solid var(--border);border-radius:8px;padding:14px;overflow:auto">event: run.step
+data: {
+  "run_id": "r_8f2c", "task": "STA-312", "subtask": "STA-312.2",
+  "seq": 23, "parent_seq": 18, "kind": "edit",           <span style="color:#8b949e">// think | read | run | edit | checkpoint | message | state</span>
+  "title": "Edit internal/server/events.go",
+  "started_at": "2026-10-02T01:12:04Z", "ended_at": "2026-10-02T01:12:06Z",
+  "status": "ok",                                       <span style="color:#8b949e">// live | ok | fail | waiting</span>
+  "detail": { "tool": "Edit", "path": "internal/server/events.go", "added": 18, "removed": 3 },
+  "checkpoint": { "sha": "a41c9e2", "undo": "/api/checkpoints/a41c9e2/undo" }
+}</pre>
+  </div>
+</section>
+
+<!-- =============================== SEQUENCE =============================== -->
+<section class="view" id="seq">
+  <p class="caption"><b>"Pause after the next message", Claude Code style.</b> A pause never cuts a command in half. It waits until the step that is running finishes, then holds the agent before it starts the next one. A message you type is queued and handed to the agent at that same boundary. <b>Stop now</b> is the only hard interrupt, and it takes a checkpoint first so nothing is lost.</p>
+  <div class="card">
+    <h3>Sequence: you pause mid-run, add a note, and resume</h3>
+    <svg viewBox="0 0 1380 640" width="100%" role="img" aria-label="Pause sequence diagram">
+      <defs>
+        <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#c9d1d9"/></marker>
+        <marker id="sa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#f59e0b"/></marker>
+        <marker id="sb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#58a6ff"/></marker>
+      </defs>
+      <!-- lifelines -->
+      <g font-size="14" font-weight="700" fill="#f0f6fc" text-anchor="middle">
+        <rect x="80" y="20" width="160" height="44" rx="10" fill="#1b2d45" stroke="#58a6ff"/><text x="160" y="47">You · task page</text>
+        <rect x="440" y="20" width="160" height="44" rx="10" fill="#2a1f4a" stroke="#8b5cf6"/><text x="520" y="47">RunControl</text>
+        <rect x="800" y="20" width="160" height="44" rx="10" fill="#2a1f4a" stroke="#8b5cf6"/><text x="880" y="47">Harness + gate</text>
+        <rect x="1140" y="20" width="160" height="44" rx="10" fill="#161b22" stroke="#484f58"/><text x="1220" y="47">Agent CLI</text>
+      </g>
+      <g stroke="#30363d" stroke-dasharray="4 6" stroke-width="2">
+        <line x1="160" y1="64" x2="160" y2="620"/><line x1="520" y1="64" x2="520" y2="620"/>
+        <line x1="880" y1="64" x2="880" y2="620"/><line x1="1220" y1="64" x2="1220" y2="620"/>
+      </g>
+      <!-- active bar on CLI -->
+      <rect x="1212" y="96" width="16" height="200" rx="3" fill="#38bdf8" opacity=".35"/>
+      <rect x="1212" y="470" width="16" height="140" rx="3" fill="#38bdf8" opacity=".35"/>
+      <rect x="872" y="300" width="16" height="170" rx="3" fill="#f59e0b" opacity=".3"/>
+
+      <g font-size="12.5" fill="#c9d1d9">
+        <path d="M1212,100 H888" stroke="#58a6ff" stroke-width="2" marker-end="url(#sb)"/>
+        <text x="900" y="92">tool_use: go test ./internal/server/...</text>
+        <path d="M872,120 H168" stroke="#58a6ff" stroke-width="2" marker-end="url(#sb)" stroke-dasharray="6 4"/>
+        <text x="190" y="114">SSE run.step (live) · timer starts</text>
+
+        <path d="M160,160 H512" stroke="#f59e0b" stroke-width="2" marker-end="url(#sa)"/>
+        <text x="180" y="152" fill="#fcd34d">⏸ Pause after this step  (Esc)</text>
+        <path d="M528,180 H872" stroke="#f59e0b" stroke-width="2" marker-end="url(#sa)"/>
+        <text x="540" y="172" fill="#fcd34d">set pause_requested</text>
+        <path d="M872,200 H168" stroke="#58a6ff" stroke-width="2" marker-end="url(#sb)" stroke-dasharray="6 4"/>
+        <text x="190" y="194">run.state = pausing ("will pause after current step")</text>
+
+        <path d="M160,236 H512" stroke="#f59e0b" stroke-width="2" marker-end="url(#sa)"/>
+        <text x="180" y="228" fill="#fcd34d">✎ "Also add a test for 429s"</text>
+        <path d="M528,256 H872" stroke="#f59e0b" stroke-width="2" marker-end="url(#sa)"/>
+        <text x="540" y="248" fill="#fcd34d">enqueue message (not sent yet)</text>
+
+        <path d="M1212,290 H888" stroke="#58a6ff" stroke-width="2" marker-end="url(#sb)"/>
+        <text x="900" y="282">tool_result: PASS (14.2s)</text>
+
+        <rect x="610" y="306" width="250" height="52" rx="8" fill="#1f1a0e" stroke="#f59e0b"/>
+        <text x="624" y="328" fill="#fcd34d" font-weight="700">Step boundary reached</text>
+        <text x="624" y="346" fill="#c9d1d9">gate holds the next tool call</text>
+        <path d="M872,380 H168" stroke="#58a6ff" stroke-width="2" marker-end="url(#sb)" stroke-dasharray="6 4"/>
+        <text x="190" y="374">run.step ✓ 14.2s · run.state = paused · checkpoint a41c9e2</text>
+
+        <rect x="80" y="396" width="300" height="40" rx="8" fill="#161b22" stroke="#30363d"/>
+        <text x="96" y="421" fill="#8b949e">You review the diff, edit nothing, press Resume</text>
+
+        <path d="M160,454 H512" stroke="#f59e0b" stroke-width="2" marker-end="url(#sa)"/>
+        <text x="180" y="446" fill="#fcd34d">▶ Resume</text>
+        <path d="M528,470 H872" stroke="#f59e0b" stroke-width="2" marker-end="url(#sa)"/>
+        <path d="M888,486 H1212" stroke="#f59e0b" stroke-width="2" marker-end="url(#sa)"/>
+        <text x="900" y="478" fill="#fcd34d">release gate + deliver queued message</text>
+        <path d="M1212,530 H888" stroke="#58a6ff" stroke-width="2" marker-end="url(#sb)"/>
+        <text x="900" y="522">thinking: "Adding a 429 test as asked…"</text>
+        <path d="M872,550 H168" stroke="#58a6ff" stroke-width="2" marker-end="url(#sb)" stroke-dasharray="6 4"/>
+        <text x="190" y="544">run.state = running · your message shows in the timeline</text>
+        <text x="900" y="600" fill="#8b949e">…keeps auto-running to done / in_review</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>Run states</h3>
+      <p class="caption">Shown as the pill next to the task title. "Stuck" is computed: no new step for N minutes while running.</p>
+      <svg viewBox="0 0 640 360" width="100%" role="img" aria-label="Run state diagram">
+        <defs><marker id="st" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker></defs>
+        <g font-size="13" font-weight="600" text-anchor="middle">
+          <rect x="20" y="150" width="100" height="40" rx="20" fill="#161b22" stroke="#484f58"/><text x="70" y="175" fill="#c9d1d9">queued</text>
+          <rect x="190" y="150" width="110" height="40" rx="20" fill="#0f2233" stroke="#38bdf8"/><text x="245" y="175" fill="#38bdf8">running</text>
+          <rect x="190" y="40" width="110" height="40" rx="20" fill="#1f1a0e" stroke="#f59e0b"/><text x="245" y="65" fill="#f59e0b">pausing</text>
+          <rect x="380" y="40" width="110" height="40" rx="20" fill="#1f1a0e" stroke="#fbbf24"/><text x="435" y="65" fill="#fbbf24">paused</text>
+          <rect x="190" y="270" width="110" height="40" rx="20" fill="#2a1414" stroke="#f85149"/><text x="245" y="295" fill="#f85149">stuck ⚠</text>
+          <rect x="400" y="150" width="210" height="40" rx="20" fill="#14261a" stroke="#3fb950"/><text x="505" y="175" fill="#3fb950">done · in_review · blocked</text>
+          <rect x="400" y="270" width="110" height="40" rx="20" fill="#161b22" stroke="#8b949e"/><text x="455" y="295" fill="#8b949e">stopped</text>
+        </g>
+        <g stroke="#8b949e" stroke-width="1.8" fill="none" marker-end="url(#st)">
+          <path d="M120,170 H188"/>
+          <path d="M230,150 V82"/>
+          <path d="M300,60 H378"/>
+          <path d="M435,82 C435,130 340,160 302,165"/>
+          <path d="M300,170 H398"/>
+          <path d="M260,190 V268"/>
+          <path d="M230,268 V192"/>
+          <path d="M300,290 H398"/>
+        </g>
+        <g font-size="11" fill="#8b949e">
+          <text x="128" y="162">start</text>
+          <text x="150" y="118">Esc</text>
+          <text x="306" y="52">step ends</text>
+          <text x="446" y="124">Resume</text>
+          <text x="318" y="206">final status</text>
+          <text x="266" y="235">no step N min</text>
+          <text x="160" y="235">step arrives</text>
+          <text x="318" y="282">Esc Esc</text>
+        </g>
+      </svg>
+    </div>
+    <div class="card">
+      <h3>Three ways to step in</h3>
+      <p class="caption">Ordered from gentlest to hardest. Only the last one cuts work off.</p>
+      <table class="trace">
+        <tr><th>Action</th><th>When it takes effect</th><th>What happens</th></tr>
+        <tr><td><b>Send a message</b></td><td>Next step boundary</td><td>Queued, then given to the agent before its next tool call. The run keeps going.</td></tr>
+        <tr><td><b style="color:var(--gold)">Pause after this step</b> <kbd>Esc</kbd></td><td>When the current step ends</td><td>The current command finishes cleanly, a checkpoint is taken, and the agent holds until you resume or send a message.</td></tr>
+        <tr><td><b style="color:var(--red)">Stop now</b> <kbd>Esc Esc</kbd></td><td>Immediately</td><td>Interrupts the CLI, snapshots the working tree first, and marks the run <i>stopped</i> with a resumable session.</td></tr>
+      </table>
+      <p class="caption" style="margin-top:12px">No timers. Nothing interrupts after 30 seconds or 5 minutes. The only timer is the <b>stuck</b> warning, and it only warns.</p>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== PLAN =============================== -->
+<section class="view" id="plan">
+  <p class="caption"><b>Build order.</b> Each phase ships something you can see. Visibility comes first, because the step boundaries it creates are exactly where pause, messages and undo attach later.</p>
+  <div class="phases">
+    <div class="phase"><div class="p">Phase 1</div><h4>Record steps</h4>
+      <ul><li><code>run_steps</code> table + migration</li><li>StepRecorder in <code>harness.Run</code> groups <code>StreamDelta</code>s into steps</li><li><code>run.step</code> SSE event</li><li>Golden tests from recorded claude / gemini streams</li></ul>
+      <div class="maps">Delivers ask 1 (data)</div></div>
+    <div class="phase"><div class="p">Phase 2</div><h4>Timeline + stats UI</h4>
+      <ul><li>Nested task ▸ subtask ▸ step timeline on the STA-282 page</li><li>Expandable thinking, commands, output</li><li>Stats bar: total and per-step time, files read and edited, lines ±, tokens, cost</li><li>Stuck warning</li></ul>
+      <div class="maps">Delivers asks 1 + 3</div></div>
+    <div class="phase"><div class="p">Phase 3</div><h4>Diff sidebar</h4>
+      <ul><li>Checkpoint after every edit step</li><li><code>run.diff</code> event; right sidebar: whole run / this step / since checkpoint</li><li>Per-file undo through <code>internal/checkpoint</code></li></ul>
+      <div class="maps">Delivers ask 4</div></div>
+    <div class="phase"><div class="p">Phase 4</div><h4>Steer it</h4>
+      <ul><li>Spike: hold-before-next-tool per CLI (claude hook, gemini, codex)</li><li><code>POST /api/runs/{id}/control</code></li><li>Message queue, pause, resume, stop</li><li>Esc / Esc Esc shortcuts</li></ul>
+      <div class="maps">Delivers ask 2</div></div>
+  </div>
+
+  <div class="card" style="margin-top:22px">
+    <h3>Your four asks, traced to the design</h3>
+    <table class="trace">
+      <tr><th>You asked for</th><th>Where it lives</th><th>Built from</th></tr>
+      <tr><td>Timeline you can expand, still auto-runs from one message</td><td>Timeline (tab ①), <code>run.step</code> events</td><td><span class="ex">exists</span> ParseStreamDelta, SSE hub · <span class="nw">new</span> StepRecorder, run_steps</td></tr>
+      <tr><td>Interrupt or talk anywhere; pause after the next step, not on a timer</td><td>Composer + Pause / Stop (tab ③)</td><td><span class="nw">new</span> RunControl, step gate</td></tr>
+      <tr><td>Total time, time per part, files read and edited, lines edited</td><td>Stats bar + per-row durations</td><td><span class="ex">exists</span> usage deltas, checkpoint diff · <span class="nw">new</span> RunStats</td></tr>
+      <tr><td>Diff on the right of the full task page</td><td>Diff sidebar with undo</td><td><span class="ex">exists</span> internal/checkpoint · <span class="nw">new</span> run.diff event + panel</td></tr>
+    </table>
+    <p class="caption" style="margin-top:12px"><b>Open risk:</b> holding an agent between tool calls is native for Claude Code (PreToolUse hook). Gemini and Codex may only allow a clean stop at end of turn followed by a resume. Phase 4 starts with a spike to confirm per CLI before building UI on top of it.</p>
+  </div>
+</section>
+
+<footer>StayPoint · STA-289 design · diagram notation: C4 container view, UML sequence, state machine · colors from <code>internal/server/webui/style.css</code></footer>
+
+<script>
+// ---------------- tabs ----------------
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  document.querySelectorAll('section.view').forEach(s => s.classList.toggle('on', s.id === b.dataset.v));
+});
+
+const hv = new URLSearchParams(location.search).get('v'); if (hv) { document.querySelector(`.tabs button[data-v="${hv}"]`)?.click(); window.scrollTo(0, 0); }
+
+// ---------------- mock data ----------------
+const T = (title, kind, dur, opts = {}) => ({ title, kind, dur, ...opts });
+const timeline = [
+  T('Woke up: assigned by Board', 'state', '0:00', { st: 'ok', icon: '⚡', sub: 'reason: issue_assigned' }),
+  T('Read context', 'group', '0:21', { st: 'ok', icon: '✓', meta: '6 files · issue + 2 comments', open: false, kids: [
+    T('Read STA-312 and comments', 'read', '0:02', { st: 'ok' }),
+    T('Read internal/server/events.go', 'read', '0:01', { st: 'ok' }),
+    T('Read internal/server/middleware.go', 'read', '0:01', { st: 'ok' }),
+    T('Grep "X-RateLimit" across repo', 'run', '0:01', { st: 'ok', tag: 'pass', detail: { pre: '$ rg -n "X-RateLimit" internal/', out: '0 matches' } }),
+  ]}),
+  T('Plan', 'think', '0:09', { st: 'ok', icon: '◆', detail: { think: 'The SSE hub has no limiter. Add a token bucket in middleware, expose X-RateLimit-* headers, return 429 with Retry-After. Two subtasks: limiter, then headers + tests.' } }),
+  T('Subtask 1 · Token-bucket limiter', 'group', '1:48', { st: 'ok', icon: '✓', meta: '3 edits · +28 −5 · tests ✓', open: true, kids: [
+    T('Thinking', 'think', '0:06', { st: 'ok', detail: { think: 'Per-client bucket keyed on remote addr; reuse the existing clock interface so tests stay deterministic.' } }),
+    T('Edit internal/server/middleware.go', 'edit', '0:04', { st: 'ok', file: 'internal/server/middleware.go', delta: '+21 −2' }),
+    T('Edit internal/server/server.go', 'edit', '0:02', { st: 'ok', file: 'internal/server/server.go', delta: '+6 −2' }),
+    T('go test ./internal/server/...', 'run', '0:31', { st: 'fail', tag: 'failt', detail: { pre: '$ go test ./internal/server/...', out: '--- FAIL: TestSSE_Reconnect (0.02s)\n    events_test.go:88: got 429, want 200' } }),
+    T('Thinking', 'think', '0:05', { st: 'ok', detail: { think: 'Reconnect test opens 3 streams in a burst. Burst size 2 is too tight; raise to 5 and keep refill at 1/s.' } }),
+    T('Edit internal/server/middleware.go', 'edit', '0:02', { st: 'ok', file: 'internal/server/middleware.go', delta: '+1 −1' }),
+    T('go test ./internal/server/...', 'run', '0:29', { st: 'ok', tag: 'pass', detail: { pre: '$ go test ./internal/server/...', out: 'ok  \tgithub.com/staypoint/internal/server\t1.913s' } }),
+    T('Checkpoint a41c9e2', 'checkpoint', '0:01', { st: 'cp', icon: '◉', sub: 'diff · undo' }),
+  ]}),
+  T('Subtask 2 · Headers + 429 response', 'group', '0:43', { st: 'live', icon: '●', meta: 'running', open: true, kids: [
+    T('Edit internal/server/events.go', 'edit', '0:04', { st: 'ok', file: 'internal/server/events.go', delta: '+15 −1' }),
+    T('go vet ./... && go test ./internal/server/...', 'run', null, { st: 'live', tag: 'run', live: true, detail: { pre: '$ go vet ./... && go test ./internal/server/...', out: '=== RUN   TestRateLimitHeaders\n=== RUN   TestRateLimit429' } }),
+  ]}),
+  T('Finish: set status + summary', 'state', '', { st: 'wait', icon: '○', sub: 'not started' }),
+];
+
+const tagFor = { read: ['read', 'read'], edit: ['edit', 'edit'], run: ['run', 'run'], think: ['think', 'thinking'], checkpoint: ['', ''], state: ['', ''] };
+let liveRow;
+
+function render(list, parent) {
+  list.forEach(n => {
+    const el = document.createElement('div');
+    el.className = 'node ' + (n.st || 'ok') + (n.kind === 'group' ? ' group' : '') + (n.open ? ' open' : '');
+    const icon = n.icon || ({ ok: '✓', fail: '✗', live: '●', wait: '○', cp: '◉' })[n.st] || '✓';
+    let tag = '';
+    if (n.tag === 'pass') tag = '<span class="tag pass">pass</span>';
+    else if (n.tag === 'failt') tag = '<span class="tag failt">fail</span>';
+    else if (n.tag === 'run') tag = '<span class="tag run">running<span class="typing"><i></i><i></i><i></i></span></span>';
+    else if (tagFor[n.kind] && tagFor[n.kind][0]) tag = `<span class="tag ${tagFor[n.kind][0]}">${tagFor[n.kind][1]}</span>`;
+    if (n.delta) { const [a, d] = n.delta.split(' '); tag += ` <span class="mono"><span class="plus">${a}</span> <span class="minus">${d}</span></span>`; }
+    const expandable = n.kids || n.detail;
+    el.innerHTML = `<span class="ic">${icon}</span>
+      <div class="row"><span class="chev">${expandable ? '▶' : ''}</span>
+        <span class="title">${n.title}${n.sub ? ` <span class="sub">· ${n.sub}</span>` : ''}${n.meta ? ` <span class="meta">· ${n.meta}</span>` : ''}</span>
+        ${tag}<span class="dur">${n.dur ?? '0:18'}</span></div>`;
+    if (n.detail) {
+      const d = document.createElement('div');
+      d.className = 'detail' + (n.detail.think ? ' think' : '');
+      d.innerHTML = n.detail.think ? n.detail.think : `<pre>${n.detail.pre}</pre><pre class="out">${n.detail.out}</pre>`;
+      el.appendChild(d);
+    }
+    if (n.kids) { const c = document.createElement('div'); c.className = 'children tl'; el.appendChild(c); render(n.kids, c); }
+    el.querySelector('.row').onclick = e => {
+      e.stopPropagation();
+      if (n.file) { selectFile(n.file); return; }
+      if (expandable) el.classList.toggle('open');
+    };
+    if (n.live) { liveRow = el.querySelector('.dur'); el.classList.add('open'); }
+    parent.appendChild(el);
+  });
+}
+render(timeline, document.getElementById('tl'));
+
+// ---------------- diff sidebar ----------------
+const diffs = {
+  'internal/server/middleware.go': { n: '+22 −3', lines: [
+    ['@@ -41,6 +41,27 @@ func withLogging(next http.Handler) http.Handler {', 'at'],
+    ['41', ' }'], ['42', ''],
+    ['43', '+// withRateLimit applies a per-client token bucket.', 'add'],
+    ['44', '+func withRateLimit(next http.Handler, rl *limiter) http.Handler {', 'add'],
+    ['45', '+\treturn http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {', 'add'],
+    ['46', '+\t\tok, remaining, reset := rl.take(clientKey(r))', 'add'],
+    ['47', '+\t\tsetRateHeaders(w, rl.burst, remaining, reset)', 'add'],
+    ['48', '+\t\tif !ok {', 'add'],
+    ['49', '+\t\t\tw.Header().Set("Retry-After", reset.String())', 'add'],
+    ['50', '+\t\t\thttp.Error(w, "rate limited", http.StatusTooManyRequests)', 'add'],
+    ['51', '+\t\t\treturn', 'add'], ['52', '+\t\t}', 'add'], ['53', '+\t\tnext.ServeHTTP(w, r)', 'add'], ['54', '+\t})', 'add'], ['55', '+}', 'add'],
+    ['', '-const defaultBurst = 2', 'del'], ['56', '+const defaultBurst = 5', 'add'],
+  ]},
+  'internal/server/server.go': { n: '+6 −2', lines: [
+    ['@@ -58,8 +58,12 @@ func (s *Server) routes() {', 'at'],
+    ['', '-\tmux.HandleFunc("GET /api/events", s.hub.HandleSSE())', 'del'],
+    ['58', '+\trl := newLimiter(defaultBurst, time.Second, s.clock)', 'add'],
+    ['59', '+\tmux.Handle("GET /api/events",', 'add'],
+    ['60', '+\t\twithRateLimit(s.hub.HandleSSE(), rl))', 'add'],
+  ]},
+  'internal/server/events.go': { n: '+15 −1', lines: [
+    ['@@ -180,7 +180,21 @@ func (h *Hub) HandleSSE() http.HandlerFunc {', 'at'],
+    ['', '-\t\tw.Header().Set("Cache-Control", "no-cache")', 'del'],
+    ['187', ' \t\tw.Header().Set("Content-Type", "text/event-stream")'],
+    ['188', '+\t\tw.Header().Set("Cache-Control", "no-cache, no-store")', 'add'],
+    ['189', '+\t\tw.Header().Set("X-Accel-Buffering", "no")', 'add'],
+  ]},
+};
+const filesEl = document.getElementById('files'), hunksEl = document.getElementById('hunks');
+Object.entries(diffs).forEach(([f, d]) => {
+  const [a, r] = d.n.split(' ');
+  filesEl.insertAdjacentHTML('beforeend', `<div class="file" data-f="${f}"><span>${f}</span><span class="n"><span class="plus">${a}</span> <span class="minus">${r}</span></span></div>`);
+  const h = document.createElement('div'); h.className = 'hunk'; h.id = 'h-' + f;
+  h.innerHTML = `<div class="fh"><span>${f}</span><span class="undo">↶ undo file</span></div>` +
+    d.lines.map(([n, t, k]) => t === 'at' ? `<div class="ln at"><span></span><span>${n}</span></div>` : `<div class="ln ${k || ''}"><span>${n}</span><span>${t.replace(/</g, '&lt;')}</span></div>`).join('');
+  hunksEl.appendChild(h);
+});
+filesEl.querySelectorAll('.file').forEach(el => el.onclick = () => selectFile(el.dataset.f));
+function selectFile(f) {
+  filesEl.querySelectorAll('.file').forEach(el => el.classList.toggle('sel', el.dataset.f === f));
+  const h = document.getElementById('h-' + f);
+  h.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  h.classList.remove('flash'); void h.offsetWidth; h.classList.add('flash');
+}
+
+// ---------------- live clocks ----------------
+let total = 252, step = 18, state = 'running';
+const fmt = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+setInterval(() => {
+  if (state === 'paused') return;
+  total++; step++;
+  document.getElementById('elapsed').textContent = fmt(total);
+  document.getElementById('stepElapsed').textContent = fmt(step);
+  if (liveRow) liveRow.textContent = fmt(step);
+}, 1000);
+
+// ---------------- controls ----------------
+const pill = document.getElementById('statePill'), stateText = document.getElementById('stateText');
+const queued = document.getElementById('queued'), pauseBtn = document.getElementById('pauseBtn');
+const queue = [];
+function showQueue() {
+  const lines = [];
+  if (state === 'pausing') lines.push('⏸ Will pause when the current step ("go vet && go test") finishes. Nothing is cut off.');
+  if (state === 'paused') lines.push('⏸ Paused at a clean step boundary. Checkpoint taken. Resume or send a message to continue.');
+  queue.forEach(m => lines.push(`✎ Queued for next step: "${m}"`));
+  queued.innerHTML = lines.join('<br>');
+  queued.classList.toggle('show', lines.length > 0);
+}
+function setState(s) {
+  state = s;
+  pill.className = 'pill ' + ({ running: 'run', pausing: 'pending', paused: 'paused' })[s];
+  stateText.textContent = ({ running: 'Running', pausing: 'Pausing after this step', paused: 'Paused' })[s];
+  pauseBtn.innerHTML = s === 'paused' ? '▶ Resume <kbd>Enter</kbd>' : '⏸ Pause after this step <kbd>Esc</kbd>';
+  showQueue();
+}
+pauseBtn.onclick = () => {
+  if (state === 'running') { setState('pausing'); setTimeout(() => state === 'pausing' && setState('paused'), 2500); }
+  else if (state === 'paused') { queue.length = 0; step = 0; setState('running'); }
+};
+document.getElementById('stopBtn').onclick = () => {
+  setState('paused'); stateText.textContent = 'Stopped · snapshot saved'; pill.className = 'pill paused';
+};
+function send() {
+  const i = document.getElementById('msg'); if (!i.value.trim()) return;
+  queue.push(i.value.trim()); i.value = ''; showQueue();
+}
+document.getElementById('sendBtn').onclick = send;
+document.getElementById('msg').onkeydown = e => { if (e.key === 'Enter') send(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && document.activeElement.id !== 'msg') pauseBtn.click(); });
+</script>
+</body>
+</html>
