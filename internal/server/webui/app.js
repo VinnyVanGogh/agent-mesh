@@ -609,6 +609,7 @@ function navigateTo(viewName, orgName = null, pushHistory = true) {
     if (viewName === 'overview')     renderOverview();
     if (viewName === 'kanban')       renderKanban();
     if (viewName === 'task-page')    { /* content rendered by openTaskPage() */ }
+    if (viewName === 'logs')         renderLogsPage();
     if (viewName === 'boss') {
       renderBoss();
       preloadBossReports(true);
@@ -6772,13 +6773,14 @@ async function openTaskPage(target, pushHistory = true) {
   const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
 
   try {
-    const [taskResp, commentsResp, stepsResp, interactionsResp, diffResp, checkpointsResp] = await Promise.all([
+    const [taskResp, commentsResp, stepsResp, interactionsResp, diffResp, checkpointsResp, runErrorsResp] = await Promise.all([
       apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}`),
       apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}/comments`).catch(() => ({ comments: [] })),
       (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/run-steps`).catch(() => ({ steps: [] })) : Promise.resolve({ steps: [] })),
       (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/interactions`).catch(() => ({ interactions: [] })) : Promise.resolve({ interactions: [] })),
       (!isFleet ? fetchTaskDiff(resolvedId, '') : Promise.resolve({ diff: '', files: [], checkpoint_id: '' })),
       (!isFleet ? fetchTaskCheckpoints(resolvedId) : Promise.resolve([])),
+      (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/run-errors?limit=20`).catch(() => ({ errors: [] })) : Promise.resolve({ errors: [] })),
     ]);
     const task = taskResp.task || taskResp;
     const comments = (taskResp.comments && taskResp.comments.length)
@@ -6786,6 +6788,7 @@ async function openTaskPage(target, pushHistory = true) {
       : (commentsResp?.comments || (Array.isArray(commentsResp) ? commentsResp : []));
     task.comments = comments;
     task.runSteps = stepsResp?.steps || [];
+    task.runErrors = runErrorsResp?.errors || [];
     const interactions = interactionsResp?.interactions || [];
     task._diffData = diffResp;
     task._checkpoints = checkpointsResp;
@@ -6807,7 +6810,7 @@ async function openTaskPage(target, pushHistory = true) {
     if (task.description) state.taskDescriptions[activeId] = task.description;
     state.taskComments[activeId] = comments;
 
-    renderTaskPage(pageContent, task, comments, interactions, task._diffData, task._checkpoints);
+    renderTaskPage(pageContent, task, comments, interactions, task._diffData, task._checkpoints, task.runErrors);
     startChatPoll(activeId);
   } catch (err) {
     const is404 = err && /^404\b/.test(err.message);
@@ -6932,7 +6935,7 @@ function renderInteractionCards(container, taskId, interactions) {
   container.appendChild(section);
 }
 
-function renderTaskPage(container, task, comments, interactions, diffData, checkpoints) {
+function renderTaskPage(container, task, comments, interactions, diffData, checkpoints, runErrors) {
   container.innerHTML = '';
 
   // Back bar
@@ -7022,6 +7025,25 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
   }
   timelineSection.appendChild(stepList);
   main.appendChild(timelineSection);
+
+  // ── Error panel ────────────────────────────────────────────
+  const taskRunErrors = runErrors || task.runErrors || [];
+  if (taskRunErrors.length > 0) {
+    const errSection = el('div', 'task-page-section run-errors-section');
+    errSection.appendChild(el('div', 'task-page-section-title', `Errors (${taskRunErrors.length})`));
+    const errList = el('div', 'run-errors-list');
+    for (const e of taskRunErrors) {
+      errList.appendChild(buildRunErrorRow(e));
+    }
+    const logsLink = document.createElement('a');
+    logsLink.className = 'run-errors-logs-link';
+    logsLink.href = '/logs';
+    logsLink.textContent = 'View all run logs →';
+    logsLink.addEventListener('click', (ev) => { ev.preventDefault(); navigateTo('logs', null, true); });
+    errSection.appendChild(errList);
+    errSection.appendChild(logsLink);
+    main.appendChild(errSection);
+  }
 
   // Interaction cards (pending ask_user_questions / request_confirmation / suggest_tasks)
   renderInteractionCards(main, task.id || '', interactions || []);
@@ -8716,3 +8738,143 @@ setInterval(() => {
     errBox.style.display = 'block';
   }
 })();
+
+// ── Run error helpers ─────────────────────────────────────────────────────────
+
+function buildRunErrorRow(e) {
+  const row = el('div', 'run-error-row');
+
+  const header = el('div', 'run-error-header');
+  const exitBadge = el('span', `badge badge-error`, `exit ${e.exit_code}`);
+  const adapter = el('span', 'run-error-adapter', e.adapter || e.model || '');
+  const ts = el('span', 'run-error-ts muted-text', e.created_at ? fmtDateTime(e.created_at) : '');
+  header.appendChild(exitBadge);
+  if (e.adapter || e.model) header.appendChild(adapter);
+  header.appendChild(ts);
+  if (e.duration_ms) header.appendChild(el('span', 'run-error-dur muted-text', fmtDuration(e.duration_ms)));
+  row.appendChild(header);
+
+  if (e.stderr_tail && e.stderr_tail.trim()) {
+    const pre = document.createElement('pre');
+    pre.className = 'run-error-stderr';
+    pre.textContent = e.stderr_tail.trim();
+    row.appendChild(pre);
+  }
+
+  if (e.task_id) {
+    const taskLink = document.createElement('a');
+    taskLink.className = 'run-error-task-link muted-text';
+    taskLink.href = `/tasks/${e.task_id}`;
+    taskLink.textContent = `Task: ${e.task_id}`;
+    taskLink.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      openTaskPage(e.task_id, true);
+    });
+    row.appendChild(taskLink);
+  }
+
+  return row;
+}
+
+function fmtDuration(ms) {
+  if (!ms) return '';
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+// ── Logs page ─────────────────────────────────────────────────────────────────
+
+let logsState = { errors: [], filter: '', adapterFilter: 'all' };
+
+async function renderLogsPage() {
+  const container = document.getElementById('logs-container');
+  if (!container) return;
+  container.innerHTML = '<p style="color:var(--muted);padding:1.5rem">Loading…</p>';
+
+  const refreshBtn = document.getElementById('logs-refresh-btn');
+  const searchInput = document.getElementById('logs-search');
+  const adapterSel = document.getElementById('logs-adapter-filter');
+
+  const load = async () => {
+    container.innerHTML = '<p style="color:var(--muted);padding:1.5rem">Loading…</p>';
+    try {
+      const resp = await apiFetch('/api/run-errors?limit=200');
+      logsState.errors = resp.errors || [];
+      populateLogsAdapterFilter(adapterSel, logsState.errors);
+      renderLogsTable(container, logsState.errors, logsState.filter, logsState.adapterFilter);
+    } catch (err) {
+      container.innerHTML = `<p style="color:var(--red);padding:1.5rem">Failed to load logs: ${err.message}</p>`;
+    }
+  };
+
+  if (refreshBtn && !refreshBtn._logsHandler) {
+    refreshBtn._logsHandler = true;
+    refreshBtn.addEventListener('click', load);
+  }
+  if (searchInput && !searchInput._logsHandler) {
+    searchInput._logsHandler = true;
+    searchInput.addEventListener('input', () => {
+      logsState.filter = searchInput.value.toLowerCase();
+      renderLogsTable(container, logsState.errors, logsState.filter, logsState.adapterFilter);
+    });
+  }
+  if (adapterSel && !adapterSel._logsHandler) {
+    adapterSel._logsHandler = true;
+    adapterSel.addEventListener('change', () => {
+      logsState.adapterFilter = adapterSel.value;
+      renderLogsTable(container, logsState.errors, logsState.filter, logsState.adapterFilter);
+    });
+  }
+
+  await load();
+}
+
+function populateLogsAdapterFilter(sel, errors) {
+  if (!sel) return;
+  const adapters = [...new Set(errors.map(e => e.adapter || e.model).filter(Boolean))].sort();
+  const current = sel.value;
+  // keep "all" option
+  while (sel.options.length > 1) sel.remove(1);
+  for (const a of adapters) {
+    const opt = document.createElement('option');
+    opt.value = a;
+    opt.textContent = a;
+    sel.appendChild(opt);
+  }
+  sel.value = adapters.includes(current) ? current : 'all';
+}
+
+function renderLogsTable(container, errors, filter, adapterFilter) {
+  container.innerHTML = '';
+
+  let filtered = errors;
+  if (adapterFilter && adapterFilter !== 'all') {
+    filtered = filtered.filter(e => (e.adapter || e.model) === adapterFilter);
+  }
+  if (filter) {
+    filtered = filtered.filter(e =>
+      (e.task_id || '').toLowerCase().includes(filter) ||
+      (e.adapter || '').toLowerCase().includes(filter) ||
+      (e.model || '').toLowerCase().includes(filter) ||
+      (e.stderr_tail || '').toLowerCase().includes(filter) ||
+      (e.run_id || '').toLowerCase().includes(filter)
+    );
+  }
+
+  if (filtered.length === 0) {
+    container.appendChild(el('p', 'muted-text', errors.length === 0
+      ? 'No run errors recorded.'
+      : 'No errors match the current filter.'));
+    return;
+  }
+
+  const header = el('div', 'run-errors-header-row');
+  header.appendChild(el('span', 'run-errors-col-label', `${filtered.length} error${filtered.length !== 1 ? 's' : ''}`));
+  container.appendChild(header);
+
+  for (const e of filtered) {
+    container.appendChild(buildRunErrorRow(e));
+  }
+}

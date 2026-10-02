@@ -786,3 +786,54 @@ func (h *TasksHandler) GetRunSteps(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetRunErrors handles GET /api/tasks/{id}/run-errors
+func (h *TasksHandler) GetRunErrors(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+	if _, err := context.GetTask(h.db, id); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	errs, err := context.ListRunErrorsByTask(h.db, id, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if errs == nil {
+		errs = []context.RunError{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"errors": errs})
+}
+
+// GetAllRunErrors handles GET /api/run-errors
+func (h *TasksHandler) GetAllRunErrors(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	taskID := q.Get("task_id")
+	runID := q.Get("run_id")
+	limit := 100
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	errs, err := context.ListAllRunErrors(h.db, taskID, runID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if errs == nil {
+		errs = []context.RunError{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"errors": errs})
+}

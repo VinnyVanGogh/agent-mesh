@@ -39,6 +39,7 @@ var validSPARoutes = map[string]bool{
 	"tasks":        true,
 	"issues":       true,
 	"task-page":    true,
+	"logs":         true,
 }
 
 func isSPARoute(p string) bool {

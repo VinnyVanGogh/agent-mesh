@@ -84,6 +84,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("DELETE /api/tasks/{id}/blockers/{bid}", tasksH.RemoveBlocker)
 		mux.HandleFunc("POST /api/tasks/{id}/stage", tasksH.SetStage)
 		mux.HandleFunc("GET /api/tasks/{id}/run-steps", tasksH.GetRunSteps)
+		mux.HandleFunc("GET /api/tasks/{id}/run-errors", tasksH.GetRunErrors)
+		mux.HandleFunc("GET /api/run-errors", tasksH.GetAllRunErrors)
 		mux.HandleFunc("GET /api/tasks/{id}/checkpoints", tasksH.GetTaskCheckpoints)
 		mux.HandleFunc("GET /api/tasks/{id}/diff", tasksH.GetTaskDiff)
 		mux.HandleFunc("POST /api/tasks/{id}/checkpoint-undo", tasksH.UndoTaskCheckpoint)

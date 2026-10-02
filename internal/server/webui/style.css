@@ -3231,6 +3231,53 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
 }
 .timeline-body.hidden { display: none; }
 
+/* ── Run error panel ───────────────────────────────────────── */
+.run-errors-section { border-top: 2px solid rgba(248,81,73,.3); }
+.run-errors-list { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; }
+.run-errors-header-row { padding: 4px 12px; font-size: 11px; color: var(--muted); }
+.run-error-row {
+  border: 1px solid rgba(248,81,73,.25);
+  border-radius: 6px;
+  background: rgba(248,81,73,.05);
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 12px;
+}
+.run-error-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.run-error-adapter { font-size: 11px; font-weight: 600; color: var(--fg); }
+.run-error-ts { font-size: 10px; }
+.run-error-dur { font-size: 10px; }
+.run-error-stderr {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+  background: var(--surface2);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 2px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.run-error-task-link { font-size: 10px; color: var(--muted); text-decoration: none; }
+.run-error-task-link:hover { text-decoration: underline; }
+.run-errors-logs-link {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--accent, #6366f1);
+  text-decoration: none;
+  padding: 4px 12px 8px;
+}
+.run-errors-logs-link:hover { text-decoration: underline; }
+
 /* ── Route row banner ──────────────────────────────────────── */
 .timeline-row-route {
   border-radius: 6px;
