@@ -1378,10 +1378,13 @@ type RunStep struct {
 	CreatedAt string  `json:"created_at"`
 }
 
-// ListRunStepsByTask returns all run_steps for a given task, ordered by seq ascending.
+// ListRunStepsByTask returns all run_steps for a given task, ordered by run start time then seq.
+// seq restarts at 1 per run, so ordering by seq alone interleaves steps from different runs.
+// We group runs by their earliest step timestamp and order within each run by seq.
 func ListRunStepsByTask(db *sql.DB, taskID string) ([]RunStep, error) {
 	query := `SELECT id, run_id, COALESCE(task_id,''), seq, parent_seq, kind, title, body, COALESCE(status,''), started_at, ended_at, created_at
-	          FROM run_steps WHERE task_id = ? ORDER BY seq ASC`
+	          FROM run_steps WHERE task_id = ?
+	          ORDER BY MIN(COALESCE(started_at, created_at)) OVER (PARTITION BY run_id) ASC, seq ASC`
 	rows, err := db.Query(query, taskID)
 	if err != nil {
 		return nil, err
