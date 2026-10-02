@@ -288,6 +288,29 @@ func defaultChecklistSTA236(sprint string) []Item {
 			status:  "pending",
 			notes:   "",
 		},
+
+		// 09. Quota Seat Stability & Project Card Click-Through (STA-283)
+		{
+			section:  "09. Quota Seat Stability & Project Card Click-Through (STA-283)",
+			title:    "Claude Work and Personal quota cards both render and stay put across refreshes",
+			desc:     "The overview shows Claude (Work) and Claude (Personal) side by side. Neither drops out or swaps numbers with the other between refreshes.",
+			howTo:    "Open the dashboard overview. Note both Claude cards and their 5h/weekly %. Reload 4-5 times, a few seconds apart. Both cards stay present, in the same order, with the same numbers unless real usage changed.",
+			contract: `{"type":"file_pattern","file_path":"internal/router/pacer_live.go","must_contain":["claudeAccountEmail","{\"claude_personal\", PoolPersonalClaude}"]}`,
+		},
+		{
+			section:  "09. Quota Seat Stability & Project Card Click-Through (STA-283)",
+			title:    "Org detail shows both Claude seats and its task list",
+			desc:     "Opening an organization renders its quota gauges for both Claude seats (even a seat at 0%) and the task list below without a script error.",
+			howTo:    "On the overview, click the StayPoint org card, then Managed Solution. Both show Claude (Work) and Claude (Personal) gauges and the Tasks section.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["const quotaGrid = el('div', 'quota-gauges-grid')"]}`,
+		},
+		{
+			section:  "09. Quota Seat Stability & Project Card Click-Through (STA-283)",
+			title:    "Clicking a project card opens that project",
+			desc:     "Clicking anywhere on a project card (outside its filter pills, stat tiles and task rows) opens Task Status filtered to that org and project.",
+			howTo:    "Go to /projects. Click a card's title area: Task Status opens with Org and Project filters set to that card. Go back, click a filter pill on a card: it filters the card and does not navigate. Tab to a card and press Enter: same as click.",
+			contract: `{"type":"file_pattern","file_path":"internal/server/webui/app.js","must_contain":["const openProject = () => drillDownToTasks('all', p.org","card.addEventListener('click', openProject)"]}`,
+		},
 	}
 
 	out := make([]Item, 0, len(rows))
@@ -1007,7 +1030,27 @@ func Seed(ctx context.Context, dbConn *sql.DB, sprint string, force bool) (int, 
 					it.Contract, it.CommitHash, sprint, it.Section, it.Title)
 			}
 		}
-		return 0, count, nil
+		// Items added to the seed after the sprint was first seeded are
+		// inserted; existing rows keep their Board status and notes.
+		added := 0
+		for _, it := range items {
+			st := it.Status
+			if st == "" {
+				st = "pending"
+			}
+			res, err := dbConn.ExecContext(ctx,
+				`INSERT INTO checklist_items (id, sprint, section, title, description, how_to_test, contract, commit_hash, status, notes, version)
+				SELECT ?,?,?,?,?,?,?,?,?,?,1
+				WHERE NOT EXISTS (SELECT 1 FROM checklist_items WHERE id=? OR (sprint=? AND section=? AND title=?))`,
+				it.ID, sprint, it.Section, it.Title, it.Description, it.HowToTest, it.Contract, it.CommitHash, st, it.Notes,
+				it.ID, sprint, it.Section, it.Title)
+			if err == nil {
+				if n, _ := res.RowsAffected(); n > 0 {
+					added++
+				}
+			}
+		}
+		return added, count, nil
 	}
 
 	items := DefaultChecklist(sprint)
