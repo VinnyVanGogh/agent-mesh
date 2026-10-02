@@ -838,3 +838,63 @@ func TestWebUI_ChecklistCommitHashGate(t *testing.T) {
 		}
 	}
 }
+
+// STA-413: New Task form must have "Kind of work" select instead of Assignee dropdown.
+func TestWebUI_CreateTaskKindOfWork(t *testing.T) {
+	mux := http.NewServeMux()
+	RegisterUIRoutes(mux, "test-tok")
+
+	// 1. index.html has ct-work-kind select with all 4 options; no ct-assignee
+	reqRoot := httptest.NewRequest("GET", "/", nil)
+	wRoot := httptest.NewRecorder()
+	mux.ServeHTTP(wRoot, reqRoot)
+	if wRoot.Code != http.StatusOK {
+		t.Fatalf("expected 200 for root, got %d", wRoot.Code)
+	}
+	html := wRoot.Body.String()
+
+	if strings.Contains(html, `id="ct-assignee"`) {
+		t.Error("index.html must not contain the old ct-assignee dropdown (STA-413)")
+	}
+	if !strings.Contains(html, `id="ct-work-kind"`) {
+		t.Error("index.html missing ct-work-kind select")
+	}
+	for _, kind := range []string{"coding", "architecture", "planning", "qa"} {
+		if !strings.Contains(html, `value="`+kind+`"`) {
+			t.Errorf("index.html missing work_kind option %q", kind)
+		}
+	}
+	if !strings.Contains(html, "Kind of work") {
+		t.Error("index.html missing 'Kind of work' label")
+	}
+
+	// 2. app.js sends work_kind, not assignee_agent_id; detail panel shows kind label
+	reqJS := httptest.NewRequest("GET", "/ui/app.js", nil)
+	wJS := httptest.NewRecorder()
+	mux.ServeHTTP(wJS, reqJS)
+	if wJS.Code != http.StatusOK {
+		t.Fatalf("expected 200 for app.js, got %d", wJS.Code)
+	}
+	js := wJS.Body.String()
+
+	if strings.Contains(js, "assignee_agent_id: assigneeSel") {
+		t.Error("app.js must not reference assigneeSel (STA-413)")
+	}
+	if !strings.Contains(js, "work_kind:") {
+		t.Error("app.js must send work_kind in create-task body")
+	}
+	if !strings.Contains(js, "WORK_KIND_LABELS") {
+		t.Error("app.js missing WORK_KIND_LABELS map")
+	}
+	if !strings.Contains(js, "workKindLabel") {
+		t.Error("app.js missing workKindLabel helper")
+	}
+	if !strings.Contains(js, "'Kind of work'") {
+		t.Error("app.js missing 'Kind of work' detail panel field")
+	}
+	for _, label := range []string{"Coding & review", "Architecture", "Planning & docs", "QA & testing"} {
+		if !strings.Contains(js, label) {
+			t.Errorf("app.js missing work_kind label %q", label)
+		}
+	}
+}
