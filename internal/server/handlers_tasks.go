@@ -3,11 +3,13 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/VinnyVanGogh/staypoint/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
 )
 
 type TasksHandler struct {
@@ -499,6 +501,9 @@ func (h *TasksHandler) ResolveInteraction(w http.ResponseWriter, r *http.Request
 		})
 	}
 
+	orchestrator.GlobalDispatcher.Wake(id, "interaction_resolved",
+		fmt.Sprintf("interaction_resolved:%s:%d", id, iid))
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(updated)
 }
@@ -542,6 +547,10 @@ func (h *TasksHandler) SetStage(w http.ResponseWriter, r *http.Request) {
 			"task_id": id,
 			"stage":   req.Stage,
 		})
+	}
+
+	if req.Stage == "in_progress" {
+		orchestrator.GlobalDispatcher.Wake(id, "run_now", "run_now:"+id)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
