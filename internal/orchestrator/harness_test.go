@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -162,7 +163,9 @@ func TestClaim_FiresWake(t *testing.T) {
 	}
 }
 
-// TestClaim_AlreadyClaimed verifies that a second Claim on an in_progress task fails.
+// TestClaim_AlreadyClaimed verifies that a second Claim on a live task fails.
+// The guard is checkout_run_id IS NOT NULL (set by the first Claim and only
+// cleared by Release). execution_stage alone no longer gates re-claims.
 func TestClaim_AlreadyClaimed(t *testing.T) {
 	db := openTestDB(t)
 	insertTask(t, db, "task-1", "/tmp/repo")
@@ -171,14 +174,67 @@ func TestClaim_AlreadyClaimed(t *testing.T) {
 	if err := h.Claim(context.Background(), "task-1", "run-a", "agent-a"); err != nil {
 		t.Fatal("first claim should succeed:", err)
 	}
-	// Restore so the concurrency atomic doesn't block us.
+	// Restore so the concurrency atomic doesn't block us, but leave checkout_run_id
+	// set (simulating an actively-running task that has not yet called Release).
 	activeClaims.Add(-1)
 
-	// Directly update stage to in_progress to simulate an already-running task.
-	_, _ = db.Exec(`UPDATE tasks SET execution_stage='in_progress' WHERE id='task-1'`)
-
 	if err := h.Claim(context.Background(), "task-1", "run-b", "agent-b"); err == nil {
-		t.Fatal("second claim on in_progress task should fail")
+		t.Fatal("second claim while checkout_run_id is set should fail")
+	}
+}
+
+// TestClaim_RunNowSucceedsAfterPriorRun verifies the Run Now fix (STA-390):
+// after a run ends and Release clears checkout_run_id, a new Claim succeeds
+// even when execution_stage is left at 'in_progress' by the prior run.
+func TestClaim_RunNowSucceedsAfterPriorRun(t *testing.T) {
+	activeClaims.Store(0)
+
+	db := openTestDB(t)
+	insertTask(t, db, "run-now-task", "/tmp")
+	h := &Harness{DB: db}
+
+	// Simulate a completed prior run: stage=in_progress, checkout_run_id cleared.
+	_, _ = db.Exec(`UPDATE tasks SET execution_stage='in_progress', checkout_run_id=NULL WHERE id='run-now-task'`)
+
+	if err := h.Claim(context.Background(), "run-now-task", "run-b", "agent-b"); err != nil {
+		t.Fatalf("Claim after prior run should succeed (Run Now path); got: %v", err)
+	}
+	defer activeClaims.Add(-1)
+}
+
+// TestClaim_InteractionResolvedSucceedsAfterRun verifies the interaction-resolved
+// fix (STA-390): after a run ends with execution_stage='in_review' and Release
+// clears checkout_run_id, a new Claim succeeds on the interaction_resolved wake.
+func TestClaim_InteractionResolvedSucceedsAfterRun(t *testing.T) {
+	activeClaims.Store(0)
+
+	db := openTestDB(t)
+	insertTask(t, db, "intr-task", "/tmp")
+	h := &Harness{DB: db}
+
+	// Simulate a completed run that ended in_review, checkout cleared by Release.
+	_, _ = db.Exec(`UPDATE tasks SET execution_stage='in_review', checkout_run_id=NULL WHERE id='intr-task'`)
+
+	if err := h.Claim(context.Background(), "intr-task", "run-c", "agent-c"); err != nil {
+		t.Fatalf("Claim after in_review run should succeed (interaction_resolved path); got: %v", err)
+	}
+	defer activeClaims.Add(-1)
+}
+
+// TestClaim_DoneTaskNotReclaimable verifies that a 'done' task cannot be re-claimed.
+func TestClaim_DoneTaskNotReclaimable(t *testing.T) {
+	activeClaims.Store(0)
+
+	db := openTestDB(t)
+	insertTask(t, db, "done-task", "/tmp")
+	h := &Harness{DB: db}
+
+	_, _ = db.Exec(`UPDATE tasks SET execution_stage='done', checkout_run_id=NULL WHERE id='done-task'`)
+
+	err := h.Claim(context.Background(), "done-task", "run-d", "agent-d")
+	if err == nil {
+		activeClaims.Add(-1)
+		t.Fatal("Claim on done task should fail")
 	}
 }
 
@@ -599,6 +655,55 @@ func TestRun_PerTaskRepoOverridesHarnessRoot(t *testing.T) {
 	// harnessRoot must NOT have been touched — no .worktrees dir.
 	if _, statErr := os.Stat(filepath.Join(harnessRoot, ".worktrees")); !os.IsNotExist(statErr) {
 		t.Errorf("harnessRoot %q must not have .worktrees dir; got stat err: %v", harnessRoot, statErr)
+	}
+}
+
+// TestRun_FileChangeWithMarkerEndsInReview is the STA-391 regression test.
+// Before the fix the work product was inserted AFTER InterceptCompletion, so the
+// interceptor always saw 0 work products on the first run and blocked the
+// transition to in_review. After the fix the INSERT precedes the interceptor.
+func TestRun_FileChangeWithMarkerEndsInReview(t *testing.T) {
+	activeClaims.Store(0)
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	db := openTestDB(t)
+	insertTask(t, db, "sta391-task", repoDir)
+
+	h := &Harness{
+		DB:          db,
+		RepoRoot:    repoDir,
+		WM:          workspace.NewWorktreeManager(repoDir, db),
+		Interceptor: NewInterceptor(db),
+	}
+	// Only the work-product guard; skip git-sync to avoid upstream checks on test repo.
+	h.Interceptor.Guards = []GuardFunc{h.Interceptor.checkWorkProducts}
+
+	result, err := h.Run(context.Background(), "sta391-task", RunConfig{
+		MaxTurns:    2,
+		AgentID:     "tester",
+		MaxWallclock: 30 * time.Second,
+		RunAdapter: func(_ context.Context, cwd, _ string, _, _ []string, stdout, _ io.Writer) error {
+			// Modify a tracked file so DiffCheckpoint returns a non-empty stat.
+			_ = os.WriteFile(filepath.Join(cwd, "README.md"), []byte("changed\n"), 0o644)
+			_, _ = fmt.Fprintf(stdout, "work done\n%s\n", taskCompleteMarker)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Disposition != "in_review" {
+		t.Fatalf("STA-391 regression: expected in_review on first run with file change, got %q (diagnostic: %s)",
+			result.Disposition, result.DiagnosticMsg)
+	}
+
+	// Confirm work product is in DB.
+	var wpCount int
+	_ = db.QueryRow(`SELECT COUNT(1) FROM task_work_products WHERE task_id='sta391-task'`).Scan(&wpCount)
+	if wpCount == 0 {
+		t.Fatal("expected work product row in task_work_products")
 	}
 }
 

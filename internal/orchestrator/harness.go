@@ -112,8 +112,9 @@ func NewHarness(db *sql.DB, repoRoot string) *Harness {
 // Claim atomically checks out a task for the given runID.
 //
 // The hard concurrency cap of 1 is enforced via an atomic counter within the
-// process. Across restarts, RecoveryScan resets stale claims so the DB check
-// (execution_stage = 'todo') prevents double-claiming.
+// process. Across restarts, RecoveryScan clears stale checkout_run_id values so
+// the DB guard (checkout_run_id IS NULL) unblocks on the next wake.
+// Terminal tasks (execution_stage = 'done') are never re-claimed.
 func (h *Harness) Claim(ctx context.Context, taskID, runID, agentID string) error {
 	if activeClaims.Add(1) > 1 {
 		activeClaims.Add(-1)
@@ -124,7 +125,7 @@ func (h *Harness) Claim(ctx context.Context, taskID, runID, agentID string) erro
 	res, err := h.DB.ExecContext(ctx,
 		`UPDATE tasks
 		    SET execution_stage='in_progress', checkout_run_id=?, checkout_agent_id=?, updated_at=?
-		  WHERE id=? AND execution_stage='todo'`,
+		  WHERE id=? AND checkout_run_id IS NULL AND execution_stage NOT IN ('done')`,
 		runID, agentID, now, taskID,
 	)
 	if err != nil {
@@ -302,6 +303,22 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		}
 	}
 
+	// Cleanup writes use a fresh context: the run context may be expired (wallclock cap).
+	cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cleanCancel()
+
+	// Register the work product BEFORE calling the interceptor. checkWorkProducts
+	// queries task_work_products; inserting after the interceptor means the first
+	// run with a non-empty diff can never reach in_review (STA-391).
+	if result.DiffStat != "" && result.Disposition == "" {
+		if _, err := h.DB.ExecContext(cleanCtx,
+			`INSERT INTO task_work_products (task_id, product_type, reference) VALUES (?, 'workspace_file', ?)`,
+			taskID, ".worktrees/"+taskID,
+		); err != nil {
+			slog.Warn("register work product failed", slog.String("task", taskID), slog.Any("error", err))
+		}
+	}
+
 	// Mechanical Completion Interceptor.
 	if result.Disposition == "" {
 		approved, diag, _ := h.Interceptor.InterceptCompletion(ctx, taskID, wtPath, repoPath)
@@ -320,10 +337,6 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-
-	// Cleanup writes use a fresh context: the run context may be expired (wallclock cap).
-	cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cleanCancel()
 
 	if _, err := h.DB.ExecContext(cleanCtx,
 		`UPDATE tasks SET execution_stage=?, updated_at=? WHERE id=?`,
@@ -346,15 +359,6 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		result.Turns, result.SpentUSD, now, taskID,
 	); err != nil {
 		slog.Warn("persist cost failed", slog.String("task", taskID), slog.Any("error", err))
-	}
-
-	if result.DiffStat != "" {
-		if _, err := h.DB.ExecContext(cleanCtx,
-			`INSERT INTO task_work_products (task_id, product_type, reference) VALUES (?, 'workspace_file', ?)`,
-			taskID, ".worktrees/"+taskID,
-		); err != nil {
-			slog.Warn("register work product failed", slog.String("task", taskID), slog.Any("error", err))
-		}
 	}
 
 	if _, err := h.DB.ExecContext(cleanCtx,
