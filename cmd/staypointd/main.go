@@ -275,15 +275,27 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 			sessID = "paperclip-" + taskID[:8]
 		}
 
+		// resolvedProv is set by adapterFn before each adapter turn writes to
+		// stdout; parseDelta reads it to select the right stream parser.
+		var resolvedProv string
+
 		var adapterFn orchestrator.AdapterRunFunc
 		if adapterOverride != nil {
-			adapterFn = adapterOverride
+			adapterFn = func(runCtx context.Context, cwd, prov string, rawArgs, extraEnv []string, stdout, stderr io.Writer) error {
+				agentType := prov
+				if agentType == "" {
+					agentType = "claude"
+				}
+				resolvedProv = agentType
+				return adapterOverride(runCtx, cwd, prov, rawArgs, extraEnv, stdout, stderr)
+			}
 		} else {
 			adapterFn = func(runCtx context.Context, cwd, prov string, rawArgs, extraEnv []string, stdout, stderr io.Writer) error {
 				agentType := prov
 				if agentType == "" {
 					agentType = "claude"
 				}
+				resolvedProv = agentType
 				if err := telemetry.HeartbeatSession(dbStore.DB(), telemetry.AgentSession{
 					ID:        sessID,
 					AgentType: agentType,
@@ -319,7 +331,11 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 		sr.EmitWake(reason)
 
 		parseDelta := func(line []byte) ([]orchestrator.StepDelta, error) {
-			raw, err := adapter.AdapterFor("").ParseStreamDelta(line)
+			prov := resolvedProv
+			if prov == "" {
+				prov = "claude"
+			}
+			raw, err := adapter.AdapterFor(prov).ParseStreamDelta(line)
 			if err != nil {
 				return nil, err
 			}
