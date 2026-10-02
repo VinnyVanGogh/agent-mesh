@@ -142,6 +142,11 @@ func (h *ThreadsHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if _, err := h.store.GetSession(r.Context(), id); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
 	var total int
 	err := h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM chat_messages WHERE session_id = ?`, id).Scan(&total)
 	if err != nil {
@@ -242,6 +247,11 @@ func (h *ThreadsHandler) AppendMessage(w http.ResponseWriter, r *http.Request) {
 		Content:    req.Content,
 		TokenCount: req.TokenCount,
 		Metadata:   req.Metadata,
+	}
+
+	if _, err := h.store.GetSession(r.Context(), id); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
 	}
 
 	if err := h.store.AppendMessage(r.Context(), id, msg); err != nil {

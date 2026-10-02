@@ -256,9 +256,13 @@ func (h *SessionsHandler) CloseSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := h.db.ExecContext(r.Context(), `UPDATE agent_sessions SET status = 'closed' WHERE id = ?`, id)
+	res, err := h.db.ExecContext(r.Context(), `UPDATE agent_sessions SET status = 'closed' WHERE id = ?`, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to close session: "+err.Error())
+		return
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
 

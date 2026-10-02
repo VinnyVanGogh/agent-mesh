@@ -375,6 +375,11 @@ func (h *ChecklistHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
 // GET /api/checklist/{id}/history
 func (h *ChecklistHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	var exists int
+	if err := h.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM checklist_items WHERE id = ?`, id).Scan(&exists); err != nil || exists == 0 {
+		writeError(w, http.StatusNotFound, "checklist item not found")
+		return
+	}
 	rows, err := h.db.QueryContext(r.Context(),
 		`SELECT id, item_id, status, notes, changed_by, changed_at FROM checklist_history WHERE item_id=? ORDER BY id DESC`, id)
 	if err != nil {
