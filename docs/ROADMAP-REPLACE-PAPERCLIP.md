@@ -1,212 +1,103 @@
 # Roadmap: Replace Paperclip with StayPoint (Dogfood)
 
-> **Status:** Draft for Board approval — STA-288  
-> **Author:** Lead Systems & Daemon Architect  
-> **Date:** 2026-10-01  
-> **Scope:** STA company only. Other companies (MAN, PER, RUN) stay in Paperclip until post-cutover parity is proven.
-
-## Design Thesis (from STA-200/STA-201)
-
-StayPoint's performance edge over Paperclip comes from **lean context**: task + repo state + minimal harness ≈ ≤4,000 tokens. Paperclip injects heartbeat rules, skill catalogs, and per-agent instruction files before the agent sees the task, causing "lost in the middle" degradation. StayPoint enforces agent behavior in **platform code** (disposition checks, DoD gate, interaction card schema, governance tables), not in prompt boilerplate. Per-agent instruction files will exist but stay minimal — roughly 1-2 lines ("This is your job. This is your goal.") — the heavy behavioral weight lives in platform code, not in prompt injection.
+> **Status:** In progress — started 2026-10-01. Board approved. T1–T7 assigned.  
+> **Scope:** STA company only. Other companies (MAN, PER, RUN) stay in Paperclip until post-cutover parity is proven.  
+> **Source plan:** STA-288 revision 3.
 
 ---
 
-## 1. Current-State Gap Table
+## North Star
 
-What exists and works in StayPoint today vs. what Paperclip provides day-to-day.
+The HTML task-page mockup on STA-288:
+[`sta-289-run-timeline.html`](/api/attachments/8b7cce76-7bf5-4dcc-870c-656639611be1/content)
 
-| Paperclip Feature | StayPoint Today | Notes |
-|---|:---:|---|
-| Issues / tasks (CRUD, execution stages) | ✅ EXISTS | Full schema + REST API live |
-| Comments | ✅ EXISTS | Read + write, author field |
-| Task blockers / dependencies | ✅ EXISTS | `task_relations`, block/unblock API |
-| Task documents (versioned plan) | ✅ EXISTS | `task_documents` table + API |
-| Work products (PR, commit, branch, workspace_file) | ✅ EXISTS | Schema + write API; `preview_url`/`runtime_service` types missing |
-| Budget + spend tracking per task | ✅ EXISTS | `max_budget_usd`, `spent_usd` on tasks |
-| Quota gauges (5h / weekly, claude / gemini) | ✅ EXISTS | Live in web UI |
-| Governance / approvers / reviewers | ✅ EXISTS | `task_governance` tables + routes |
-| SSE real-time events | ✅ EXISTS | `/api/events`; board subscribes |
-| Board Kanban web UI | ✅ EXISTS | 4 columns, filter pills, project cards |
-| Task detail panel (full-page) | ✅ EXISTS | Panel + full-page toggle; URL-routed page in STA-282 |
-| Interaction cards in web UI (ask / confirm / suggest) | ⚠️ PARTIAL | Schema + API exist; **web UI does not render them** |
-| **Run visibility ("working" spinner → live timeline)** | ❌ MISSING | Only spinner shown; Board cannot see what agent is doing (STA-289) |
-| Agent assignment / checkout | ⚠️ PARTIAL | `checkout_agent_id` field + claim API; no wake-on-assign from UI |
-| Agent run trigger from UI | ❌ MISSING | No "Run Now" button |
-| Project-level grouping | ⚠️ PARTIAL | `project` text field on tasks; cards in UI; no first-class entity |
-| Priority field (DB) | ❌ MISSING | Filter UI exists; no `priority` column in schema |
-| Agent directory / inbox | ❌ MISSING | No per-agent inbox or catalog |
-| Wake-on-assign automation | ❌ MISSING | Dispatcher exists; assignment→wake not wired |
-| PR review handoff (auto-create review task) | ❌ MISSING | Manual only |
-| Issue / task search | ❌ MISSING | No full-text search endpoint |
-| Multi-company / multi-org isolation | ❌ MISSING | Single-tenant by design; out of scope for this roadmap |
-| Labels / tags | ❌ MISSING | No labels column in schema |
-| Routines / cron triggers | ❌ MISSING | Not built |
-| File attachments | ❌ MISSING | Not in schema |
-| Approval cards (first-class approval entity) | ❌ MISSING | Governance tables exist; no Paperclip-style approval board card |
-| Migration tool (Paperclip → StayPoint) | ❌ MISSING | Not built; not required (clean-start approach) |
+It has a live run timeline, pause/message controls, token/cost stats, a diff sidebar, and two-click Stop. Source is on branch `docs/sta-289-run-timeline-diagram` at `89bcde7` (not merged). Every T1 UI decision anchors to that mockup.
 
 ---
 
-## 2. Minimum Cutover Scope
+## MVP = The Dogfood Loop
 
-The Board must be able to complete the dogfood loop before cutting over. Minimum set:
-
-1. **Run visibility** — live step-by-step timeline on task detail page so Board can see what an agent is doing without relying on `--dangerously-skip-permissions` terminal (STA-289)
-2. **Interaction cards in web UI** — Board can respond to agent `ask_user_questions` / `request_confirmation` cards without switching to a terminal
-3. **URL-routed task detail page** — stable links to tasks, with comment thread and work products (STA-282)
-4. **Wake-on-assign** — assigning a task from the UI wakes the assigned agent automatically
-5. **Agent run trigger from UI** — "Run Now" button so Board can manually kick a heartbeat
-6. **Quota gauges stay live** — existing 5h/weekly gauges continue working (STA-283 regression must be resolved first)
-
-Everything else (labels, priority field, routines, file attachments, migration tooling, multi-company) is post-cutover.
+You create a task in StayPoint and assign it. It wakes on its own. You watch its steps live. It asks you a question via an interaction card. You answer in the StayPoint web UI. It wakes again, finishes, and marks done. No Paperclip, no terminal, no spinner.
 
 ---
 
-## 3. Ordered Milestones
+## Already Done (from STA-236)
 
-> Sizes: S < 1 day · M 1-3 days · L 4-7 days · XL > 1 week
-
-### M0 · In-flight (STA-282 + STA-283) — L — target: this sprint
-
-- STA-282: task detail as a full URL-routed page (`/tasks/:org/:project/:id`) + interactive session panel
-- STA-283: fix claude_work / claude_personal quota flip + project card click-through regression
-
-_These are already `in_progress`. M1 and M2 depend on M0._
+- **STA-282** — task detail as a full URL-routed page (`/tasks/:org/:project/:id`) + interactive session panel ✅
+- **STA-283** — claude_work / claude_personal quota flip fix + project card click-through ✅
 
 ---
 
-### M1 · Run visibility: live micro-checkpoints (STA-289) — L — starts after M0
+## T1–T7 Scope Table
 
-**Board signal:** This is the most important feature for the replacement.
+| Tier | Issue | Work | Depends on | Status vs Code |
+|------|-------|------|------------|----------------|
+| T1 | **STA-289** | Run timeline — live micro-checkpoint UI built from the north-star mockup. Critical path. | none | **PARTIAL** |
+| T2 | **STA-291** | Interaction cards in the web UI — render ask/confirm/suggest cards; Board responds without a terminal | none (runs alongside T1) | **PARTIAL** |
+| T3 | **STA-292** | Wake-on-assign — assigning a task from the UI wakes the assigned adapter automatically | T2 | **MISSING** |
+| T4 | **STA-293** | Run Now button — Board manually kicks a heartbeat from the task detail page | T3 | **PARTIAL** |
+| T5 | **STA-316** | Dogfood acceptance test — Auditor runs the full loop end-to-end, then Board runs it | T1–T4 | **MISSING** |
+| T6 | **STA-317** | Refresh `docs/ROADMAP-REPLACE-PAPERCLIP.md` to the approved plan | none | **IN PROGRESS** |
+| T7 | **STA-318** | Cutover — new STA work goes into StayPoint; Paperclip becomes read-only fallback | T5 | **MISSING** |
 
-Replace the spinning "working" indicator with a live, named step timeline on the task detail page. Each harness step emits a checkpoint event over SSE; the task page renders it in real time.
+### Code Evidence (checked against repo, not issue status)
 
-Steps to show:
-1. Wake reason (assigned / commented / blocker cleared)
-2. Context read (files, issue, comments)
-3. Plan, one line
-4. Each action (file edit, test, command) with pass/fail
-5. Git checkpoint (sha, diff link, undo button)
-6. Finish (status + 1–2 sentence plain-English summary)
+**T1 — PARTIAL**  
+Backend foundations exist: `internal/checkpoint/` (checkpoint.go, types.go, undo.go), checkpoint creation + diff in `internal/orchestrator/harness.go`, SSE `EventHub` in `internal/server/events.go`.  
+Missing: harness does not publish step events to SSE hub; web UI (`internal/server/webui/app.js`) has zero timeline/checkpoint/RunStep rendering — only a "working" spinner.
 
-Also: elapsed time, tokens/cost so far, "stuck" warning if no step in N minutes.
+**T2 — PARTIAL**  
+Schema exists: `task_interactions` table in `internal/db/db.go`; context CRUD in `internal/context/` (interactions_test.go confirms create/list/resolve). No HTTP endpoints for interactions in `internal/server/handlers_tasks.go`. Web UI has no card rendering (1 grep hit = a comment in a chat section, not a card component).
 
-_Existing foundations:_ `internal/adapter/*.go` `ParseStreamDelta`, `internal/checkpoint/`, `internal/orchestrator/harness.go` Run loop, `/api/events` SSE.
+**T3 — MISSING**  
+`GlobalDispatcher.Wake()` exists in `internal/orchestrator/dispatcher.go` and is called from `internal/mcp/tools.go`. Task update handler does not call `dispatcher.Wake` on assignment change — the assignment→wake wire does not exist in `internal/server/`.
 
----
+**T4 — PARTIAL**  
+`SetStage` handler exists (`POST /api/tasks/{id}/stage` in `internal/server/handlers_tasks.go`). Web UI has no "Run Now" button — zero hits for `run-now`/`RunNow` in `app.js`.
 
-### M2 · Interaction cards in web UI — M — starts after M0, parallel with M1
+**T5, T7 — MISSING**  
+No acceptance test scaffold. No cutover tooling.
 
-Render the three existing interaction kinds in the task thread:
-
-- `ask_user_questions` → checkbox/option form, Board submits answer
-- `request_confirmation` → accept / reject buttons, plan revision target
-- `suggest_tasks` → Board selects tasks to create
-
-API already exists (`GET/POST /api/tasks/{id}/interactions`). This is a pure web UI sprint.
-
-_Gates the dogfood loop: without this the Board cannot respond to agent questions._
-
----
-
-### M3 · Wake-on-assign + "Run Now" button — S — starts after M0
-
-Two small wires:
-
-1. When `checkout_agent_id` is set on a task (via UI or API), fire `GlobalDispatcher.Wake(taskID, "assigned", …)` — connects the existing dispatcher to the assignment action
-2. Add a "Run Now" button to the task detail page that POSTs to `/api/tasks/{id}/stage` with `assigned` reason, triggering the same wake
-
-_Both lean on code that already exists; this is wiring, not invention._
+**T6 — IN PROGRESS**  
+This document.
 
 ---
 
-### 🏁 First Dogfood Milestone (after M0 + M1 + M2 + M3)
+## Backlog (outside T1–T7, not blocking cutover)
 
-> **The earliest point where StayPoint work is tracked in StayPoint.**
+From STA-236:
+- **STA-284** subtask tree UX
+- **STA-285** "commit unknown" banner
+- **STA-286** Gemini cost audit
+- **STA-287** checklist UX
+- **STA-310** TUI timeline (child of STA-289)
+- **STA-311** one-topic-per-task intake ← recommended first task after MVP
 
-Definition: Board can create a task in StayPoint, assign it to an adapter (Claude/Gemini), the adapter wakes automatically, asks a question via an interaction card, Board responds via the StayPoint web UI, adapter wakes again and marks done — **without ever opening Paperclip or a terminal.**
+From the earlier roadmap pass:
+- **STA-294** adapter status dashboard
+- **STA-296** priority field + DB column
+- **STA-297** full-text task search
+- **STA-298** PR review handoff automation
 
-Estimated time from now: **~3 weeks** (M0 ≈ 1 week remaining + M1 ≈ 1 week + M2 ≈ 3 days + M3 ≈ 1 day).
-
----
-
-### M4 · Adapter status dashboard — M — post-dogfood
-
-StayPoint runs adapters (claude, gemini, codex), not "hired agents with instruction stacks." Per-adapter instruction files will exist but stay minimal — 1-2 lines of job + goal. Platform code (disposition checks, governance tables, DoD gate, interaction schema) carries the behavioral weight. The lean-prompt thesis (STA-200/STA-201) holds: context ≤4k, no skill catalog injection, no heartbeat boilerplate.
-
-What to build:
-
-- `GET /api/adapters` — lists configured adapters and their current load (active task, last run, last error)
-- Per-adapter task filter: `GET /api/tasks?adapter={claude|gemini|...}`
-- Adapter status cards in web UI (active task, last run timestamp, quota remaining)
-- Per-project adapter preference in config (`staypoint.toml`: `[project.STA] default_adapter = "claude"`)
-- Per-adapter minimal instruction file path in config (points to a 1-2 line `.md` defining the adapter's role)
-
----
-
-### M5 · Priority field + task search — S — post-dogfood
-
-- Add `priority` column to `tasks` schema (migration)
-- Full-text search: `GET /api/tasks?q=...` using SQLite FTS5
-- Wire priority filter in web UI to the real DB column
-
----
-
-### M6 · PR review handoff automation — M — post-dogfood
-
-- When a task transitions to `done` with a `pull_request` work product, auto-create a review subtask assigned to the designated reviewer agent
-- Configurable per-project reviewer in config
-
----
-
-### M7 · Hard cutover: STA work moves to StayPoint — milestone only
-
-When M0–M6 pass a Board acceptance test:
-- Stop creating new STA issues in Paperclip
-- Existing STA-1..287 stay in Paperclip as read-only archive (clean start; no migration)
-- New issues start at STA-288 in StayPoint
-- Parallel operation window: up to 8 weeks; hard cutover when Board is confident
-
----
-
-### Post-cutover backlog (not blocking cutover)
-
+Post-cutover (not blocking):
 - Labels / tags on tasks
 - `preview_url` and `runtime_service` work product types
 - File attachments
 - Routines / cron triggers
 - Approval cards (first-class entity beyond governance tables)
 - Multi-company / multi-tenant (separate epic)
-- Paperclip migration importer (if archive-only becomes insufficient)
 
 ---
 
-## 4. Risks
+## Rough Size
 
-| ID | Risk | Sev | Mitigation |
-|---|---|:-:|---|
-| R-01 | Run visibility SSE throughput: high-frequency checkpoint events flood the board | H | Debounce/batch at 200ms; add `level` field so UI can collapse fine-grained steps |
-| R-02 | Interaction card web UI: test coverage gap — card rendered but response not delivered to agent | H | E2E test: create interaction, submit response, verify agent wakes with correct payload |
-| R-03 | Wake-on-assign races with manual checkout: two agents claim the same task | M | Existing concurrency cap (max 1 active claim) prevents double-run; still add idempotency key on wake |
-| R-04 | Quota flip regression (STA-283) not fully resolved before dogfood | M | STA-283 must be `done` before M3 merges; add checklist gate |
-| R-05 | Clean-start cuts off Board from historical STA context | M | Keep Paperclip URL in bookmark bar; add a pinned comment on STA-288 with the archive link |
-| R-06 | Per-adapter minimal instruction files need to be authored and wired before cutover | M | M4 covers this; files are 1-2 lines, stored at path from `staypoint.toml`; platform code carries the rest |
-| R-07 | STA-289 scope creep: micro-checkpoints become a large streaming infrastructure rewrite | M | Scope strictly to emit + display; no persistence of step history beyond in-memory SSE buffer initially |
+| Work | Estimate |
+|------|----------|
+| T1 (run timeline) | ~1.5–2 weeks |
+| T2–T4 (cards, wake, Run Now) — run alongside T1 | ~1 week |
+| T5 (acceptance test) | 1–2 days |
+| MVP lands | ~2–2.5 weeks from now |
 
 ---
 
-## 5. First Dogfood Milestone (summary)
-
-**Earliest point where StayPoint work is tracked in StayPoint:**
-
-After M0 (STA-282 + STA-283) + M1 (STA-289 run visibility) + M2 (interaction cards in web UI) + M3 (wake-on-assign + Run Now):
-
-> Board creates a task, assigns it to Chief of Staff. CoS wakes, sees a live timeline of its steps, asks a clarifying question via interaction card. Board reads the question and responds in the StayPoint web UI. CoS wakes, completes the task, and marks done. Board sees the final status on the Kanban board.
-
-No Paperclip. No terminal. No spinner.
-
-Estimated target: **~3 weeks from M0 merge**.
-
----
-
-_See STA-288 for child issues proposed for Board approval._
+_Last updated: 2026-10-01 · Matches STA-288 plan revision 3 · Code audit at commit `98d3994`_
