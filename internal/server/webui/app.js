@@ -7427,6 +7427,37 @@ async function renderShipReviewCard(container, taskId) {
     section.appendChild(testSection);
   }
 
+  // Files changed
+  if (card.files_changed && card.files_changed.length > 0) {
+    const filesSection = el('div', 'ship-review-files-section');
+    filesSection.appendChild(el('div', 'ship-review-section-title', `Files changed (${card.files_changed.length})`));
+    const fileList = el('ul', 'ship-review-file-list');
+    for (const f of card.files_changed) {
+      fileList.appendChild(el('li', 'ship-review-file-item', f));
+    }
+    filesSection.appendChild(fileList);
+    section.appendChild(filesSection);
+  }
+
+  // Check runs
+  if (card.check_runs && card.check_runs.length > 0) {
+    const checksSection = el('div', 'ship-review-checks-section');
+    checksSection.appendChild(el('div', 'ship-review-section-title', 'Check runs'));
+    for (const run of card.check_runs) {
+      const row = el('div', `ship-review-check-row ${run.exit_code === 0 ? 'check-pass' : 'check-fail'}`);
+      const statusIcon = el('span', 'ship-review-check-icon', run.exit_code === 0 ? '✓' : '✕');
+      const cmdEl = el('code', 'ship-review-check-cmd', run.command || '');
+      row.appendChild(statusIcon);
+      row.appendChild(cmdEl);
+      if (run.output_tail) {
+        const out = el('pre', 'ship-review-check-output', run.output_tail);
+        row.appendChild(out);
+      }
+      checksSection.appendChild(row);
+    }
+    section.appendChild(checksSection);
+  }
+
   // Approve / Send back / Reject buttons
   const actions = el('div', 'ship-review-actions');
 

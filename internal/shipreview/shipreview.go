@@ -29,22 +29,31 @@ const (
 	StatusRejected = "rejected"
 )
 
+// CheckRun records the outcome of a single verification command.
+type CheckRun struct {
+	Command    string `json:"command"`
+	ExitCode   int    `json:"exit_code"`
+	OutputTail string `json:"output_tail,omitempty"`
+}
+
 // Card represents a Ship Review card for a task.
 type Card struct {
-	ID               string    `json:"id"`
-	TaskID           string    `json:"task_id"`
-	Branch           string    `json:"branch"`
-	HeadSHA          string    `json:"head_sha"`
-	TestSteps        []string  `json:"test_steps"`
-	DevURL           string    `json:"dev_url"`
-	DevPID           int       `json:"dev_pid"`
-	Status           string    `json:"status"`
-	ApprovedSHA      string    `json:"approved_sha,omitempty"`
-	MainSHA          string    `json:"main_sha,omitempty"`
-	SendBackComment  string    `json:"send_back_comment,omitempty"`
-	RejectComment    string    `json:"reject_comment,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID              string     `json:"id"`
+	TaskID          string     `json:"task_id"`
+	Branch          string     `json:"branch"`
+	HeadSHA         string     `json:"head_sha"`
+	TestSteps       []string   `json:"test_steps"`
+	DevURL          string     `json:"dev_url"`
+	DevPID          int        `json:"dev_pid"`
+	Status          string     `json:"status"`
+	ApprovedSHA     string     `json:"approved_sha,omitempty"`
+	MainSHA         string     `json:"main_sha,omitempty"`
+	SendBackComment string     `json:"send_back_comment,omitempty"`
+	RejectComment   string     `json:"reject_comment,omitempty"`
+	FilesChanged    []string   `json:"files_changed"`
+	CheckRuns       []CheckRun `json:"check_runs"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // ErrHeadMoved is returned when the branch HEAD changed after the card was rendered.
@@ -203,7 +212,9 @@ func removeDevWorktree(repoPath, wtPath string) {
 
 // CreateCard inserts a new ship review card or replaces an existing pending one.
 // testSteps must be non-empty. headSHA is the current branch HEAD.
-func CreateCard(db *sql.DB, taskID, branch, headSHA string, testSteps []string, devURL string) (*Card, error) {
+// repoDir is used to derive files changed via git diff; pass "" to skip.
+// checkRuns is optional evidence from CI / verification commands.
+func CreateCard(db *sql.DB, taskID, branch, headSHA string, testSteps []string, devURL string, repoDir string, checkRuns []CheckRun) (*Card, error) {
 	if len(testSteps) == 0 {
 		return nil, ErrTestStepsRequired
 	}
@@ -219,6 +230,21 @@ func CreateCard(db *sql.DB, taskID, branch, headSHA string, testSteps []string, 
 		return nil, fmt.Errorf("marshal test_steps: %w", err)
 	}
 
+	// Derive files changed from git diff against the merge-base.
+	filesChanged := diffFilesChanged(repoDir, headSHA)
+	filesJSON, err := json.Marshal(filesChanged)
+	if err != nil {
+		return nil, fmt.Errorf("marshal files_changed: %w", err)
+	}
+
+	if checkRuns == nil {
+		checkRuns = []CheckRun{}
+	}
+	checksJSON, err := json.Marshal(checkRuns)
+	if err != nil {
+		return nil, fmt.Errorf("marshal check_runs: %w", err)
+	}
+
 	// Replace any existing pending card for this task (agent iterating).
 	_, _ = db.Exec(`DELETE FROM ship_review_cards WHERE task_id = ? AND status IN ('pending', 'sent_back')`, taskID)
 
@@ -226,9 +252,11 @@ func CreateCard(db *sql.DB, taskID, branch, headSHA string, testSteps []string, 
 	now := time.Now().UTC()
 	_, err = db.Exec(`
 		INSERT INTO ship_review_cards
-			(id, task_id, branch, head_sha, test_steps_json, dev_url, dev_pid, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?)`,
+			(id, task_id, branch, head_sha, test_steps_json, dev_url, dev_pid, status,
+			 files_changed_json, check_runs_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?, ?, ?)`,
 		id, taskID, branch, headSHA, string(stepsJSON), devURL,
+		string(filesJSON), string(checksJSON),
 		now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano),
 	)
 	if err != nil {
@@ -237,24 +265,62 @@ func CreateCard(db *sql.DB, taskID, branch, headSHA string, testSteps []string, 
 	return GetCard(db, taskID)
 }
 
+// diffFilesChanged returns the list of files changed between the merge-base of
+// "main" (or "master") and headSHA. Returns an empty slice on any error.
+func diffFilesChanged(repoDir, headSHA string) []string {
+	if repoDir == "" || headSHA == "" {
+		return []string{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Find merge-base against main (or master as fallback).
+	var base string
+	for _, target := range []string{"main", "master"} {
+		out, err := gitOutput(ctx, repoDir, "merge-base", target, headSHA)
+		if err == nil && out != "" {
+			base = out
+			break
+		}
+	}
+	if base == "" {
+		return []string{}
+	}
+
+	out, err := gitOutput(ctx, repoDir, "diff", "--name-only", base, headSHA)
+	if err != nil || out == "" {
+		return []string{}
+	}
+	files := strings.Split(out, "\n")
+	result := make([]string, 0, len(files))
+	for _, f := range files {
+		if f != "" {
+			result = append(result, f)
+		}
+	}
+	return result
+}
+
 // GetCard returns the most recent ship review card for a task.
 func GetCard(db *sql.DB, taskID string) (*Card, error) {
 	row := db.QueryRow(`
 		SELECT id, task_id, branch, head_sha, test_steps_json, dev_url, dev_pid,
 		       status, approved_sha, main_sha, send_back_comment, reject_comment,
+		       COALESCE(files_changed_json, '[]'), COALESCE(check_runs_json, '[]'),
 		       created_at, updated_at
 		FROM ship_review_cards
 		WHERE task_id = ?
 		ORDER BY created_at DESC LIMIT 1`, taskID)
 
 	var c Card
-	var stepsJSON string
+	var stepsJSON, filesJSON, checksJSON string
 	var approvedSHA, mainSHA, sendBack, reject sql.NullString
 	var createdAt, updatedAt string
 
 	if err := row.Scan(
 		&c.ID, &c.TaskID, &c.Branch, &c.HeadSHA, &stepsJSON, &c.DevURL, &c.DevPID,
 		&c.Status, &approvedSHA, &mainSHA, &sendBack, &reject,
+		&filesJSON, &checksJSON,
 		&createdAt, &updatedAt,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -264,6 +330,12 @@ func GetCard(db *sql.DB, taskID string) (*Card, error) {
 	}
 	if err := json.Unmarshal([]byte(stepsJSON), &c.TestSteps); err != nil {
 		c.TestSteps = []string{}
+	}
+	if err := json.Unmarshal([]byte(filesJSON), &c.FilesChanged); err != nil {
+		c.FilesChanged = []string{}
+	}
+	if err := json.Unmarshal([]byte(checksJSON), &c.CheckRuns); err != nil {
+		c.CheckRuns = []CheckRun{}
 	}
 	c.ApprovedSHA = approvedSHA.String
 	c.MainSHA = mainSHA.String

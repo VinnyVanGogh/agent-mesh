@@ -57,6 +57,8 @@ func openTestDB(t *testing.T) *sql.DB {
 			main_sha TEXT,
 			send_back_comment TEXT,
 			reject_comment TEXT,
+			files_changed_json TEXT NOT NULL DEFAULT '[]',
+			check_runs_json TEXT NOT NULL DEFAULT '[]',
 			created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
 			updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 		);
@@ -140,7 +142,7 @@ func TestCreateCardRequiresTestSteps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = shipreview.CreateCard(db, "t1", "feature/test", "abc123", nil, "")
+	_, err = shipreview.CreateCard(db, "t1", "feature/test", "abc123", nil, "", "", nil)
 	if err == nil {
 		t.Fatal("expected error for empty test_steps")
 	}
@@ -153,7 +155,7 @@ func TestCardRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	steps := []string{"1. Open /home page", "2. Click Login button", "3. Verify redirect to /dashboard"}
-	card, err := shipreview.CreateCard(db, "t2", "feature/test", "deadbeef", steps, "http://localhost:5173")
+	card, err := shipreview.CreateCard(db, "t2", "feature/test", "deadbeef", steps, "http://localhost:5173", "", nil)
 	if err != nil {
 		t.Fatalf("CreateCard: %v", err)
 	}
@@ -180,7 +182,7 @@ func TestSendBackAndReplace(t *testing.T) {
 	db := openTestDB(t)
 	_, _ = db.Exec(`INSERT INTO tasks (id, name) VALUES ('t3', 'Test task')`)
 	steps := []string{"1. Check homepage"}
-	card, _ := shipreview.CreateCard(db, "t3", "feature/test", "sha1", steps, "")
+	card, _ := shipreview.CreateCard(db, "t3", "feature/test", "sha1", steps, "", "", nil)
 
 	if err := shipreview.SendBack(db, card, "fix the typo"); err != nil {
 		t.Fatalf("SendBack: %v", err)
@@ -192,7 +194,7 @@ func TestSendBackAndReplace(t *testing.T) {
 	}
 
 	// Agent iterates: creates new card (replaces sent_back card).
-	card2, err := shipreview.CreateCard(db, "t3", "feature/test", "sha2", steps, "")
+	card2, err := shipreview.CreateCard(db, "t3", "feature/test", "sha2", steps, "", "", nil)
 	if err != nil {
 		t.Fatalf("second CreateCard: %v", err)
 	}
@@ -212,7 +214,7 @@ func TestApproveAndMergeHashPin(t *testing.T) {
 
 	repoDir, branch, featureSHA := setupGitRepo(t)
 
-	card, err := shipreview.CreateCard(db, "t4", branch, featureSHA, []string{"1. Verify"}, "")
+	card, err := shipreview.CreateCard(db, "t4", branch, featureSHA, []string{"1. Verify"}, "", repoDir, nil)
 	if err != nil {
 		t.Fatalf("CreateCard: %v", err)
 	}
@@ -242,7 +244,7 @@ func TestApproveAndMergeRejectsMovedHead(t *testing.T) {
 	repoDir, branch, _ := setupGitRepo(t)
 
 	// Create card with a stale (wrong) SHA.
-	card, err := shipreview.CreateCard(db, "t5", branch, "0000000000000000000000000000000000000000", []string{"1. Check"}, "")
+	card, err := shipreview.CreateCard(db, "t5", branch, "0000000000000000000000000000000000000000", []string{"1. Check"}, "", "", nil)
 	if err != nil {
 		t.Fatalf("CreateCard: %v", err)
 	}
@@ -250,6 +252,85 @@ func TestApproveAndMergeRejectsMovedHead(t *testing.T) {
 	_, err = shipreview.ApproveAndMerge(context.Background(), db, card, repoDir, "main")
 	if err == nil {
 		t.Fatal("expected error for moved HEAD")
+	}
+}
+
+// TestFilesChangedPopulated verifies that CreateCard populates files_changed from git diff.
+func TestFilesChangedPopulated(t *testing.T) {
+	db := openTestDB(t)
+	_, _ = db.Exec(`INSERT INTO tasks (id, name) VALUES ('t6', 'Files test')`)
+
+	repoDir, branch, featureSHA := setupGitRepo(t)
+
+	card, err := shipreview.CreateCard(db, "t6", branch, featureSHA, []string{"1. Verify feature.txt exists"}, "", repoDir, nil)
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+	if len(card.FilesChanged) == 0 {
+		t.Fatal("expected files_changed to be non-empty")
+	}
+	found := false
+	for _, f := range card.FilesChanged {
+		if f == "feature.txt" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected feature.txt in files_changed, got %v", card.FilesChanged)
+	}
+}
+
+// TestFilesChangedEmptyRepoDir verifies CreateCard succeeds with empty repoDir.
+func TestFilesChangedEmptyRepoDir(t *testing.T) {
+	db := openTestDB(t)
+	_, _ = db.Exec(`INSERT INTO tasks (id, name) VALUES ('t7', 'No repo')`)
+
+	card, err := shipreview.CreateCard(db, "t7", "feature/norepo", "abc", []string{"1. Check"}, "", "", nil)
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+	if card.FilesChanged == nil {
+		t.Error("FilesChanged should not be nil")
+	}
+	if len(card.FilesChanged) != 0 {
+		t.Errorf("expected empty files_changed for empty repoDir, got %v", card.FilesChanged)
+	}
+}
+
+// TestCheckRunsRoundTrip verifies check_runs are stored and retrieved correctly.
+func TestCheckRunsRoundTrip(t *testing.T) {
+	db := openTestDB(t)
+	_, _ = db.Exec(`INSERT INTO tasks (id, name) VALUES ('t8', 'CI test')`)
+
+	runs := []shipreview.CheckRun{
+		{Command: "go test ./...", ExitCode: 0, OutputTail: "ok  ..."},
+		{Command: "go vet ./...", ExitCode: 0},
+		{Command: "golangci-lint run", ExitCode: 1, OutputTail: "main.go:5: unused var"},
+	}
+	card, err := shipreview.CreateCard(db, "t8", "feature/ci", "sha123", []string{"1. Review lint output"}, "", "", runs)
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+	if len(card.CheckRuns) != 3 {
+		t.Fatalf("want 3 check runs, got %d", len(card.CheckRuns))
+	}
+	if card.CheckRuns[0].Command != "go test ./..." {
+		t.Errorf("want 'go test ./...', got %q", card.CheckRuns[0].Command)
+	}
+	if card.CheckRuns[2].ExitCode != 1 {
+		t.Errorf("want exit_code 1, got %d", card.CheckRuns[2].ExitCode)
+	}
+	if card.CheckRuns[2].OutputTail == "" {
+		t.Error("expected output_tail for failed check")
+	}
+
+	// Verify round-trip via GetCard.
+	got, err := shipreview.GetCard(db, "t8")
+	if err != nil {
+		t.Fatalf("GetCard: %v", err)
+	}
+	if len(got.CheckRuns) != 3 {
+		t.Fatalf("GetCard: want 3 check runs, got %d", len(got.CheckRuns))
 	}
 }
 

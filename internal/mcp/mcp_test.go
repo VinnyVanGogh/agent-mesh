@@ -198,13 +198,14 @@ func TestToolsList(t *testing.T) {
 	}
 
 	expectedTools := map[string][]string{
-		"staypoint_checkpoint": {"message", "session_id"},
-		"staypoint_undo":       {"checkpoint_id", "dry_run", "keep_untracked", "clean_ignored"},
-		"staypoint_wire_post":  {"content", "channel", "ttl_seconds"},
-		"staypoint_wire_list":  {"channel", "limit"},
-		"staypoint_task_list":  {"all"},
-		"staypoint_condense":   {"raw_text", "format", "max_lines"},
-		"staypoint_status":     {},
+		"staypoint_checkpoint":    {"message", "session_id"},
+		"staypoint_undo":          {"checkpoint_id", "dry_run", "keep_untracked", "clean_ignored"},
+		"staypoint_wire_post":     {"content", "channel", "ttl_seconds"},
+		"staypoint_wire_list":     {"channel", "limit"},
+		"staypoint_task_list":     {"all"},
+		"staypoint_condense":      {"raw_text", "format", "max_lines"},
+		"staypoint_status":        {},
+		"staypoint_ship_review":   {"test_steps", "dev_url", "check_runs"},
 	}
 
 	foundTools := make(map[string]Tool)
@@ -515,6 +516,62 @@ func TestToolCallStatus(t *testing.T) {
 	}
 	if !strings.Contains(res.Content[0].Text, "pacer_state") {
 		t.Errorf("expected pacer_state in status output: %s", res.Content[0].Text)
+	}
+}
+
+func TestToolCallShipReview(t *testing.T) {
+	_, database := setupTestDB(t)
+	repoDir := setupTestGitRepo(t)
+
+	// Insert a task.
+	_, err := database.Exec(`
+		INSERT INTO tasks (id, name, repo_path, git_branch, status, execution_stage,
+		                   account_role, max_budget_usd, max_turns, work_kind)
+		VALUES ('sr-mcp-task', 'Ship Review MCP test', ?, 'feature/mcp-test', 'active', 'in_progress',
+		        'personal', 0, 0, 'coding')`, repoDir)
+	if err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+
+	// Create a feature branch with a commit so CurrentBranchHEAD works.
+	runCmd(t, repoDir, "git", "checkout", "-b", "feature/mcp-test")
+	featureFile := filepath.Join(repoDir, "feature.txt")
+	if err := os.WriteFile(featureFile, []byte("feature\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runCmd(t, repoDir, "git", "add", "feature.txt")
+	runCmd(t, repoDir, "git", "commit", "-m", "add feature")
+
+	s := NewServer(WithDB(database), WithWorkDir(repoDir))
+	defer s.Close()
+
+	args := map[string]string{
+		"task_id":    "sr-mcp-task",
+		"test_steps": `["1. Run go test ./...","2. Verify the new endpoint returns 200"]`,
+		"check_runs": `[{"command":"go test ./...","exit_code":0,"output_tail":"ok  ..."}]`,
+	}
+	argsJSON, _ := json.Marshal(args)
+
+	params, _ := json.Marshal(CallToolParams{
+		Name:      "staypoint_ship_review",
+		Arguments: json.RawMessage(argsJSON),
+	})
+	resp := sendRequest(t, s, Request{
+		JSONRPC: "2.0",
+		ID:      makeRawID("sr-mcp"),
+		Method:  "tools/call",
+		Params:  params,
+	})
+
+	res := parseToolCallResult(t, resp)
+	if res.IsError {
+		t.Fatalf("expected success, got error: %s", res.Content[0].Text)
+	}
+	if !strings.Contains(res.Content[0].Text, "Ship Review card created") {
+		t.Errorf("unexpected success message: %s", res.Content[0].Text)
+	}
+	if !strings.Contains(res.Content[0].Text, "feature/mcp-test") {
+		t.Errorf("expected branch in response, got: %s", res.Content[0].Text)
 	}
 }
 
