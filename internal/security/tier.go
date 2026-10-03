@@ -10,7 +10,7 @@ import (
 
 // boardEndpointRe matches board-only API endpoint path segments that agents must not call.
 var boardEndpointRe = regexp.MustCompile(
-	`/(?:ship-review/(?:approve|send-back|reject)|gate-requests/[^/\s'"]+/decide|settings/(?:security-gate|ship-review))`)
+	`/(?:ship-review/(?:approve|send-back|reject|push-branch)|gate-requests/[^/\s'"]+/decide|settings/(?:security-gate|ship-review))`)
 
 // httpMutationRe detects POST/mutation indicators inside inline scripts.
 var httpMutationRe = regexp.MustCompile(
@@ -74,6 +74,10 @@ type Classifier struct {
 	// classifyGit uses it for bare-push branch resolution. If empty the
 	// bare-push check is fail-closed (returns Red when no explicit refspec).
 	CWD string
+	// PushPolicy is the per-project push restriction. When "never", all
+	// git push operations are classified Red regardless of refspec. Default ""
+	// is treated as "never" so new projects are safe by default.
+	PushPolicy string
 }
 
 // Classify classifies a shell command line. Unparseable input is Red (fail closed).
@@ -402,6 +406,15 @@ func (c *Classifier) classifyGit(args []string, v *Verdict) {
 		}
 		v.raise(Yellow, "")
 	case "push":
+		// Per-project push policy: "never" (default) means agents must not push.
+		pushPolicy := c.PushPolicy
+		if pushPolicy == "" {
+			pushPolicy = "never"
+		}
+		if pushPolicy == "never" {
+			v.raise(Red, "git push denied: project push_policy is 'never'; the Board pushes after Ship Review")
+			return
+		}
 		if has("--force", "--force-with-lease", "--mirror", "--delete", "--prune", "--all", "--tags") || shortFlag('f') || shortFlag('d') {
 			v.raise(Red, "git push rewrites or deletes remote history")
 		}

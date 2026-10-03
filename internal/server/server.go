@@ -171,7 +171,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("PUT /api/tasks/{id}/ship-review", shipH.UpsertCard)
 		mux.HandleFunc("POST /api/tasks/{id}/ship-review/start-dev", shipH.StartDev)
 		mux.HandleFunc("POST /api/tasks/{id}/ship-review/stop-dev", shipH.StopDev)
-		// Board-only: these three actions merge / reject / revise the branch — agents cannot call them.
+		// Board-only: these actions merge / push / reject / revise the branch — agents cannot call them.
+		mux.Handle("POST /api/tasks/{id}/ship-review/push-branch", s.secMid.WrapBoardAction(http.HandlerFunc(shipH.PushBranch)))
 		mux.Handle("POST /api/tasks/{id}/ship-review/approve", s.secMid.WrapBoardAction(http.HandlerFunc(shipH.Approve)))
 		mux.Handle("POST /api/tasks/{id}/ship-review/send-back", s.secMid.WrapBoardAction(http.HandlerFunc(shipH.SendBack)))
 		mux.Handle("POST /api/tasks/{id}/ship-review/reject", s.secMid.WrapBoardAction(http.HandlerFunc(shipH.Reject)))

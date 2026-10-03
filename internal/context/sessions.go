@@ -717,6 +717,10 @@ func FindSessionByID(sessionID string) *SessionInfo {
 }
 
 // findGitRoot traverses upwards from path looking for a .git directory.
+// FindGitRoot walks up from path to find the nearest .git directory.
+// Returns "" when not inside a git repository.
+func FindGitRoot(path string) string { return findGitRoot(path) }
+
 func findGitRoot(path string) string {
 	if path == "" {
 		return ""

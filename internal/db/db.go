@@ -298,11 +298,15 @@ CREATE TABLE IF NOT EXISTS ship_review_cards (
 CREATE INDEX IF NOT EXISTS idx_ship_review_task ON ship_review_cards (task_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS project_dev_configs (
-    repo_path        TEXT PRIMARY KEY,
-    dev_command      TEXT NOT NULL DEFAULT '',
-    dev_url          TEXT NOT NULL DEFAULT '',
-    setup_steps_json TEXT NOT NULL DEFAULT '[]',
-    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    repo_path             TEXT PRIMARY KEY,
+    dev_command           TEXT NOT NULL DEFAULT '',
+    dev_url               TEXT NOT NULL DEFAULT '',
+    setup_steps_json      TEXT NOT NULL DEFAULT '[]',
+    migration_globs_json  TEXT NOT NULL DEFAULT '[]',
+    sql_editor_url        TEXT NOT NULL DEFAULT '',
+    push_policy           TEXT NOT NULL DEFAULT 'never'
+                          CHECK (push_policy IN ('never','branch_only','pr')),
+    updated_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 ` + ChatSchema
 
@@ -886,6 +890,22 @@ var Migrations = []Migration{
 				if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 					return err
 				}
+			}
+			return nil
+		},
+	},
+	{
+		Version: 19,
+		Name:    "project_push_policy",
+		Up: func(conn *sql.DB) error {
+			// Add push_policy to project_dev_configs.
+			// Default 'never': agents must not push task branches without Board approval.
+			_, err := conn.Exec(
+				`ALTER TABLE project_dev_configs ADD COLUMN push_policy TEXT NOT NULL DEFAULT 'never'
+				 CHECK (push_policy IN ('never','branch_only','pr'));`,
+			)
+			if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+				return err
 			}
 			return nil
 		},

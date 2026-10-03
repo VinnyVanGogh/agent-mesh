@@ -18,6 +18,7 @@ import (
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/router"
 	"github.com/VinnyVanGogh/staypoint/internal/security"
+	"github.com/VinnyVanGogh/staypoint/internal/shipreview"
 	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 	"github.com/VinnyVanGogh/staypoint/internal/wire"
 	"github.com/spf13/cobra"
@@ -468,7 +469,19 @@ func handleHookPreTool() {
 
 	// CWD enables bare-push branch resolution inside the classifier so the
 	// same parsed argv handles `git -C /dir push` correctly.
-	c := &security.Classifier{CWD: cwd}
+	// Look up the project's push_policy so the classifier can enforce it.
+	pushPolicy := string(shipreview.PushPolicyNever) // default: agents must not push
+	if cfg != nil && cfg.DBPath != "" {
+		if store, err := db.Open(cfg.DBPath); err == nil {
+			repoRoot := meshContext.FindGitRoot(cwd)
+			if repoRoot == "" {
+				repoRoot = cwd
+			}
+			pushPolicy = string(shipreview.GetProjectPushPolicy(store.DB(), repoRoot))
+			store.Close()
+		}
+	}
+	c := &security.Classifier{CWD: cwd, PushPolicy: pushPolicy}
 	verdict := c.Classify(bashInput.Command)
 
 	if verdict.Tier < security.Red {

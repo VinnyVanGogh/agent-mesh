@@ -450,6 +450,32 @@ func DeleteBranch(ctx context.Context, repoDir, branch string) error {
 	return err
 }
 
+// PushBranch pushes the task branch to origin. This is a Board-only action:
+// it is called from the Ship Review card after the Board decides to share the
+// branch without merging (e.g. to open a PR externally or trigger a preview).
+// It refuses to push main/master and verifies the current HEAD matches headSHA
+// to prevent TOCTOU surprises.
+func PushBranch(ctx context.Context, repoDir, branch, headSHA string) error {
+	if err := validateBranch(branch); err != nil {
+		return err
+	}
+	if branch == "main" || branch == "master" {
+		return fmt.Errorf("%w: %q", ErrProtectedBranch, branch)
+	}
+	// Verify HEAD hasn't moved since the card was rendered.
+	currentHEAD, err := gitOutput(ctx, repoDir, "rev-parse", branch)
+	if err != nil {
+		return fmt.Errorf("resolve branch HEAD: %w", err)
+	}
+	if currentHEAD != headSHA {
+		return ErrHeadMoved
+	}
+	// Fetch latest to avoid no-remote errors on fresh setups; tolerate failures.
+	_, _ = gitOutput(ctx, repoDir, "fetch", "--all", "--prune")
+	_, err = gitOutput(ctx, repoDir, "push", "-u", "origin", branch)
+	return err
+}
+
 // CurrentBranchHEAD resolves the HEAD SHA for a branch in repoDir.
 func CurrentBranchHEAD(ctx context.Context, repoDir, branch string) (string, error) {
 	return gitOutput(ctx, repoDir, "rev-parse", branch)
@@ -491,31 +517,68 @@ func runShellStep(step, workDir string) error {
 	return cmd.Run()
 }
 
+// PushPolicy controls whether agents may push task branches to the remote.
+// never      – git push is a Red-tier action requiring Board approval (default for new projects).
+// branch_only – agents may push the task branch but not open PRs.
+// pr          – agents may push and open a pull request.
+type PushPolicy string
+
+const (
+	PushPolicyNever      PushPolicy = "never"
+	PushPolicyBranchOnly PushPolicy = "branch_only"
+	PushPolicyPR         PushPolicy = "pr"
+)
+
 // ProjectDevConfig holds per-project dev-server and migration settings.
 type ProjectDevConfig struct {
-	RepoPath        string   `json:"repo_path"`
-	DevCommand      string   `json:"dev_command"`
-	DevURL          string   `json:"dev_url"`
-	SetupSteps      []string `json:"setup_steps"`
+	RepoPath        string     `json:"repo_path"`
+	DevCommand      string     `json:"dev_command"`
+	DevURL          string     `json:"dev_url"`
+	SetupSteps      []string   `json:"setup_steps"`
 	// MigrationGlobs is the list of glob patterns used to detect migration files
 	// in the task's diff. When empty the package-level defaults are used.
-	MigrationGlobs  []string `json:"migration_globs"`
+	MigrationGlobs  []string   `json:"migration_globs"`
 	// SQLEditorURL is the project's SQL editor deep-link (e.g. Supabase dashboard).
-	SQLEditorURL    string   `json:"sql_editor_url"`
+	SQLEditorURL    string     `json:"sql_editor_url"`
+	// PushPolicy controls agent push access. Defaults to "never".
+	PushPolicy      PushPolicy `json:"push_policy"`
+}
+
+// BranchRemoteInfo holds the remote-tracking state of a task branch.
+type BranchRemoteInfo struct {
+	// Pushed is true when the branch exists on origin.
+	Pushed bool `json:"pushed"`
+	// RemoteSHA is the SHA at origin/<branch>, empty if not pushed.
+	RemoteSHA string `json:"remote_sha,omitempty"`
+}
+
+// GetBranchRemoteInfo resolves whether the task branch exists on origin.
+func GetBranchRemoteInfo(ctx context.Context, repoDir, branch string) BranchRemoteInfo {
+	out, err := gitOutput(ctx, repoDir, "ls-remote", "--heads", "origin", branch)
+	if err != nil || out == "" {
+		return BranchRemoteInfo{}
+	}
+	// ls-remote output: "<sha>\trefs/heads/<branch>"
+	parts := strings.Fields(out)
+	if len(parts) == 0 {
+		return BranchRemoteInfo{}
+	}
+	return BranchRemoteInfo{Pushed: true, RemoteSHA: parts[0]}
 }
 
 // GetProjectDevConfig loads the dev config for a repo path, or returns defaults.
 func GetProjectDevConfig(db *sql.DB, repoPath string) (*ProjectDevConfig, error) {
-	var stepsJSON, devCommand, devURL, migGlobsJSON, sqlEditorURL string
+	var stepsJSON, devCommand, devURL, migGlobsJSON, sqlEditorURL, pushPolicy string
 	err := db.QueryRow(
 		`SELECT dev_command, dev_url, setup_steps_json,
-		        COALESCE(migration_globs_json,'[]'), COALESCE(sql_editor_url,'')
+		        COALESCE(migration_globs_json,'[]'), COALESCE(sql_editor_url,''),
+		        COALESCE(push_policy,'never')
 		 FROM project_dev_configs WHERE repo_path = ?`,
 		repoPath,
-	).Scan(&devCommand, &devURL, &stepsJSON, &migGlobsJSON, &sqlEditorURL)
+	).Scan(&devCommand, &devURL, &stepsJSON, &migGlobsJSON, &sqlEditorURL, &pushPolicy)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return &ProjectDevConfig{RepoPath: repoPath}, nil
+			return &ProjectDevConfig{RepoPath: repoPath, PushPolicy: PushPolicyNever}, nil
 		}
 		return nil, err
 	}
@@ -524,6 +587,10 @@ func GetProjectDevConfig(db *sql.DB, repoPath string) (*ProjectDevConfig, error)
 		DevCommand:   devCommand,
 		DevURL:       devURL,
 		SQLEditorURL: sqlEditorURL,
+		PushPolicy:   PushPolicy(pushPolicy),
+	}
+	if cfg.PushPolicy == "" {
+		cfg.PushPolicy = PushPolicyNever
 	}
 	if err := json.Unmarshal([]byte(stepsJSON), &cfg.SetupSteps); err != nil {
 		cfg.SetupSteps = []string{}
@@ -532,6 +599,20 @@ func GetProjectDevConfig(db *sql.DB, repoPath string) (*ProjectDevConfig, error)
 		cfg.MigrationGlobs = []string{}
 	}
 	return cfg, nil
+}
+
+// GetProjectPushPolicy returns the push policy for a repo path.
+// Returns PushPolicyNever when no config exists (safe default).
+func GetProjectPushPolicy(db *sql.DB, repoPath string) PushPolicy {
+	var policy string
+	err := db.QueryRow(
+		`SELECT COALESCE(push_policy,'never') FROM project_dev_configs WHERE repo_path = ?`,
+		repoPath,
+	).Scan(&policy)
+	if err != nil || policy == "" {
+		return PushPolicyNever
+	}
+	return PushPolicy(policy)
 }
 
 // UpsertProjectDevConfig saves a project dev config.
@@ -544,19 +625,24 @@ func UpsertProjectDevConfig(db *sql.DB, cfg *ProjectDevConfig) error {
 	if err != nil {
 		return err
 	}
+	policy := cfg.PushPolicy
+	if policy == "" {
+		policy = PushPolicyNever
+	}
 	_, err = db.Exec(`
 		INSERT INTO project_dev_configs
-			(repo_path, dev_command, dev_url, setup_steps_json, migration_globs_json, sql_editor_url, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+			(repo_path, dev_command, dev_url, setup_steps_json, migration_globs_json, sql_editor_url, push_policy, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 		ON CONFLICT(repo_path) DO UPDATE SET
 			dev_command          = excluded.dev_command,
 			dev_url              = excluded.dev_url,
 			setup_steps_json     = excluded.setup_steps_json,
 			migration_globs_json = excluded.migration_globs_json,
 			sql_editor_url       = excluded.sql_editor_url,
+			push_policy          = excluded.push_policy,
 			updated_at           = excluded.updated_at`,
 		cfg.RepoPath, cfg.DevCommand, cfg.DevURL,
-		string(stepsJSON), string(migGlobsJSON), cfg.SQLEditorURL,
+		string(stepsJSON), string(migGlobsJSON), cfg.SQLEditorURL, string(policy),
 	)
 	return err
 }
@@ -565,7 +651,8 @@ func UpsertProjectDevConfig(db *sql.DB, cfg *ProjectDevConfig) error {
 func ListProjectDevConfigs(db *sql.DB) ([]*ProjectDevConfig, error) {
 	rows, err := db.Query(`
 		SELECT repo_path, dev_command, dev_url, setup_steps_json,
-		       COALESCE(migration_globs_json,'[]'), COALESCE(sql_editor_url,'')
+		       COALESCE(migration_globs_json,'[]'), COALESCE(sql_editor_url,''),
+		       COALESCE(push_policy,'never')
 		FROM project_dev_configs ORDER BY repo_path`)
 	if err != nil {
 		return nil, err
@@ -574,9 +661,13 @@ func ListProjectDevConfigs(db *sql.DB) ([]*ProjectDevConfig, error) {
 	var out []*ProjectDevConfig
 	for rows.Next() {
 		var c ProjectDevConfig
-		var stepsJSON, migGlobsJSON string
-		if err := rows.Scan(&c.RepoPath, &c.DevCommand, &c.DevURL, &stepsJSON, &migGlobsJSON, &c.SQLEditorURL); err != nil {
+		var stepsJSON, migGlobsJSON, policy string
+		if err := rows.Scan(&c.RepoPath, &c.DevCommand, &c.DevURL, &stepsJSON, &migGlobsJSON, &c.SQLEditorURL, &policy); err != nil {
 			continue
+		}
+		c.PushPolicy = PushPolicy(policy)
+		if c.PushPolicy == "" {
+			c.PushPolicy = PushPolicyNever
 		}
 		if err := json.Unmarshal([]byte(stepsJSON), &c.SetupSteps); err != nil {
 			c.SetupSteps = []string{}

@@ -45,7 +45,20 @@ func (h *ShipReviewHandler) GetCard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, card)
+	// Augment with remote branch info and push policy so the Board UI can show
+	// "not pushed" / "pushed" and enable the Push action when policy allows it.
+	var remoteInfo shipreview.BranchRemoteInfo
+	var pushPolicy shipreview.PushPolicy
+	task, taskErr := context.GetTask(h.db, taskID)
+	if taskErr == nil {
+		remoteInfo = shipreview.GetBranchRemoteInfo(r.Context(), task.RepoPath, card.Branch)
+		pushPolicy = shipreview.GetProjectPushPolicy(h.db, task.RepoPath)
+	}
+	writeJSON(w, map[string]any{
+		"card":        card,
+		"remote":      remoteInfo,
+		"push_policy": string(pushPolicy),
+	})
 }
 
 // UpsertCard handles PUT /api/tasks/{id}/ship-review
@@ -158,6 +171,42 @@ func (h *ShipReviewHandler) StopDev(w http.ResponseWriter, r *http.Request) {
 	shipreview.StopDevServer(h.db, card)
 	h.hub.Publish("ship_review_dev_stopped", map[string]any{"task_id": taskID})
 	writeJSON(w, map[string]string{"status": "ok"})
+}
+
+// PushBranch handles POST /api/tasks/{id}/ship-review/push-branch (Board action)
+// Pushes the task branch to origin so the Board (or an external CI/CD) can open
+// a PR or trigger a preview without merging to main. Only callable from the Board;
+// agents are denied git push by the per-project push_policy gate.
+func (h *ShipReviewHandler) PushBranch(w http.ResponseWriter, r *http.Request) {
+	taskID := r.PathValue("id")
+	card, task, ok := h.requireCard(w, taskID)
+	if !ok {
+		return
+	}
+	if card.Status != shipreview.StatusPending && card.Status != shipreview.StatusSentBack {
+		writeError(w, http.StatusConflict, "card is not in a pushable state")
+		return
+	}
+	if err := shipreview.PushBranch(r.Context(), task.RepoPath, card.Branch, card.HeadSHA); err != nil {
+		if errors.Is(err, shipreview.ErrHeadMoved) {
+			writeError(w, http.StatusConflict, "branch HEAD moved since card was created; re-submit the card")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "push failed: "+err.Error())
+		return
+	}
+	remoteInfo := shipreview.GetBranchRemoteInfo(r.Context(), task.RepoPath, card.Branch)
+	h.hub.Publish("ship_review_branch_pushed", map[string]any{
+		"task_id":    taskID,
+		"branch":     card.Branch,
+		"head_sha":   card.HeadSHA,
+		"remote_sha": remoteInfo.RemoteSHA,
+	})
+	writeJSON(w, map[string]any{
+		"branch":     card.Branch,
+		"head_sha":   card.HeadSHA,
+		"remote_sha": remoteInfo.RemoteSHA,
+	})
 }
 
 // Approve handles POST /api/tasks/{id}/ship-review/approve (Board action)

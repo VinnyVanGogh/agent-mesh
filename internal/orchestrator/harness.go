@@ -16,6 +16,7 @@ import (
 	"github.com/VinnyVanGogh/staypoint/internal/gitgate"
 	"github.com/VinnyVanGogh/staypoint/internal/logging"
 	"github.com/VinnyVanGogh/staypoint/internal/security"
+	"github.com/VinnyVanGogh/staypoint/internal/shipreview"
 	"github.com/VinnyVanGogh/staypoint/internal/workspace"
 	"github.com/google/uuid"
 )
@@ -715,6 +716,7 @@ type taskBrief struct {
 	RepoPath    string
 	GitBranch   string
 	Description string
+	PushPolicy  shipreview.PushPolicy
 }
 
 // harnessComment is a non-harness comment visible to the agent.
@@ -736,6 +738,7 @@ func fetchTaskBrief(ctx context.Context, db *sql.DB, taskID string) taskBrief {
 		`SELECT content FROM task_documents WHERE task_id = ? AND doc_key = 'description' ORDER BY version DESC LIMIT 1`,
 		taskID,
 	).Scan(&b.Description)
+	b.PushPolicy = shipreview.GetProjectPushPolicy(db, b.RepoPath)
 	return b
 }
 
@@ -776,6 +779,15 @@ func buildBriefBlock(brief taskBrief, comments []harnessComment, isFirstTurn boo
 		b.WriteString("Repo: " + safeField(brief.RepoPath) + "\n")
 		if brief.GitBranch != "" {
 			b.WriteString("Branch: " + safeField(brief.GitBranch) + "\n")
+		}
+		// Inject push policy so agents know their git push permissions up front.
+		policy := brief.PushPolicy
+		if policy == "" {
+			policy = shipreview.PushPolicyNever
+		}
+		b.WriteString("Push-Policy: " + string(policy) + "\n")
+		if policy == shipreview.PushPolicyNever {
+			b.WriteString("Push-Note: DO NOT run git push. The Board pushes the branch after Ship Review. git push is a Red-tier action and will be blocked by the pre-tool gate.\n")
 		}
 		if brief.Description != "" {
 			b.WriteString("---\nDescription:\n" + safeField(brief.Description) + "\n")

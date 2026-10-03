@@ -67,6 +67,7 @@ func openTestDB(t *testing.T) *sql.DB {
 			setup_steps_json TEXT NOT NULL DEFAULT '[]',
 			migration_globs_json TEXT NOT NULL DEFAULT '[]',
 			sql_editor_url TEXT NOT NULL DEFAULT '',
+			push_policy TEXT NOT NULL DEFAULT 'never',
 			updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 		);
 	`)
@@ -446,5 +447,120 @@ func TestStartDevServerCreatesWorktreeAtPinnedSHA(t *testing.T) {
 
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Errorf("expected dev worktree %s to be removed after StopDevServer, stat err: %v", wtPath, err)
+	}
+}
+
+// TestGetProjectPushPolicy verifies that the push_policy column is persisted and
+// retrieved correctly, and that absent rows default to "never".
+func TestGetProjectPushPolicy(t *testing.T) {
+	db := openTestDB(t)
+
+	// No config row → default never.
+	if got := shipreview.GetProjectPushPolicy(db, "/no/such/repo"); got != shipreview.PushPolicyNever {
+		t.Errorf("missing config: want never, got %q", got)
+	}
+
+	cases := []struct {
+		policy shipreview.PushPolicy
+	}{
+		{shipreview.PushPolicyNever},
+		{shipreview.PushPolicyBranchOnly},
+		{shipreview.PushPolicyPR},
+	}
+	for _, tc := range cases {
+		path := "/repo/" + string(tc.policy)
+		cfg := &shipreview.ProjectDevConfig{
+			RepoPath:   path,
+			PushPolicy: tc.policy,
+		}
+		if err := shipreview.UpsertProjectDevConfig(db, cfg); err != nil {
+			t.Fatalf("upsert %q: %v", tc.policy, err)
+		}
+		got := shipreview.GetProjectPushPolicy(db, path)
+		if got != tc.policy {
+			t.Errorf("path %q: want %q, got %q", path, tc.policy, got)
+		}
+		// Verify round-trip via GetProjectDevConfig.
+		full, err := shipreview.GetProjectDevConfig(db, path)
+		if err != nil {
+			t.Fatalf("GetProjectDevConfig: %v", err)
+		}
+		if full.PushPolicy != tc.policy {
+			t.Errorf("full config push_policy: want %q, got %q", tc.policy, full.PushPolicy)
+		}
+	}
+}
+
+// TestPushBranchHeadMoved verifies PushBranch returns ErrHeadMoved when the
+// branch has advanced since the card was created.
+func TestPushBranchHeadMoved(t *testing.T) {
+	repoDir, branch, featureSHA := setupGitRepo(t)
+	ctx := context.Background()
+
+	// Make an extra commit to move the branch past featureSHA.
+	gitEnv := append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@t.com",
+	)
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		cmd.Env = gitEnv
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	run("checkout", branch)
+	// Write a new file to create a new commit.
+	if err := os.WriteFile(filepath.Join(repoDir, "extra.txt"), []byte("extra"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "extra.txt")
+	run("commit", "-m", "extra commit")
+
+	// PushBranch with the *old* featureSHA must fail with ErrHeadMoved.
+	err := shipreview.PushBranch(ctx, repoDir, branch, featureSHA)
+	if !errors.Is(err, shipreview.ErrHeadMoved) {
+		t.Errorf("want ErrHeadMoved, got %v", err)
+	}
+}
+
+// TestGetBranchRemoteInfo verifies pushed/unpushed detection.
+func TestGetBranchRemoteInfo(t *testing.T) {
+	repoDir, branch, sha := setupGitRepo(t)
+	ctx := context.Background()
+
+	// setupGitRepo pushes the feature branch, so it must be reported as pushed.
+	pushed := shipreview.GetBranchRemoteInfo(ctx, repoDir, branch)
+	if !pushed.Pushed {
+		t.Errorf("branch %q should be on origin (was pushed in setupGitRepo), got Pushed=false", branch)
+	}
+	if pushed.RemoteSHA != sha {
+		t.Errorf("remote SHA: want %q, got %q", sha, pushed.RemoteSHA)
+	}
+
+	// A local-only branch that was never pushed must report Pushed=false.
+	gitEnv := append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@t.com",
+	)
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		cmd.Env = gitEnv
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	run("checkout", "-b", "local-only-branch")
+	if err := os.WriteFile(filepath.Join(repoDir, "local.txt"), []byte("local"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "local.txt")
+	run("commit", "-m", "local only")
+
+	notPushed := shipreview.GetBranchRemoteInfo(ctx, repoDir, "local-only-branch")
+	if notPushed.Pushed {
+		t.Errorf("local-only-branch should not be on origin, got Pushed=true (SHA=%s)", notPushed.RemoteSHA)
 	}
 }
