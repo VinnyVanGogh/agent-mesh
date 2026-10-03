@@ -123,6 +123,20 @@ export function simulateRunSteps(taskId: string): number {
 }
 
 /**
+ * Like simulateRunSteps but emits a wake + tool steps WITHOUT a terminal
+ * state step, leaving the task visually mid-run so the elapsed ticker keeps
+ * ticking. Returns how many steps were persisted.
+ */
+export function simulatePartialRun(taskId: string): number {
+  const bin = process.env.STAYPOINT_UI_STEPSIM;
+  const db = process.env.STAYPOINT_UI_DB;
+  if (!bin || !db) throw new Error('STAYPOINT_UI_STEPSIM / STAYPOINT_UI_DB not set: run via scripts/ui-e2e.sh');
+  const out = execFileSync(bin, ['--db', db, '--task', taskId, '--partial'], { encoding: 'utf8' });
+  const m = out.match(/^STEPS (\d+)$/m);
+  return m ? Number(m[1]) : 0;
+}
+
+/**
  * Product bugs the suite already knows about. A spec that hits one is marked
  * as expected-to-fail, so the suite stays green while the bug is open and
  * turns red the moment the bug is fixed (an "unexpected pass"), which is the

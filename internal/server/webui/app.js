@@ -693,6 +693,7 @@ window.addEventListener('popstate', (e) => {
   } else {
     document.getElementById('detail-panel')?.classList.add('hidden');
     stopChatPoll();
+    stopElapsedTicker();
     state.openDetailTaskId = null;
     navigateTo(route.view, route.org, false);
   }
@@ -5894,7 +5895,6 @@ function startChatPoll(taskId) {
 
 function stopChatPoll() {
   if (state.chatPollTimer) { clearInterval(state.chatPollTimer); state.chatPollTimer = null; }
-  stopElapsedTicker();
 }
 
 async function refreshChatMessages(taskId) {
@@ -6466,6 +6466,7 @@ async function openDetail(target, pushHistory = true, orgHint = null, projectHin
   const content = document.getElementById('panel-content');
 
   stopChatPoll();
+  stopElapsedTicker();
   lastDetailOpenTime = Date.now();
   if (panel) {
     panel.classList.remove('hidden');
@@ -6620,6 +6621,7 @@ function closeDetailPanel() {
     }
   }
   stopChatPoll();
+  stopElapsedTicker();
   state.openDetailTaskId = null;
   if (window.location.pathname.startsWith('/tasks/') || window.location.pathname.startsWith('/issues/')) {
     const activeBtn = document.querySelector('.sidebar-item.active');
@@ -7075,6 +7077,7 @@ async function openTaskPage(target, pushHistory = true) {
   const panel = document.getElementById('detail-panel');
   if (panel) panel.classList.add('hidden');
   stopChatPoll();
+  stopElapsedTicker();
 
   let targetId = target;
   let orgHint = null;
@@ -7427,6 +7430,7 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
   const backBtn = el('button', 'task-page-back-btn', '← Back');
   backBtn.addEventListener('click', () => {
     stopChatPoll();
+    stopElapsedTicker();
     state.openDetailTaskId = null;
     history.back();
   });

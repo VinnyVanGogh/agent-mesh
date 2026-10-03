@@ -19,12 +19,13 @@ import (
 )
 
 func main() {
-	dbPath := flag.String("db", "", "throwaway SQLite database written by staypoint-apitest-server (required)")
-	taskID := flag.String("task", "", "task id to record steps for (required)")
-	runID := flag.String("run", "ui-e2e-run", "run id")
+	dbPath  := flag.String("db", "", "throwaway SQLite database written by staypoint-apitest-server (required)")
+	taskID  := flag.String("task", "", "task id to record steps for (required)")
+	runID   := flag.String("run", "ui-e2e-run", "run id")
+	partial := flag.Bool("partial", false, "emit a wake step only, no terminal state step (simulates a mid-run task)")
 	flag.Parse()
 	if *dbPath == "" || *taskID == "" {
-		fmt.Fprintln(os.Stderr, "usage: stepsim --db PATH --task ID [--run ID]")
+		fmt.Fprintln(os.Stderr, "usage: stepsim --db PATH --task ID [--run ID] [--partial]")
 		os.Exit(2)
 	}
 
@@ -40,7 +41,9 @@ func main() {
 	rec.Feed(orchestrator.StepDelta{Kind: orchestrator.StepDeltaThinking, Text: "Reading the task description"})
 	rec.Feed(orchestrator.StepDelta{Kind: orchestrator.StepDeltaToolUse, ToolName: "Read", ToolID: "t1", Text: "README.md"})
 	rec.Feed(orchestrator.StepDelta{Kind: orchestrator.StepDeltaToolResult, ToolID: "t1", Text: "ok"})
-	rec.EmitState("done")
+	if !*partial {
+		rec.EmitState("done")
+	}
 	rec.Close()
 
 	n, err := countSteps(store.DB(), *taskID)
