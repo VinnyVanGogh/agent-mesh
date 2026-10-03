@@ -482,9 +482,9 @@ func (c *Classifier) classifyGh(args []string, v *Verdict) {
 					v.raise(Red, "gh api mutating method; Board approval required")
 					return
 				}
-			// -f/-F/--field/--raw-field/--input imply a POST body
+			// -f/-F/--field/--raw-field/--input (any form) imply a POST body
 			case a == "-f" || a == "-F" || strings.HasPrefix(lower, "--field") ||
-				strings.HasPrefix(lower, "--raw-field") || lower == "--input":
+				strings.HasPrefix(lower, "--raw-field") || lower == "--input" || strings.HasPrefix(lower, "--input="):
 				v.raise(Red, "gh api submits data; Board approval required")
 				return
 			}
