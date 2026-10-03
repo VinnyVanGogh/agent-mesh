@@ -2,6 +2,7 @@ package security
 
 import (
 	"database/sql"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -88,6 +89,34 @@ func TestPreToolHookAllowedCommands(t *testing.T) {
 		if v.Tier == Red {
 			t.Errorf("pre-tool hook should allow %q: got Red (%s)", cmd, strings.Join(v.Reasons, "; "))
 		}
+	}
+}
+
+// TestBareGitPushTargetsMain verifies that bare `git push` on a main branch is detected.
+func TestBareGitPushTargetsMain(t *testing.T) {
+	// Create a temp git repo on a branch called "main".
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command(args[0], args[1:]...).CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", args, err, out)
+		}
+	}
+	run("git", "-C", dir, "init", "-b", "main")
+	run("git", "-C", dir, "config", "user.email", "test@test.com")
+	run("git", "-C", dir, "config", "user.name", "Test")
+
+	// Bare push on main branch → should be detected.
+	if !BareGitPushTargetsMain("git push", dir) {
+		t.Error("bare 'git push' on main branch: want true, got false")
+	}
+	if !BareGitPushTargetsMain("git push origin", dir) {
+		t.Error("bare 'git push origin' on main branch: want true, got false")
+	}
+
+	// Explicit refspec — classifier handles it; BareGitPushTargetsMain must not double-count.
+	if BareGitPushTargetsMain("git push origin main", dir) {
+		t.Error("'git push origin main' has explicit refspec: BareGitPushTargetsMain should return false")
 	}
 }
 

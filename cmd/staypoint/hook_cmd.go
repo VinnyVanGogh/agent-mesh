@@ -423,6 +423,7 @@ func handleHookPreTool() {
 		ToolName  string          `json:"tool_name"`
 		ToolInput json.RawMessage `json:"tool_input"`
 		SessionID string          `json:"session_id"`
+		CWD       string          `json:"cwd"` // working directory for bare-push branch resolution
 	}
 	if err := json.Unmarshal(raw, &payload); err != nil || payload.ToolName == "" {
 		preToolAllow()
@@ -437,31 +438,55 @@ func handleHookPreTool() {
 
 	var bashInput struct {
 		Command string `json:"command"`
+		// Claude Code also passes the process cwd in tool_input for some versions
+		CWD string `json:"cwd,omitempty"`
 	}
 	if err := json.Unmarshal(payload.ToolInput, &bashInput); err != nil || bashInput.Command == "" {
 		preToolAllow()
 		return
 	}
 
+	// Resolve effective working directory for bare-push detection.
+	cwd := payload.CWD
+	if cwd == "" {
+		cwd = bashInput.CWD
+	}
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+
 	c := &security.Classifier{}
 	verdict := c.Classify(bashInput.Command)
+
+	// A bare `git push` / `git push <remote>` with no refspec lands wherever the
+	// current branch's upstream points. If we're on main/master, that's a
+	// main-push and must be gated even though pushTargetsMain returns false
+	// (no explicit refspec to inspect). Resolve the branch from cwd and re-raise.
+	if verdict.Tier < security.Red {
+		if security.BareGitPushTargetsMain(bashInput.Command, cwd) {
+			verdict.Tier = security.Red
+			verdict.Reasons = append(verdict.Reasons, "git push (no refspec) while on main/master; Board approval required")
+		}
+	}
+
 	if verdict.Tier < security.Red {
 		preToolAllow()
 		return
 	}
 
-	// Red-tier command: check whether the Board gate is enabled.
+	// Read gate toggle from config.toml (via the cfg global) so the agent
+	// cannot disable it at runtime via the API — config.toml is only writable
+	// by the user and requires a daemon restart to take effect.
+	if cfg != nil && !cfg.Gates.MainMergeApprovalEnabled() {
+		preToolAllow()
+		return
+	}
+
+	// Red-tier command: post to daemon for Board approval.
 	daemonURL, token := resolveDaemonConn()
 	if daemonURL == "" {
 		// Fail-closed: daemon unreachable, cannot get Board decision.
 		preToolBlock(fmt.Sprintf("Board gate unreachable; command blocked (%s)", strings.Join(verdict.Reasons, "; ")))
-		return
-	}
-
-	// Check the settings toggle.
-	if !isMainMergeApprovalEnabled(daemonURL, token) {
-		// Toggle is off — fall through (allow unattended as Yellow).
-		preToolAllow()
 		return
 	}
 
@@ -503,27 +528,6 @@ func resolveDaemonConn() (daemonURL, token string) {
 		}
 	}
 	return daemonURL, token
-}
-
-func isMainMergeApprovalEnabled(daemonURL, token string) bool {
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
-		daemonURL+"/api/settings/security-gate", nil)
-	if err != nil {
-		return true // default on
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		return true // default on
-	}
-	defer resp.Body.Close()
-	var s struct {
-		MainMergeApproval bool `json:"main_merge_approval"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
-		return true
-	}
-	return s.MainMergeApproval
 }
 
 type gateRequestRef struct {
