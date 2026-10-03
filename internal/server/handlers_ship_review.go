@@ -326,6 +326,12 @@ func (h *ShipReviewHandler) UpsertProjectDevConfig(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusBadRequest, "repo_path required")
 		return
 	}
+	if cfg.DevURL != "" {
+		if err := shipreview.ValidateDevURL(cfg.DevURL); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if err := shipreview.UpsertProjectDevConfig(h.db, &cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

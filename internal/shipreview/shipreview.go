@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -476,17 +475,3 @@ func ListProjectDevConfigs(db *sql.DB) ([]*ProjectDevConfig, error) {
 	return out, rows.Err()
 }
 
-// RhizomeDefaultConfig returns the default project dev config for the Rhizome Gardens pilot.
-func RhizomeDefaultConfig() *ProjectDevConfig {
-	home, _ := os.UserHomeDir()
-	repoPath := filepath.Join(home, "Documents", "dev", "david-rhizome", "rhizome_site")
-	return &ProjectDevConfig{
-		RepoPath:   repoPath,
-		DevCommand: "bun run dev",
-		DevURL:     "http://localhost:5173",
-		SetupSteps: []string{
-			"bun install",
-			"cp .env.local.source .env.local",
-		},
-	}
-}
