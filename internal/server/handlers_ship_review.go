@@ -110,6 +110,7 @@ func (h *ShipReviewHandler) UpsertCard(w http.ResponseWriter, r *http.Request) {
 		startedURL, startErr := shipreview.StartDevServer(h.db, card, cfg, task.RepoPath)
 		if startErr == nil && startedURL != "" && card.DevURL == "" {
 			card.DevURL = startedURL
+			_ = shipreview.SetDevURL(h.db, card.ID, startedURL)
 		}
 	}
 
@@ -192,6 +193,8 @@ func (h *ShipReviewHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	shipreview.StopDevServer(h.db, card)
+	// Register the merged commit so MarkTaskDone's work-product guard succeeds.
+	_ = context.AddWorkProduct(h.db, taskID, "commit", mainSHA)
 	_ = context.MarkTaskDone(h.db, taskID)
 
 	h.hub.Publish("ship_review_approved", map[string]any{

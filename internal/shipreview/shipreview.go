@@ -283,6 +283,15 @@ func SetDevPID(db *sql.DB, cardID string, pid int) error {
 	return err
 }
 
+// SetDevURL persists an auto-detected dev URL to the card.
+func SetDevURL(db *sql.DB, cardID, devURL string) error {
+	_, err := db.Exec(
+		`UPDATE ship_review_cards SET dev_url = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
+		devURL, cardID,
+	)
+	return err
+}
+
 // StartDevServer launches the dev server for a card and stores the PID.
 // repoPath is the main repository root; a temporary detached worktree is created
 // at card.HeadSHA so the dev server always runs on the exact pinned commit, not
