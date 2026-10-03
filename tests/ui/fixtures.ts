@@ -90,6 +90,18 @@ export class StayPointAPI {
   async seedChecklist(sprint: string) {
     return this.json('POST', '/api/checklist/seed', { sprint });
   }
+
+  async setStage(id: string, stage: string) {
+    return this.json('POST', `/api/tasks/${encodeURIComponent(id)}/stage`, { stage });
+  }
+
+  async runControl(id: string, action: string) {
+    return this.json('POST', `/api/tasks/${encodeURIComponent(id)}/run-control`, { action });
+  }
+
+  async getRunControlState(id: string): Promise<{ paused: boolean; stop_requested: boolean }> {
+    return this.json('GET', `/api/tasks/${encodeURIComponent(id)}/run-control-state`);
+  }
 }
 
 /** URL of the full task page, matching taskToPath() in app.js for local tasks. */
