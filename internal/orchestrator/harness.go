@@ -428,7 +428,15 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 
 		result.Turns++
 
-		if tw.detected || strings.Contains(outBuf.String(), taskCompleteMarker) {
+		// Prefer text-only detection when the stream parser is active; fall back
+		// to raw-byte scan only when no parser is wired (dry-run/test mode).
+		var markerSeen bool
+		if stw, ok := stdout.(*stepTeeWriter); ok {
+			markerSeen = stw.textDetected
+		} else {
+			markerSeen = tw.detected || strings.Contains(outBuf.String(), taskCompleteMarker)
+		}
+		if markerSeen {
 			break
 		}
 
@@ -615,11 +623,14 @@ func buildRunID(agentID string) string {
 }
 
 // stepTeeWriter tees all writes to dst AND feeds each newline-delimited line to StepRecorder.
+// textDetected is set only when [[TASK_COMPLETE]] appears in an assistant text block,
+// never in thinking/tool/user blocks or echoed prompts.
 type stepTeeWriter struct {
-	dst   io.Writer
-	rec   *StepRecorder
-	parse func([]byte) ([]StepDelta, error)
-	buf   []byte
+	dst          io.Writer
+	rec          *StepRecorder
+	parse        func([]byte) ([]StepDelta, error)
+	buf          []byte
+	textDetected bool
 }
 
 func (w *stepTeeWriter) Write(p []byte) (int, error) {
@@ -633,16 +644,47 @@ func (w *stepTeeWriter) Write(p []byte) (int, error) {
 			}
 			line := w.buf[:idx]
 			w.buf = w.buf[idx+1:]
-			w.rec.FeedRawLine(line, w.parse)
+			if w.rec != nil {
+				w.rec.FeedRawLine(line, w.parse)
+			}
+			w.checkTextMarker(line)
 		}
 	}
 	return n, err
 }
 
+// checkTextMarker scans text deltas from assistant messages only.
+// It ignores thinking blocks, tool inputs, tool results, and user-turn echoes
+// (the continuation prompt itself contains the literal marker and must not fire).
+func (w *stepTeeWriter) checkTextMarker(line []byte) {
+	if w.textDetected {
+		return
+	}
+	line = bytes.TrimSpace(line)
+	// Quick guard: only assistant events can contain the agent's own text output.
+	// User-turn events carry echoed prompts, tool_result blocks, etc. — never agent output.
+	if !bytes.Contains(line, []byte(`"type":"assistant"`)) {
+		return
+	}
+	deltas, err := w.parse(line)
+	if err != nil {
+		return
+	}
+	for _, d := range deltas {
+		if d.Kind == StepDeltaText && strings.Contains(d.Text, taskCompleteMarker) {
+			w.textDetected = true
+			return
+		}
+	}
+}
+
 // Close flushes any buffered partial line that lacked a trailing newline.
 func (w *stepTeeWriter) Close() error {
 	if len(w.buf) > 0 {
-		w.rec.FeedRawLine(w.buf, w.parse)
+		if w.rec != nil {
+			w.rec.FeedRawLine(w.buf, w.parse)
+		}
+		w.checkTextMarker(w.buf)
 		w.buf = nil
 	}
 	return nil
