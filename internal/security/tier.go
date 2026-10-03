@@ -359,7 +359,7 @@ func (c *Classifier) classifyGit(args []string, v *Verdict) {
 		}
 		v.raise(Yellow, "")
 	case "push":
-		if has("--force", "--force-with-lease", "--mirror", "--delete", "--prune") || shortFlag('f') || shortFlag('d') {
+		if has("--force", "--force-with-lease", "--mirror", "--delete", "--prune", "--all", "--tags") || shortFlag('f') || shortFlag('d') {
 			v.raise(Red, "git push rewrites or deletes remote history")
 		}
 		for _, a := range rest {
@@ -425,22 +425,54 @@ func pushTargetsMain(args []string) bool {
 	return false
 }
 
+// ghValueFlags are gh global flags that consume the next token (so the token
+// after them is a value, not a subcommand).
+var ghValueFlags = map[string]bool{"-R": true, "--repo": true, "--hostname": true}
+
 func (c *Classifier) classifyGh(args []string, v *Verdict) {
-	if len(args) == 0 {
+	// Skip global flags (and their values) to find the subcommand.
+	// --flag=value form is a single token; --flag value form consumes two.
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") {
+			break
+		}
+		i++
+		if ghValueFlags[a] {
+			i++ // skip the separate value token
+		}
+	}
+	if i >= len(args) {
 		v.raise(Yellow, "")
 		return
 	}
-	sub := args[0]
-	rest := args[1:]
+	sub := args[i]
+	rest := args[i+1:]
 	switch sub {
 	case "pr":
-		if len(rest) > 0 && rest[0] == "merge" {
-			v.raise(Red, "gh pr merge lands on the default branch; Board approval required")
-			return
+		// skip flags before the pr sub-subcommand
+		for _, a := range rest {
+			if !strings.HasPrefix(a, "-") {
+				if a == "merge" {
+					v.raise(Red, "gh pr merge lands on the default branch; Board approval required")
+					return
+				}
+				break
+			}
 		}
 		v.raise(Yellow, "")
 	case "api":
-		for _, a := range rest {
+		for j, a := range rest {
+			// Mutating method flag: -X POST / --method POST
+			if (a == "-X" || a == "--method") && j+1 < len(rest) {
+				switch strings.ToUpper(rest[j+1]) {
+				case "POST", "PUT", "PATCH", "DELETE":
+					v.raise(Red, "gh api mutating method; Board approval required")
+					return
+				}
+			}
+			// Merge endpoint by URL
 			if !strings.HasPrefix(a, "-") && strings.Contains(strings.ToLower(a), "/merge") {
 				v.raise(Red, "gh api targets a merge endpoint; Board approval required")
 				return
