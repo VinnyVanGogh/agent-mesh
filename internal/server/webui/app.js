@@ -357,7 +357,14 @@ function handleEvent(evt) {
     if (tid) {
       if (!state.tasks[tid]) state.tasks[tid] = {};
       if (!state.tasks[tid].runSteps) state.tasks[tid].runSteps = [];
-      state.tasks[tid].runSteps.push(step);
+      // Upsert: running steps publish twice (status:running then status:done/error).
+      // Replace the existing entry by id so the array stays accurate.
+      const existingIdx = step.id ? state.tasks[tid].runSteps.findIndex(s => s.id === step.id) : -1;
+      if (existingIdx >= 0) {
+        state.tasks[tid].runSteps[existingIdx] = step;
+      } else {
+        state.tasks[tid].runSteps.push(step);
+      }
     }
     if (tid && state.openDetailTaskId === tid) {
       appendRunStepToTimeline(tid, step);
@@ -7046,7 +7053,15 @@ function appendRunStepToTimeline(taskId, step) {
   // Remove empty placeholder
   const empty = stepList.querySelector('.timeline-empty');
   if (empty) empty.remove();
-  stepList.appendChild(buildRunStepRow(step));
+  // Upsert: if a row with this step id already exists (e.g. status:running → status:done),
+  // replace it in-place instead of appending a duplicate.
+  const existingRow = step.id ? stepList.querySelector(`[data-step-id="${CSS.escape(step.id)}"]`) : null;
+  const newRow = buildRunStepRow(step);
+  if (existingRow) {
+    existingRow.replaceWith(newRow);
+  } else {
+    stepList.appendChild(newRow);
+  }
 
   // Update section title count
   const section = document.getElementById(`timeline-section-${taskId}`);
