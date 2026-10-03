@@ -618,8 +618,6 @@ func TestStepRecorder_ParallelToolCallsInOrder(t *testing.T) {
 	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "t2", Text: "slept-again\n"})
 	r.Close()
 
-	mu := sync.Mutex{}
-	_ = mu
 	got := *steps
 	if len(got) != 2 {
 		t.Fatalf("expected 2 run.step events, got %d: %+v", len(got), got)
