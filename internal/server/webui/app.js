@@ -4306,6 +4306,54 @@ function renderSettings() {
     fleetSec.appendChild(row);
   }
   container.appendChild(fleetSec);
+
+  // Security Gates section
+  const gateSec = el('div', 'settings-section');
+  const gateHdr = el('div', 'settings-section-header');
+  gateHdr.appendChild(el('div', 'settings-section-title', 'Security Gates'));
+  gateHdr.appendChild(el('div', 'settings-section-desc', 'Controls what agent commands require your explicit approval before running.'));
+  gateSec.appendChild(gateHdr);
+
+  // Render the toggle (async: fetch current state then build)
+  const gateRow = el('div', 'settings-row');
+  const gateLbl = el('div', 'settings-row-label-wrap');
+  gateLbl.appendChild(el('div', 'settings-row-label', 'Require my approval to merge to main'));
+  gateLbl.appendChild(el('div', 'settings-row-sub', 'When on, any agent push or PR merge to main/master is held for your approval before executing.'));
+  gateRow.appendChild(gateLbl);
+
+  const gateToggleWrap = el('div', 'settings-toggle-wrap');
+  const gateToggle = el('input');
+  gateToggle.type = 'checkbox';
+  gateToggle.className = 'settings-toggle';
+  gateToggle.id = 'gate-main-merge-approval';
+  gateToggle.checked = true; // default on until loaded
+  gateToggle.disabled = true; // disable until loaded
+  gateToggleWrap.appendChild(gateToggle);
+  gateRow.appendChild(gateToggleWrap);
+  gateSec.appendChild(gateRow);
+
+  container.appendChild(gateSec);
+
+  // Load and bind the gate toggle asynchronously.
+  fetch('/api/settings/security-gate', {
+    headers: TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {},
+  }).then(r => r.ok ? r.json() : null).then(data => {
+    if (!data) return;
+    gateToggle.checked = data.main_merge_approval !== false;
+    gateToggle.disabled = false;
+  }).catch(() => { gateToggle.disabled = false; });
+
+  gateToggle.addEventListener('change', () => {
+    gateToggle.disabled = true;
+    fetch('/api/settings/security-gate', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {}),
+      body: JSON.stringify({ main_merge_approval: gateToggle.checked }),
+    }).then(r => r.ok ? r.json() : null).then(data => {
+      gateToggle.disabled = false;
+      if (data) gateToggle.checked = data.main_merge_approval !== false;
+    }).catch(() => { gateToggle.disabled = false; });
+  });
 }
 
 // ── Fleet Info Modal Drill-Down ────────────────────────────

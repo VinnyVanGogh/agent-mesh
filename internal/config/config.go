@@ -52,6 +52,26 @@ type Config struct {
 	// When nil (no table in config.toml), callers fall back to DefaultKindChains.
 	// TODO(STA-316): wire LoadConfig to populate this field.
 	Routing *RoutingConfig `json:"routing,omitempty" toml:"routing"`
+
+	// Gates holds the optional [gates] table.
+	Gates GatesConfig `json:"gates,omitempty" toml:"gates"`
+}
+
+// GatesConfig holds security-gate toggles from the [gates] section of config.toml.
+// All fields default to enabled (the safe posture).
+type GatesConfig struct {
+	// MainMergeApproval requires Board approval before any agent command that
+	// lands code on main/master. Default true. Set to false to fall back to
+	// Yellow (unattended) for those commands.
+	MainMergeApproval *bool `json:"main_merge_approval,omitempty" toml:"main_merge_approval"`
+}
+
+// MainMergeApprovalEnabled returns true unless explicitly disabled.
+func (g GatesConfig) MainMergeApprovalEnabled() bool {
+	if g.MainMergeApproval == nil {
+		return true // default on
+	}
+	return *g.MainMergeApproval
 }
 
 // DefaultConfig returns the default configuration.

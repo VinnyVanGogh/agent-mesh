@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/router"
+	"github.com/VinnyVanGogh/staypoint/internal/security"
 	"github.com/VinnyVanGogh/staypoint/internal/telemetry"
 	"github.com/VinnyVanGogh/staypoint/internal/wire"
 	"github.com/spf13/cobra"
@@ -392,9 +395,194 @@ var hookInstallCmd = &cobra.Command{
 	},
 }
 
+// hookPreToolCmd is wired as a Claude Code PreToolUse hook.
+// It reads the tool-call JSON from stdin, classifies Bash commands via the
+// security classifier, and blocks Red-tier main-push/merge commands until the
+// Board approves or the run is stopped — with no auto-deny timeout.
+var hookPreToolCmd = &cobra.Command{
+	Use:   "pre-tool",
+	Short: "Claude Code PreToolUse hook: gate Red-tier Bash commands (Board approval required)",
+	Run: func(cmd *cobra.Command, args []string) {
+		handleHookPreTool()
+	},
+}
+
+// preToolAllow is the response that lets the tool call proceed.
+func preToolAllow() { fmt.Println("{}") }
+
+// preToolBlock writes a block decision back to Claude Code.
+func preToolBlock(reason string) {
+	out, _ := json.Marshal(map[string]string{"decision": "block", "reason": reason})
+	fmt.Println(string(out))
+}
+
+func handleHookPreTool() {
+	raw, _ := io.ReadAll(os.Stdin)
+
+	var payload struct {
+		ToolName  string          `json:"tool_name"`
+		ToolInput json.RawMessage `json:"tool_input"`
+		SessionID string          `json:"session_id"`
+		CWD       string          `json:"cwd"` // working directory for bare-push branch resolution
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil || payload.ToolName == "" {
+		preToolAllow()
+		return
+	}
+
+	// Only intercept Bash tool calls.
+	if !strings.EqualFold(payload.ToolName, "bash") {
+		preToolAllow()
+		return
+	}
+
+	var bashInput struct {
+		Command string `json:"command"`
+		// Claude Code also passes the process cwd in tool_input for some versions
+		CWD string `json:"cwd,omitempty"`
+	}
+	if err := json.Unmarshal(payload.ToolInput, &bashInput); err != nil || bashInput.Command == "" {
+		preToolAllow()
+		return
+	}
+
+	// Resolve effective working directory for bare-push detection.
+	cwd := payload.CWD
+	if cwd == "" {
+		cwd = bashInput.CWD
+	}
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+
+	// CWD enables bare-push branch resolution inside the classifier so the
+	// same parsed argv handles `git -C /dir push` correctly.
+	c := &security.Classifier{CWD: cwd}
+	verdict := c.Classify(bashInput.Command)
+
+	if verdict.Tier < security.Red {
+		preToolAllow()
+		return
+	}
+
+	// Read gate toggle from config.toml (via the cfg global) so the agent
+	// cannot disable it at runtime via the API — config.toml is only writable
+	// by the user and requires a daemon restart to take effect.
+	if cfg != nil && !cfg.Gates.MainMergeApprovalEnabled() {
+		preToolAllow()
+		return
+	}
+
+	// Red-tier command: post to daemon for Board approval.
+	daemonURL, token := resolveDaemonConn()
+	if daemonURL == "" {
+		// Fail-closed: daemon unreachable, cannot get Board decision.
+		preToolBlock(fmt.Sprintf("Board gate unreachable; command blocked (%s)", strings.Join(verdict.Reasons, "; ")))
+		return
+	}
+
+	// Create a pending gate request in the daemon.
+	gr := createGateRequest(daemonURL, token, bashInput.Command, verdict.Reasons, payload.SessionID)
+	if gr == nil {
+		preToolBlock(fmt.Sprintf("could not register gate request; command blocked (%s)", strings.Join(verdict.Reasons, "; ")))
+		return
+	}
+
+	// Block indefinitely until the Board decides (no timeout).
+	// The hook process sits here; Claude Code cannot call the tool while we hold.
+	for {
+		status := pollGateRequest(daemonURL, token, gr.ID)
+		switch status {
+		case "approved":
+			preToolAllow()
+			return
+		case "denied":
+			preToolBlock(fmt.Sprintf("Board denied: %s", strings.Join(verdict.Reasons, "; ")))
+			return
+		case "":
+			// daemon unreachable mid-poll — fail-closed
+			preToolBlock(fmt.Sprintf("Board gate unreachable during poll; command blocked (%s)", strings.Join(verdict.Reasons, "; ")))
+			return
+		default:
+			// still pending — loop
+		}
+	}
+}
+
+func resolveDaemonConn() (daemonURL, token string) {
+	port := 41421
+	daemonURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+	if cfg != nil {
+		tokenPath := filepath.Join(cfg.DataDir, "auth_token")
+		if data, err := os.ReadFile(tokenPath); err == nil {
+			token = strings.TrimSpace(string(data))
+		}
+	}
+	return daemonURL, token
+}
+
+type gateRequestRef struct {
+	ID string `json:"id"`
+}
+
+func createGateRequest(daemonURL, token, cmdline string, reasons []string, runID string) *gateRequestRef {
+	body, _ := json.Marshal(map[string]any{
+		"cmdline": cmdline,
+		"reasons": reasons,
+		"run_id":  runID,
+	})
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost,
+		daemonURL+"/api/security/gate-requests", bytes.NewReader(body))
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusCreated {
+		return nil
+	}
+	defer resp.Body.Close()
+	var gr gateRequestRef
+	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil || gr.ID == "" {
+		return nil
+	}
+	return &gr
+}
+
+// pollGateRequest long-polls the gate request and returns "approved", "denied",
+// "pending" (still waiting), or "" (connection error).
+func pollGateRequest(daemonURL, token, id string) string {
+	url := fmt.Sprintf("%s/api/security/gate-requests/%s?wait=true", daemonURL, id)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{Timeout: 35 * time.Second} // slightly longer than server 29s
+	resp, err := client.Do(req)
+	if err != nil {
+		// Daemon may be restarting; wait briefly then retry (still no timeout).
+		time.Sleep(2 * time.Second)
+		return "pending"
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return ""
+	}
+	var gr struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&gr); err != nil {
+		return ""
+	}
+	return gr.Status
+}
+
 func init() {
 	hookPromptCmd.Flags().StringVar(&hookPromptFormat, "format", "auto", "Output format: auto, gemini, or claude")
 	rootCmd.AddCommand(hookCmd)
 	hookCmd.AddCommand(hookPromptCmd)
+	hookCmd.AddCommand(hookPreToolCmd)
 	hookCmd.AddCommand(hookInstallCmd)
 }

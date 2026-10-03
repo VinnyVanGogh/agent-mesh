@@ -2,6 +2,7 @@ package security
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -56,6 +57,10 @@ func (v *Verdict) merge(o Verdict) {
 type Classifier struct {
 	Worktree *Boundary
 	Home     string // defaults to the user's home directory
+	// CWD is the working directory of the command being classified. When set,
+	// classifyGit uses it for bare-push branch resolution. If empty the
+	// bare-push check is fail-closed (returns Red when no explicit refspec).
+	CWD string
 }
 
 // Classify classifies a shell command line. Unparseable input is Red (fail closed).
@@ -317,11 +322,30 @@ func skipWrapper(name string, args []string) []string {
 }
 
 func (c *Classifier) classifyGit(args []string, v *Verdict) {
-	// skip global options such as -C dir, -c k=v
+	// Skip global options, tracking any -C dir changes for bare-push resolution.
+	// -c config-override is skipped; --git-dir/--work-tree can't be modelled → fail-closed.
+	effectiveDir := c.CWD
 	i := 0
 	for i < len(args) && strings.HasPrefix(args[i], "-") {
-		if args[i] == "-C" || args[i] == "-c" {
+		switch {
+		case args[i] == "-C":
 			i++
+			if i < len(args) {
+				effectiveDir = resolveGitWorkDir(effectiveDir, args[i])
+			}
+		case strings.HasPrefix(args[i], "-C"):
+			effectiveDir = resolveGitWorkDir(effectiveDir, args[i][2:])
+		case args[i] == "--git-dir" || args[i] == "--work-tree":
+			// Can't model effective repo — fail-closed for bare-push detection.
+			effectiveDir = ""
+			i++ // consume value
+		case strings.HasPrefix(args[i], "--git-dir=") || strings.HasPrefix(args[i], "--work-tree="):
+			effectiveDir = ""
+		case args[i] == "-c":
+			// -c can redirect push destination (remote.*.push, push.default);
+			// force bare-push detection fail-closed when present.
+			effectiveDir = ""
+			i++ // skip key=value token
 		}
 		i++
 	}
@@ -370,6 +394,9 @@ func (c *Classifier) classifyGit(args []string, v *Verdict) {
 		if pushTargetsMain(rest) {
 			v.raise(Red, "git push targets main/master; Board approval required")
 		}
+		if barePushTargetsMain(effectiveDir, rest) {
+			v.raise(Red, "git push targets main/master; Board approval required")
+		}
 		v.raise(Yellow, "")
 	case "config":
 		// git config --get is read-only; writes are local edits, global writes touch dotfiles
@@ -395,6 +422,62 @@ func (c *Classifier) classifyGit(args []string, v *Verdict) {
 			v.raise(Yellow, "")
 		}
 	}
+}
+
+// resolveGitWorkDir resolves a git -C argument against the current effective
+// dir, mirroring git's cumulative -C application. Returns "" when base is
+// empty and rel is relative, so the fail-closed path triggers downstream.
+func resolveGitWorkDir(base, rel string) string {
+	if rel == "" {
+		return base
+	}
+	if filepath.IsAbs(rel) {
+		return rel
+	}
+	if base == "" {
+		return ""
+	}
+	return filepath.Join(base, rel)
+}
+
+// pushValueFlags are git push options that consume the next token as a value.
+// Values must not be counted as refspec positionals.
+var pushValueFlags = map[string]bool{
+	"-o": true, "--push-option": true,
+	"--receive-pack": true, "--exec": true, "--repo": true,
+}
+
+// barePushTargetsMain reports whether a bare `git push` (no explicit refspec)
+// targets main/master by resolving the current branch in dir.
+// Returns true (fail-closed) when dir is empty or branch resolution fails —
+// a git push should always happen inside a real repo.
+// When rest contains 2+ positionals the first is remote and second is a
+// refspec — pushTargetsMain already classified it, so we return false.
+func barePushTargetsMain(dir string, rest []string) bool {
+	var positionals []string
+	for j := 0; j < len(rest); j++ {
+		a := rest[j]
+		if strings.HasPrefix(a, "-") {
+			// Skip flag value when flag takes a separate argument and has no = form.
+			if !strings.Contains(a, "=") && pushValueFlags[a] {
+				j++
+			}
+			continue
+		}
+		positionals = append(positionals, a)
+	}
+	if len(positionals) >= 2 {
+		return false
+	}
+	if dir == "" {
+		return true
+	}
+	// symbolic-ref works on unborn branches; rev-parse --abbrev-ref fails there.
+	out, err := exec.Command("git", "-C", dir, "symbolic-ref", "--short", "HEAD").Output()
+	if err != nil {
+		return true
+	}
+	return isMainRef(strings.TrimSpace(string(out)))
 }
 
 // isMainRef reports whether a git ref name is a protected default branch.
@@ -460,40 +543,61 @@ func (c *Classifier) classifyGh(args []string, v *Verdict) {
 		}
 		v.raise(Yellow, "")
 	case "api":
+		// Any body-submitting flag means the call mutates state — Red immediately.
+		// For the method, only GET and HEAD are safe reads; anything else (POST, PUT,
+		// PATCH, DELETE, or any unrecognized/custom method) is Red (fail-closed on unknown).
+		// Default when no method flag is present: gh api defaults to GET when no body
+		// flags, so we allow that through; body flags above would have already raised Red.
+		ghAPIRed := func(reason string) {
+			v.raise(Red, reason)
+		}
+		apiMethodSeen := false
 		for j, a := range rest {
 			lower := strings.ToLower(a)
-			// -XPOST / --method=POST / -X POST / --method POST (mutating methods)
 			switch {
-			case (a == "-X" || a == "--method") && j+1 < len(rest):
-				switch strings.ToUpper(rest[j+1]) {
-				case "POST", "PUT", "PATCH", "DELETE":
-					v.raise(Red, "gh api mutating method; Board approval required")
-					return
-				}
-			case strings.HasPrefix(lower, "-x") && len(a) > 2:
-				switch strings.ToUpper(a[2:]) {
-				case "POST", "PUT", "PATCH", "DELETE":
-					v.raise(Red, "gh api mutating method; Board approval required")
-					return
-				}
-			case strings.HasPrefix(lower, "--method="):
-				switch strings.ToUpper(a[9:]) {
-				case "POST", "PUT", "PATCH", "DELETE":
-					v.raise(Red, "gh api mutating method; Board approval required")
-					return
-				}
-			// -f/-F/--field/--raw-field/--input (any form) imply a POST body
-			case a == "-f" || a == "-F" || strings.HasPrefix(lower, "--field") ||
-				strings.HasPrefix(lower, "--raw-field") || lower == "--input" || strings.HasPrefix(lower, "--input="):
-				v.raise(Red, "gh api submits data; Board approval required")
+			// -f/-F/--field/--raw-field/--input (any attached or separate form) → POST body
+			case a == "-f" || a == "-F",
+				strings.HasPrefix(lower, "--field"),
+				strings.HasPrefix(lower, "--raw-field"),
+				lower == "--input",
+				strings.HasPrefix(lower, "--input="):
+				ghAPIRed("gh api submits data; Board approval required")
 				return
+			// -X METHOD or --method METHOD (separate value token)
+			case (a == "-X" || strings.EqualFold(a, "--method")) && j+1 < len(rest):
+				m := strings.ToUpper(rest[j+1])
+				if m != "GET" && m != "HEAD" {
+					ghAPIRed("gh api mutating or unrecognized method; Board approval required")
+					return
+				}
+				apiMethodSeen = true
+			// -XMETHOD or -X=METHOD (attached, with or without =)
+			case strings.HasPrefix(lower, "-x") && len(a) > 2:
+				raw := a[2:]
+				m := strings.ToUpper(strings.TrimPrefix(raw, "="))
+				if m != "GET" && m != "HEAD" {
+					ghAPIRed("gh api mutating or unrecognized method; Board approval required")
+					return
+				}
+				apiMethodSeen = true
+			// --method=METHOD (attached with =)
+			case strings.HasPrefix(lower, "--method="):
+				m := strings.ToUpper(a[strings.Index(a, "=")+1:])
+				if m != "GET" && m != "HEAD" {
+					ghAPIRed("gh api mutating or unrecognized method; Board approval required")
+					return
+				}
+				apiMethodSeen = true
 			}
 			// Merge endpoint by URL
 			if !strings.HasPrefix(a, "-") && strings.Contains(lower, "/merge") {
-				v.raise(Red, "gh api targets a merge endpoint; Board approval required")
+				ghAPIRed("gh api targets a merge endpoint; Board approval required")
 				return
 			}
 		}
+		// If no explicit method: gh api defaults to GET when no body flags, which is safe.
+		// If method was explicitly set and passed the GET/HEAD check above, allow through.
+		_ = apiMethodSeen
 		v.raise(Yellow, "")
 	default:
 		v.raise(Yellow, "")
