@@ -757,6 +757,132 @@ func TestStepTeeWriter_TextOnlyCompletion(t *testing.T) {
 	})
 }
 
+// TestMarkerOnOwnLine covers the quoted/inline/fenced/bare-line cases (STA-506).
+func TestMarkerOnOwnLine(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want bool
+	}{
+		{
+			name: "own line fires",
+			text: "work done\n[[TASK_COMPLETE]]\n",
+			want: true,
+		},
+		{
+			name: "own line with trailing space fires",
+			text: "work done\n[[TASK_COMPLETE]]   \n",
+			want: true,
+		},
+		{
+			name: "inline in prose does not fire",
+			text: "I left out `[[TASK_COMPLETE]]` this turn because CLAUDE.md forbids it",
+			want: false,
+		},
+		{
+			name: "inline without backticks does not fire",
+			text: "the marker [[TASK_COMPLETE]] lives mid-sentence",
+			want: false,
+		},
+		{
+			name: "inside fenced code block does not fire",
+			text: "example:\n```\n[[TASK_COMPLETE]]\n```\n",
+			want: false,
+		},
+		{
+			name: "inside tilde fence does not fire",
+			text: "example:\n~~~\n[[TASK_COMPLETE]]\n~~~\n",
+			want: false,
+		},
+		{
+			name: "after closing fence fires",
+			text: "```\nsome code\n```\n[[TASK_COMPLETE]]\n",
+			want: true,
+		},
+		{
+			name: "backtick span on own line does not fire",
+			text: "`[[TASK_COMPLETE]]`\n",
+			want: false,
+		},
+		{
+			name: "empty text does not fire",
+			text: "",
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := markerOnOwnLine(tc.text)
+			if got != tc.want {
+				t.Errorf("markerOnOwnLine(%q) = %v, want %v", tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestStepTeeWriter_QuotedMarkerNoFire verifies that an agent mentioning the marker
+// in prose (the STA-506 regression case) does not complete the task (STA-506).
+func TestStepTeeWriter_QuotedMarkerNoFire(t *testing.T) {
+	// Build a well-formed NDJSON assistant event line carrying the given text.
+	mkLine := func(text string) []byte {
+		type content struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		type message struct {
+			Content []content `json:"content"`
+		}
+		type event struct {
+			Type    string  `json:"type"`
+			Message message `json:"message"`
+		}
+		b, _ := json.Marshal(event{
+			Type:    "assistant",
+			Message: message{Content: []content{{Type: "text", Text: text}}},
+		})
+		return append(b, '\n')
+	}
+
+	tests := []struct {
+		name    string
+		text    string
+		wantFire bool
+	}{
+		{
+			name:    "inline backtick mention does not fire",
+			text:    "I left out `[[TASK_COMPLETE]]` this turn because CLAUDE.md forbids it",
+			wantFire: false,
+		},
+		{
+			name:    "inline prose mention does not fire",
+			text:    "the marker [[TASK_COMPLETE]] appears mid-sentence here",
+			wantFire: false,
+		},
+		{
+			name:    "marker inside fenced code block does not fire",
+			text:    "example:\n```\n[[TASK_COMPLETE]]\n```\n",
+			wantFire: false,
+		},
+		{
+			name:    "bare own-line marker fires",
+			text:    "work done\n[[TASK_COMPLETE]]\n",
+			wantFire: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var dst strings.Builder
+			stw := &stepTeeWriter{dst: &dst, rec: nil, parse: testStreamParse}
+			if _, err := stw.Write(mkLine(tc.text)); err != nil {
+				t.Fatal(err)
+			}
+			if stw.textDetected != tc.wantFire {
+				t.Errorf("textDetected = %v, want %v (text: %q)", stw.textDetected, tc.wantFire, tc.text)
+			}
+		})
+	}
+}
+
 // TestInterceptor_Timeout verifies interceptor exits within 30s even with a slow guard.
 // Skipped in -short mode (takes ~28s).
 func TestInterceptor_Timeout(t *testing.T) {
