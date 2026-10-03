@@ -7495,15 +7495,89 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
   }
   main.appendChild(pillsRow);
 
-  // Description
+  // Description (editable)
   const descSection = el('div', 'task-page-section');
-  descSection.appendChild(el('div', 'task-page-section-title', 'Description'));
+  const descTitleRow = el('div', 'task-page-section-title-row');
+  descTitleRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  descTitleRow.appendChild(el('div', 'task-page-section-title', 'Description'));
+  const descEditBtn = el('button', 'btn-icon desc-edit-btn', '✎');
+  descEditBtn.setAttribute('aria-label', 'Edit description');
+  descEditBtn.title = 'Edit description';
+  descEditBtn.style.cssText = 'font-size:0.85rem;padding:2px 6px;cursor:pointer;opacity:0.6;';
+  descTitleRow.appendChild(descEditBtn);
+  descSection.appendChild(descTitleRow);
   let desc = (task.description || '').trim();
+  const descView = el('div', 'desc-view');
   if (desc) {
-    descSection.appendChild(mdEl(desc));
+    descView.appendChild(mdEl(desc));
   } else {
-    descSection.appendChild(el('p', 'panel-field-muted', 'No description provided.'));
+    descView.appendChild(el('p', 'panel-field-muted desc-empty', 'No description provided.'));
   }
+  descSection.appendChild(descView);
+
+  // Edit form (hidden by default)
+  const descEditForm = el('div', 'desc-edit-form');
+  descEditForm.style.display = 'none';
+  const descTextarea = document.createElement('textarea');
+  descTextarea.className = 'desc-textarea';
+  descTextarea.rows = 6;
+  descTextarea.style.cssText = 'width:100%;box-sizing:border-box;font-family:inherit;font-size:0.9rem;padding:8px;border:1px solid var(--border);border-radius:4px;background:var(--bg-secondary, #1a1a2e);color:inherit;resize:vertical;';
+  descTextarea.value = desc;
+  descEditForm.appendChild(descTextarea);
+  const descActionsRow = el('div', 'desc-edit-actions');
+  descActionsRow.style.cssText = 'display:flex;gap:8px;margin-top:8px;';
+  const descSaveBtn = el('button', 'btn btn-primary btn-sm desc-save-btn', 'Save');
+  descSaveBtn.style.cssText = 'font-size:0.82rem;padding:4px 12px;';
+  const descCancelBtn = el('button', 'btn btn-secondary btn-sm desc-cancel-btn', 'Cancel');
+  descCancelBtn.style.cssText = 'font-size:0.82rem;padding:4px 12px;';
+  const descErrMsg = el('span', 'desc-err-msg', '');
+  descErrMsg.style.cssText = 'color:var(--red,#f87171);font-size:0.8rem;';
+  descActionsRow.appendChild(descSaveBtn);
+  descActionsRow.appendChild(descCancelBtn);
+  descActionsRow.appendChild(descErrMsg);
+  descEditForm.appendChild(descActionsRow);
+  descSection.appendChild(descEditForm);
+
+  function enterDescEdit() {
+    descTextarea.value = (task.description || '').trim();
+    descView.style.display = 'none';
+    descEditForm.style.display = 'block';
+    descEditBtn.style.display = 'none';
+    descErrMsg.textContent = '';
+    descTextarea.focus();
+  }
+  function exitDescEdit() {
+    descEditForm.style.display = 'none';
+    descView.style.display = '';
+    descEditBtn.style.display = '';
+  }
+  descEditBtn.addEventListener('click', enterDescEdit);
+  descCancelBtn.addEventListener('click', exitDescEdit);
+  descSaveBtn.addEventListener('click', async () => {
+    descSaveBtn.disabled = true;
+    descErrMsg.textContent = '';
+    try {
+      const updated = await apiFetch(`/api/tasks/${encodeURIComponent(task.id)}/description`, {
+        method: 'PUT',
+        body: JSON.stringify({ description: descTextarea.value }),
+      });
+      task.description = updated.description || descTextarea.value;
+      if (state.tasks[task.id]) state.tasks[task.id].description = task.description;
+      desc = (task.description || '').trim();
+      while (descView.firstChild) descView.removeChild(descView.firstChild);
+      if (desc) {
+        descView.appendChild(mdEl(desc));
+      } else {
+        descView.appendChild(el('p', 'panel-field-muted desc-empty', 'No description provided.'));
+      }
+      exitDescEdit();
+    } catch (err) {
+      descErrMsg.textContent = err.message || 'Failed to save description.';
+    } finally {
+      descSaveBtn.disabled = false;
+    }
+  });
+
   main.appendChild(descSection);
 
   // Notes (if any)
@@ -9243,6 +9317,7 @@ setInterval(() => {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Creating…';
 
+    const descVal = (document.getElementById('ct-description')?.value || '').trim();
     const body = {
       name,
       work_kind: (workKindSel && workKindSel.value) || 'coding',
@@ -9252,6 +9327,7 @@ setInterval(() => {
       git_branch:   document.getElementById('ct-branch').value.trim(),
       max_budget_usd: parseFloat(document.getElementById('ct-budget').value) || 0,
       max_turns:    parseInt(document.getElementById('ct-turns').value, 10) || 0,
+      ...(descVal && { description: descVal }),
     };
 
     try {
@@ -9263,7 +9339,7 @@ setInterval(() => {
       for (const t of taskArr) { state.tasks[t.id] = t; }
       renderTaskStatusPage();
       // Navigate to new task
-      if (task && task.id) openDetail(task.id);
+      if (task && task.id) openTaskPage(task.id);
     } catch (err) {
       showErr(err.message || 'Failed to create task.');
       submitBtn.disabled = false;
