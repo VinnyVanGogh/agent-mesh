@@ -298,6 +298,64 @@ func DiffCheckpoint(ctx context.Context, workDir, checkpointID string) (string, 
 	return runGit(ctx, rootDir, nil, "diff", targetRef, "--stat")
 }
 
+// DiffCheckpointAgainstRef diffs the checkpoint against an explicit git ref (e.g. a
+// task branch tip) rather than the working tree. Use this when the task worktree has
+// been pruned but the branch still exists.
+func DiffCheckpointAgainstRef(ctx context.Context, repoPath, checkpointID, ref string) (string, error) {
+	rootDir, _, err := getGitPaths(ctx, repoPath)
+	if err != nil {
+		return "", err
+	}
+
+	targetRef := checkpointID
+	if !strings.HasPrefix(targetRef, "refs/") && len(targetRef) != 40 {
+		if targetRef == "" || targetRef == "latest" {
+			targetRef = "refs/staypoint/checkpoints/latest"
+		} else {
+			refs, _ := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname)", fmt.Sprintf("refs/staypoint/checkpoints/*/%s", targetRef))
+			if len(strings.TrimSpace(refs)) > 0 {
+				targetRef = strings.TrimSpace(refs)
+			}
+		}
+	}
+
+	return runGit(ctx, rootDir, nil, "diff", targetRef, ref, "--stat")
+}
+
+// DiffCheckpointFilesAgainstRef returns per-file add/remove counts between the
+// checkpoint and an explicit git ref using git diff --numstat.
+func DiffCheckpointFilesAgainstRef(ctx context.Context, repoPath, checkpointID, ref string) ([]FileDiffStat, error) {
+	rootDir, _, err := getGitPaths(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+
+	targetRef, err := resolveCheckpointRef(checkpointID)
+	if err != nil {
+		return nil, err
+	}
+	out, err := runGit(ctx, rootDir, nil, "diff", targetRef, ref, "--numstat")
+	if err != nil {
+		return nil, err
+	}
+
+	var stats []FileDiffStat
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) < 3 {
+			continue
+		}
+		added, _ := strconv.Atoi(parts[0])
+		removed, _ := strconv.Atoi(parts[1])
+		stats = append(stats, FileDiffStat{Path: parts[2], Added: added, Removed: removed})
+	}
+	return stats, nil
+}
+
 // DiffCheckpointFiles returns per-file add/remove counts between the working tree
 // and the specified checkpoint using git diff --numstat.
 func DiffCheckpointFiles(ctx context.Context, workDir, checkpointID string) ([]FileDiffStat, error) {
