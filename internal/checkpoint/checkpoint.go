@@ -334,6 +334,12 @@ func DiffCheckpointFilesAgainstRef(ctx context.Context, repoPath, checkpointID, 
 	if err != nil {
 		return nil, err
 	}
+	// Resolve bare cp_ IDs to full refs (e.g. refs/staypoint/checkpoints/<sess>/<id>).
+	if !strings.HasPrefix(targetRef, "refs/") && len(targetRef) != 40 {
+		if refs, _ := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname)", fmt.Sprintf("refs/staypoint/checkpoints/*/%s", targetRef)); strings.TrimSpace(refs) != "" {
+			targetRef = strings.TrimSpace(refs)
+		}
+	}
 	out, err := runGit(ctx, rootDir, nil, "diff", targetRef, ref, "--numstat")
 	if err != nil {
 		return nil, err
@@ -367,6 +373,12 @@ func DiffCheckpointFiles(ctx context.Context, workDir, checkpointID string) ([]F
 	targetRef, err := resolveCheckpointRef(checkpointID)
 	if err != nil {
 		return nil, err
+	}
+	// Resolve bare cp_ IDs to full refs (e.g. refs/staypoint/checkpoints/<sess>/<id>).
+	if !strings.HasPrefix(targetRef, "refs/") && len(targetRef) != 40 {
+		if refs, _ := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname)", fmt.Sprintf("refs/staypoint/checkpoints/*/%s", targetRef)); strings.TrimSpace(refs) != "" {
+			targetRef = strings.TrimSpace(refs)
+		}
 	}
 	out, err := runGit(ctx, rootDir, nil, "diff", targetRef, "--numstat")
 	if err != nil {
@@ -458,6 +470,24 @@ func RestoreFile(ctx context.Context, workDir, checkpointID, filePath string) er
 
 	_, err = runGit(ctx, rootDir, nil, "checkout", strings.TrimSpace(sha), "--", filePath)
 	return err
+}
+
+// FindPreRunCheckpoint returns the ID of the checkpoint created as the pre-run
+// baseline for taskID (message prefix "pre-run <taskID>"). Returns "" when none
+// is found; the caller falls back to "latest" in that case.
+func FindPreRunCheckpoint(ctx context.Context, repoPath, taskID string) (string, error) {
+	cps, err := ListCheckpoints(ctx, repoPath, 0)
+	if err != nil {
+		return "", nil //nolint:nilerr // best-effort; caller uses fallback
+	}
+	prefix := "pre-run " + taskID
+	// Checkpoints are newest-first; walk from oldest end to pick the earliest pre-run.
+	for i := len(cps) - 1; i >= 0; i-- {
+		if strings.HasPrefix(cps[i].Message, prefix) {
+			return cps[i].ID, nil
+		}
+	}
+	return "", nil
 }
 
 // PruneCheckpoints deletes older checkpoint refs, keeping keepLast checkpoints.
