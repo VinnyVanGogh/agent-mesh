@@ -970,3 +970,79 @@ wait
 		t.Errorf("child process %d is still alive! orphan process was not killed", childPID)
 	}
 }
+
+// TestResolveProviderChain verifies the single-source-of-truth route resolution
+// used by the route-row label matches what RunAdapter would actually execute.
+func TestResolveProviderChain(t *testing.T) {
+	unlockedPacer := &router.PacerState{Pools: map[router.PoolID]*router.QuotaPool{
+		router.PoolGeminiNative:  {IsLocked: false},
+		router.PoolPersonalClaude: {IsLocked: false},
+		router.PoolWorkClaude:    {IsLocked: false},
+	}}
+	lockedClaude := &router.PacerState{Pools: map[router.PoolID]*router.QuotaPool{
+		router.PoolGeminiNative:  {IsLocked: false},
+		router.PoolPersonalClaude: {IsLocked: true},
+		router.PoolWorkClaude:    {IsLocked: true},
+	}}
+	allLocked := &router.PacerState{Pools: map[router.PoolID]*router.QuotaPool{
+		router.PoolGeminiNative:  {IsLocked: true},
+		router.PoolPersonalClaude: {IsLocked: true},
+		router.PoolWorkClaude:    {IsLocked: true},
+	}}
+
+	tests := []struct {
+		name        string
+		isWork      bool
+		provider    string
+		pacer       *router.PacerState
+		wantSel     string
+		wantFallback string
+		wantLocked  bool
+	}{
+		{
+			name: "personal repo default provider runs Gemini first",
+			isWork: false, provider: "", pacer: unlockedPacer,
+			wantSel: "Gemini", wantFallback: "",
+		},
+		{
+			name: "personal repo falls back to Claude when Gemini locked",
+			isWork: false, provider: "", pacer: lockedClaude,
+			// lockedClaude has gemini unlocked — Gemini is still first
+			wantSel: "Gemini", wantFallback: "",
+		},
+		{
+			name: "personal repo claude-locked falls back correctly",
+			isWork: false, provider: "claude", pacer: lockedClaude,
+			// chain is [personal-claude, gemini]; claude locked → falls back to Gemini
+			wantSel: "Gemini", wantFallback: "Claude",
+		},
+		{
+			name: "all providers locked",
+			isWork: false, provider: "", pacer: allLocked,
+			wantLocked: true,
+		},
+		{
+			name: "work repo default provider runs Gemini first",
+			isWork: true, provider: "", pacer: unlockedPacer,
+			wantSel: "Gemini", wantFallback: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ResolveProviderChain(tc.isWork, tc.provider, tc.pacer)
+			if got.AllLocked != tc.wantLocked {
+				t.Errorf("AllLocked: got %v want %v", got.AllLocked, tc.wantLocked)
+			}
+			if tc.wantLocked {
+				return
+			}
+			if got.SelectedDisplay != tc.wantSel {
+				t.Errorf("SelectedDisplay: got %q want %q", got.SelectedDisplay, tc.wantSel)
+			}
+			if got.FallbackFromDisplay != tc.wantFallback {
+				t.Errorf("FallbackFromDisplay: got %q want %q", got.FallbackFromDisplay, tc.wantFallback)
+			}
+		})
+	}
+}
