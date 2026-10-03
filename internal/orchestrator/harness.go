@@ -244,6 +244,9 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	if cfg.SkipPermissions {
 		providerEnv = append(providerEnv, "STAYPOINT_SKIP_PERMISSIONS=1")
 	}
+	// Expose task ID so the PreToolUse hook can check the pause flag before
+	// each tool call, enabling step-boundary pause rather than turn-boundary.
+	providerEnv = append(providerEnv, "STAYPOINT_TASK_ID="+taskID)
 
 	// Emit wake + route steps now that the claim succeeded.
 	// These are intentionally emitted after Claim so that refused runs

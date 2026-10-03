@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
 	"github.com/VinnyVanGogh/staypoint/internal/server"
 )
 
@@ -1239,4 +1240,93 @@ func TestServer_REST_RunControl(t *testing.T) {
 		t.Fatalf("missing task: want 404, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
+}
+
+// TestServer_REST_RunControlState verifies the GET /api/tasks/{id}/run-control-state
+// endpoint returns correct pause/stop flags (STA-505 step-boundary pause gate).
+func TestServer_REST_RunControlState(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+
+	authGet := func(url string) *http.Response {
+		req, _ := http.NewRequest(http.MethodGet, url, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Origin", "http://127.0.0.1")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", url, err)
+		}
+		return resp
+	}
+	authPost := func(url, body string) *http.Response {
+		req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "http://127.0.0.1")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("POST %s: %v", url, err)
+		}
+		return resp
+	}
+
+	// Wire GlobalRunControl to the test DB so IsPaused/SetPause hit the right store.
+	orchestrator.GlobalRunControl.SetDB(database)
+	t.Cleanup(func() { orchestrator.GlobalRunControl.SetDB(nil) })
+
+	createResp := authPost(srv.URL()+"/api/tasks", `{"name":"RCState Test","repo_path":"/tmp","git_branch":"main"}`)
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create task: want 201, got %d", createResp.StatusCode)
+	}
+	var created map[string]any
+	_ = json.NewDecoder(createResp.Body).Decode(&created)
+	createResp.Body.Close()
+	taskID, _ := created["id"].(string)
+
+	_, _ = database.Exec(`UPDATE tasks SET execution_stage='in_progress' WHERE id=?`, taskID)
+
+	stateURL := srv.URL() + "/api/tasks/" + taskID + "/run-control-state"
+
+	// Initially not paused, not stopped.
+	resp := authGet(stateURL)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("state: want 200, got %d", resp.StatusCode)
+	}
+	var s struct {
+		Paused        bool `json:"paused"`
+		StopRequested bool `json:"stop_requested"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&s)
+	resp.Body.Close()
+	if s.Paused || s.StopRequested {
+		t.Fatalf("want paused=false stop=false, got %+v", s)
+	}
+
+	// After pause, state reflects it.
+	authPost(srv.URL()+"/api/tasks/"+taskID+"/run-control", `{"action":"pause"}`).Body.Close()
+	resp = authGet(stateURL)
+	_ = json.NewDecoder(resp.Body).Decode(&s)
+	resp.Body.Close()
+	if !s.Paused {
+		t.Fatal("want paused=true after pause action")
+	}
+
+	// Long-poll returns immediately when not paused; set up goroutine to resume
+	// after a short delay and verify the long-poll unblocks.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		authPost(srv.URL()+"/api/tasks/"+taskID+"/run-control", `{"action":"resume"}`).Body.Close()
+	}()
+	pollStart := time.Now()
+	resp = authGet(stateURL + "?wait=true")
+	elapsed := time.Since(pollStart)
+	_ = json.NewDecoder(resp.Body).Decode(&s)
+	resp.Body.Close()
+	if s.Paused {
+		t.Fatal("want paused=false after resume")
+	}
+	// Should have waited ~100ms (the goroutine delay) not 0ms.
+	if elapsed < 50*time.Millisecond {
+		t.Fatalf("long-poll returned too fast (%v), expected ~100ms", elapsed)
+	}
 }

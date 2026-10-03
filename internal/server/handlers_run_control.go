@@ -1,9 +1,11 @@
 package server
 
 import (
+	gocontext "context"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
@@ -103,4 +105,52 @@ func (h *TasksHandler) RunControl(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "action": req.Action})
+}
+
+type runControlState struct {
+	Paused        bool `json:"paused"`
+	StopRequested bool `json:"stop_requested"`
+}
+
+// GetRunControlState handles GET /api/tasks/{id}/run-control-state
+// Returns the current pause/stop flags from the run_control table.
+// With ?wait=true, long-polls up to 29 s waiting for the pause flag to clear
+// or stop to be set (used by the PreToolUse hook to block at step boundaries).
+func (h *TasksHandler) GetRunControlState(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+
+	rc := orchestrator.GlobalRunControl
+	wait := r.URL.Query().Get("wait") == "true"
+
+	paused := rc.IsPaused(id)
+	stop := rc.IsStopRequested(id)
+
+	if !wait || !paused || stop {
+		writeJSON(w, runControlState{Paused: paused, StopRequested: stop})
+		return
+	}
+
+	// Long-poll: check every 500 ms for up to 29 s.
+	ctx, cancel := gocontext.WithTimeout(r.Context(), 29*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			writeJSON(w, runControlState{Paused: rc.IsPaused(id), StopRequested: rc.IsStopRequested(id)})
+			return
+		case <-ticker.C:
+			paused = rc.IsPaused(id)
+			stop = rc.IsStopRequested(id)
+			if !paused || stop {
+				writeJSON(w, runControlState{Paused: paused, StopRequested: stop})
+				return
+			}
+		}
+	}
 }

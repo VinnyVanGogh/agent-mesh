@@ -430,7 +430,18 @@ func handleHookPreTool() {
 		return
 	}
 
-	// Only intercept Bash tool calls.
+	// Pause gate: block before ANY tool call when the run is paused.
+	// This implements step-boundary pause (STA-505): at most the step in
+	// flight when Pause was clicked finishes; subsequent steps are held here
+	// until Resume is clicked (or Stop cancels the turn).
+	if taskID := os.Getenv("STAYPOINT_TASK_ID"); taskID != "" {
+		daemonURL, token := resolveDaemonConn()
+		if daemonURL != "" {
+			waitForStepResume(daemonURL, token, taskID)
+		}
+	}
+
+	// Only intercept Bash tool calls for security classification.
 	if !strings.EqualFold(payload.ToolName, "bash") {
 		preToolAllow()
 		return
@@ -577,6 +588,39 @@ func pollGateRequest(daemonURL, token, id string) string {
 		return ""
 	}
 	return gr.Status
+}
+
+// waitForStepResume blocks until the pause flag is cleared or stop is requested.
+// It long-polls the daemon's run-control-state endpoint (each call blocks up to
+// 29 s server-side) so the PreToolUse hook holds the tool boundary while paused.
+// Fail-open: if the daemon is unreachable we allow the tool rather than freezing.
+func waitForStepResume(daemonURL, token, taskID string) {
+	for {
+		url := fmt.Sprintf("%s/api/tasks/%s/run-control-state?wait=true", daemonURL, taskID)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+		if err != nil {
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		client := &http.Client{Timeout: 35 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return // daemon unreachable — fail-open
+		}
+		var s struct {
+			Paused        bool `json:"paused"`
+			StopRequested bool `json:"stop_requested"`
+		}
+		decodeErr := json.NewDecoder(resp.Body).Decode(&s)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return
+		}
+		if s.StopRequested || !s.Paused {
+			return // stop or unpaused — proceed
+		}
+		// still paused — loop; long-poll already waited ~29 s server-side
+	}
 }
 
 func init() {
