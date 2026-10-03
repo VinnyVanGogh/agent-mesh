@@ -745,7 +745,7 @@ func buildBriefBlock(brief taskBrief, comments []harnessComment, isFirstTurn boo
 			b.WriteString("Branch: " + safeField(brief.GitBranch) + "\n")
 		}
 		if brief.Description != "" {
-			b.WriteString("---\nDescription:\n" + brief.Description + "\n")
+			b.WriteString("---\nDescription:\n" + safeField(brief.Description) + "\n")
 		}
 	}
 	if len(comments) > 0 {
@@ -755,7 +755,7 @@ func buildBriefBlock(brief taskBrief, comments []harnessComment, isFirstTurn boo
 			b.WriteString("<<<NEW_COMMENTS_BEGIN>>>\n")
 		}
 		for _, c := range comments {
-			b.WriteString("[" + safeField(c.Author) + "]: " + c.Message + "\n")
+			b.WriteString("[" + safeField(c.Author) + "]: " + safeField(c.Message) + "\n")
 		}
 	}
 	if isFirstTurn {
@@ -771,9 +771,15 @@ func buildBriefBlock(brief taskBrief, comments []harnessComment, isFirstTurn boo
 	return result
 }
 
-// safeField strips the [[TASK_COMPLETE]] marker so user data cannot forge completion.
+// safeField strips control markers from user-supplied strings so field content
+// cannot forge task completion or break out of the brief delimiters.
 func safeField(s string) string {
-	return strings.ReplaceAll(s, taskCompleteMarker, "[TASK_COMPLETE]")
+	s = strings.ReplaceAll(s, taskCompleteMarker, "[TASK_COMPLETE]")
+	s = strings.ReplaceAll(s, "<<<TASK_BRIEF_BEGIN>>>", "[TASK_BRIEF_BEGIN]")
+	s = strings.ReplaceAll(s, "<<<TASK_BRIEF_END>>>", "[TASK_BRIEF_END]")
+	s = strings.ReplaceAll(s, "<<<NEW_COMMENTS_BEGIN>>>", "[NEW_COMMENTS_BEGIN]")
+	s = strings.ReplaceAll(s, "<<<NEW_COMMENTS_END>>>", "[NEW_COMMENTS_END]")
+	return s
 }
 
 // buildRawArgs constructs CLI arguments for the adapter on the given turn.
