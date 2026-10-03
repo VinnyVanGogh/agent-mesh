@@ -1419,21 +1419,31 @@ func TestServer_BoardToken_Required(t *testing.T) {
 }
 
 // TestServer_BoardBootstrap_RequiresBoardToken verifies that the ?token= bootstrap
-// redirect only sets the board cookie when ?board_token= is ALSO present. Agents
-// that present only the auth token cannot obtain a board session.
+// redirect only sets the board cookie when a board credential (nonce or board_token)
+// is ALSO present. Agents that present only the auth token cannot obtain a board session.
 func TestServer_BoardBootstrap_RequiresBoardToken(t *testing.T) {
 	database := setupTestDB(t)
 	srv, token := startTestServer(t, database)
 	boardToken := srv.BoardToken()
+	boardNonce := srv.BoardNonce()
 
 	client := &http.Client{
 		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
 	}
 
+	hasBoardCookie := func(resp *http.Response) bool {
+		for _, c := range resp.Cookies() {
+			if c.Name == "staypoint_board" && c.Value == boardToken {
+				return true
+			}
+		}
+		return false
+	}
+
 	// Bootstrap with auth only → redirect should NOT set staypoint_board cookie.
 	resp, err := client.Get(fmt.Sprintf("%s/?token=%s", srv.URL(), token))
 	if err != nil {
-		t.Fatalf("bootstrap request failed: %v", err)
+		t.Fatalf("bootstrap (auth-only) request failed: %v", err)
 	}
 	resp.Body.Close()
 	for _, c := range resp.Cookies() {
@@ -1442,19 +1452,36 @@ func TestServer_BoardBootstrap_RequiresBoardToken(t *testing.T) {
 		}
 	}
 
-	// Bootstrap with auth + board_token → redirect SHOULD set staypoint_board cookie.
-	resp, err = client.Get(fmt.Sprintf("%s/?token=%s&board_token=%s", srv.URL(), token, boardToken))
+	// Bootstrap with auth + board_nonce → redirect SHOULD set staypoint_board cookie.
+	// The nonce is single-use: this call consumes it.
+	resp, err = client.Get(fmt.Sprintf("%s/?token=%s&board_nonce=%s", srv.URL(), token, boardNonce))
 	if err != nil {
-		t.Fatalf("full bootstrap request failed: %v", err)
+		t.Fatalf("bootstrap (nonce) request failed: %v", err)
 	}
 	resp.Body.Close()
-	var gotBoard bool
+	if !hasBoardCookie(resp) {
+		t.Error("board cookie was not set when valid board_nonce was provided")
+	}
+
+	// Second request with the SAME nonce → nonce already consumed, no board cookie.
+	resp, err = client.Get(fmt.Sprintf("%s/?token=%s&board_nonce=%s", srv.URL(), token, boardNonce))
+	if err != nil {
+		t.Fatalf("bootstrap (consumed-nonce) request failed: %v", err)
+	}
+	resp.Body.Close()
 	for _, c := range resp.Cookies() {
-		if c.Name == "staypoint_board" && c.Value == boardToken {
-			gotBoard = true
+		if c.Name == "staypoint_board" {
+			t.Errorf("board cookie was set with already-consumed nonce — want no board cookie, got %q", c.Value)
 		}
 	}
-	if !gotBoard {
-		t.Error("board cookie was not set when both token and board_token are correct")
+
+	// Fallback: bootstrap with auth + board_token → should also work.
+	resp, err = client.Get(fmt.Sprintf("%s/?token=%s&board_token=%s", srv.URL(), token, boardToken))
+	if err != nil {
+		t.Fatalf("bootstrap (board_token) request failed: %v", err)
+	}
+	resp.Body.Close()
+	if !hasBoardCookie(resp) {
+		t.Error("board cookie was not set when valid board_token was provided as fallback")
 	}
 }

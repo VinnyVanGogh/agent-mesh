@@ -34,6 +34,12 @@ func New(opts Options) (*Server, error) {
 	}
 
 	secMid := NewSecurityMiddlewareWithBoardToken(opts.AuthToken, opts.BoardToken, opts.Port, opts.CORSAllowAll)
+	// Generate a one-time bootstrap nonce so the board_token never needs to appear in a URL.
+	// The nonce is consumed on first successful ?board_nonce= use; ?board_token= still works as fallback.
+	if nonce, err := GenerateAuthToken(); err == nil {
+		secMid.SetBoardNonce(nonce)
+		opts.BoardNonce = nonce
+	}
 
 	s := &Server{
 		opts:   opts,
@@ -257,6 +263,13 @@ func (s *Server) Token() string {
 // BoardToken returns the board-only credential required for Board-action endpoints.
 func (s *Server) BoardToken() string {
 	return s.opts.BoardToken
+}
+
+// BoardNonce returns the one-time bootstrap nonce for the board session.
+// Use this to construct the Board URL: /?token=<Token>&board_nonce=<BoardNonce>
+// The nonce is single-use and is consumed by the first successful bootstrap request.
+func (s *Server) BoardNonce() string {
+	return s.opts.BoardNonce
 }
 
 // Hub returns the server's EventHub for publishing events.

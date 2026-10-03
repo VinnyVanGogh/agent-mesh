@@ -51,6 +51,11 @@ type Options struct {
 	// If empty and BoardToken is empty, a random board token is generated in memory.
 	BoardTokenPath string
 
+	// BoardNonce is a one-time bootstrap nonce generated at server startup.
+	// It is set by New() after the middleware is created; callers may read it via
+	// Server.BoardNonce() to build the board bootstrap URL without exposing BoardToken in a URL.
+	BoardNonce string
+
 	// DB is the SQLite database connection backing the orchestrator.
 	DB *sql.DB
 

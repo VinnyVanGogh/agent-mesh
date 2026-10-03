@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const sessionCookieName = "staypoint_session"
@@ -27,6 +28,9 @@ type SecurityMiddleware struct {
 	boardToken   string // separate credential required for Board-only mutations
 	port         int    // actual bound port, if known (or 0 for any local port)
 	corsAllowAll bool   // opt-in: skip origin check and emit wildcard CORS headers
+
+	nonceMu  sync.Mutex
+	nonce    string // one-time bootstrap nonce; zeroed after first successful use
 }
 
 // NewSecurityMiddleware creates a new SecurityMiddleware.
@@ -55,6 +59,32 @@ func NewSecurityMiddlewareWithBoardToken(token, boardToken string, port int, cor
 		port:         port,
 		corsAllowAll: corsAllowAll,
 	}
+}
+
+// SetBoardNonce installs a one-time bootstrap nonce. The first request that presents
+// this nonce via ?board_nonce= is granted the board session cookie; the nonce is then
+// consumed and cannot be reused. This keeps the long-lived board_token out of URLs.
+func (sm *SecurityMiddleware) SetBoardNonce(nonce string) {
+	sm.nonceMu.Lock()
+	defer sm.nonceMu.Unlock()
+	sm.nonce = nonce
+}
+
+// consumeNonce returns true and clears the nonce if n matches; false otherwise.
+func (sm *SecurityMiddleware) consumeNonce(n string) bool {
+	if n == "" {
+		return false
+	}
+	sm.nonceMu.Lock()
+	defer sm.nonceMu.Unlock()
+	if sm.nonce == "" {
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(n), []byte(sm.nonce)) == 1 {
+		sm.nonce = "" // consume: single-use
+		return true
+	}
+	return false
 }
 
 // BoardToken returns the board-only credential.
@@ -143,10 +173,12 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 
 		// 4. Cookie exchange: if browser hit a UI route with ?token=, set the session
 		// cookie and redirect to the clean URL. After this, the bookmark works.
-		// The board cookie is set only when ?board_token= is ALSO present and valid —
-		// so auth_token alone (the agent credential) is NOT sufficient to obtain a
-		// board session. Agents would need to separately read ~/.staypoint/board_token
-		// (now a Red path via sensitiveDirs) and include it explicitly.
+		//
+		// The board cookie is issued when either:
+		//   a. ?board_nonce=<nonce>  — a one-time value generated at daemon startup and
+		//      consumed on first use (preferred: board_token never appears in a URL), or
+		//   b. ?board_token=<token> — direct credential (fallback for automated tooling).
+		// In both cases the session auth token must also be valid.
 		if qToken := r.URL.Query().Get("token"); qToken != "" && !strings.HasPrefix(r.URL.Path, "/api/") {
 			if subtle.ConstantTimeCompare([]byte(qToken), []byte(sm.token)) == 1 {
 				http.SetCookie(w, &http.Cookie{
@@ -158,7 +190,11 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 					MaxAge:   sessionCookieMaxAge,
 				})
 				if sm.boardToken != "" {
-					if qBoard := r.URL.Query().Get("board_token"); subtle.ConstantTimeCompare([]byte(qBoard), []byte(sm.boardToken)) == 1 {
+					grantBoard := sm.consumeNonce(r.URL.Query().Get("board_nonce"))
+					if !grantBoard {
+						grantBoard = subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("board_token")), []byte(sm.boardToken)) == 1
+					}
+					if grantBoard {
 						http.SetCookie(w, &http.Cookie{
 							Name:     boardCookieName,
 							Value:    sm.boardToken,
@@ -172,6 +208,7 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 				cleanURL := *r.URL
 				q := cleanURL.Query()
 				q.Del("token")
+				q.Del("board_nonce")
 				q.Del("board_token")
 				cleanURL.RawQuery = q.Encode()
 				http.Redirect(w, r, cleanURL.String(), http.StatusFound)

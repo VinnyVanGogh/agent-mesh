@@ -185,12 +185,18 @@ var daemonServeCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		boardURL := fmt.Sprintf("%s/?token=%s&board_token=%s", srv.URL(), srv.Token(), srv.BoardToken())
 		fmt.Printf("StayPoint local HTTP and SSE server running\n")
 		fmt.Printf("  URL:        %s\n", srv.URL())
 		fmt.Printf("  Auth Token: %s\n", srv.Token())
 		fmt.Printf("  Token File: %s\n", tokenPath)
-		fmt.Printf("  Board URL:  %s\n", boardURL)
+		// Board URL uses a one-time nonce (not the long-lived board_token).
+		// Only print to a TTY so the URL is not captured in logs or piped output
+		// that an agent process could read.
+		fi, _ := os.Stdout.Stat()
+		if fi != nil && (fi.Mode()&os.ModeCharDevice) != 0 {
+			boardURL := fmt.Sprintf("%s/?token=%s&board_nonce=%s", srv.URL(), srv.Token(), srv.BoardNonce())
+			fmt.Printf("  Board URL:  %s\n", boardURL)
+		}
 		fmt.Printf("Press Ctrl+C to stop.\n")
 
 		sigChan := make(chan os.Signal, 1)
