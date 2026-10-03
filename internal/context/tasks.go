@@ -99,7 +99,8 @@ type TaskCreateOptions struct {
 	AssigneeAgentID string
 	// WorkKind is the routing category. Defaults to "coding" when empty.
 	// TODO(STA-316): validate and persist.
-	WorkKind        string
+	WorkKind    string
+	Description string
 }
 
 // GetCurrentGitBranch returns the current active git branch for a directory.
@@ -192,10 +193,27 @@ func CreateTaskWithOptions(db *sql.DB, opts TaskCreateOptions) (*Task, error) {
 		return nil, fmt.Errorf("failed to insert task: %w", err)
 	}
 
+	if opts.Description != "" {
+		if err := UpsertTaskDescription(db, taskID, opts.Description); err != nil {
+			return nil, fmt.Errorf("store description: %w", err)
+		}
+	}
+
 	// Waking the agent as the task is ready for assignment/pickup
 	_ = orchestrator.NotifyDaemon(taskID, "assignment", "")
 
 	return GetTask(db, taskID)
+}
+
+// UpsertTaskDescription inserts a new description version for taskID.
+func UpsertTaskDescription(db *sql.DB, taskID, content string) error {
+	var maxVer int
+	_ = db.QueryRow(`SELECT COALESCE(MAX(version),0) FROM task_documents WHERE task_id = ? AND doc_key = 'description'`, taskID).Scan(&maxVer)
+	_, err := db.Exec(
+		`INSERT INTO task_documents (task_id, doc_key, version, content) VALUES (?, 'description', ?, ?)`,
+		taskID, maxVer+1, content,
+	)
+	return err
 }
 
 // RecordTaskSpend updates the cumulative token, dollar, and turn spend on a task.

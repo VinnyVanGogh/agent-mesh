@@ -215,6 +215,19 @@ func (s *Server) getToolsList() []Tool {
 				Required: []string{"task_id", "kind"},
 			},
 		},
+		{
+			Name:        "staypoint_task_get",
+			Description: "get the current task brief: name, org/project, repo, branch, description, and all board/user comments",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"task_id": {
+						Type:        "string",
+						Description: "Task ID to fetch (defaults to STAYPOINT_TASK_ID env var)",
+					},
+				},
+			},
+		},
 	}
 }
 
@@ -238,6 +251,8 @@ func (s *Server) handleCallTool(ctx context.Context, params CallToolParams) *Too
 		return s.handleWake(ctx, params.Arguments)
 	case "staypoint_create_interaction":
 		return s.handleCreateInteraction(ctx, params.Arguments)
+	case "staypoint_task_get":
+		return s.handleTaskGet(ctx, params.Arguments)
 	default:
 		return toolError(fmt.Sprintf("unknown tool: %s", params.Name))
 	}
@@ -543,4 +558,54 @@ func (s *Server) handleCreateInteraction(ctx context.Context, rawArgs json.RawMe
 		return toolError(fmt.Sprintf("json marshal error: %v", err))
 	}
 	return toolSuccess(string(data))
+}
+
+func (s *Server) handleTaskGet(ctx context.Context, rawArgs json.RawMessage) *ToolCallResult {
+	var args struct {
+		TaskID string `json:"task_id"`
+	}
+	if len(rawArgs) > 0 {
+		_ = json.Unmarshal(rawArgs, &args)
+	}
+	if args.TaskID == "" {
+		args.TaskID = os.Getenv("STAYPOINT_TASK_ID")
+	}
+	if args.TaskID == "" {
+		return toolError("task_id is required (or set STAYPOINT_TASK_ID)")
+	}
+
+	dbConn, err := s.getDB()
+	if err != nil {
+		return toolError(fmt.Sprintf("database error: %v", err))
+	}
+
+	task, err := meshContext.GetTask(dbConn, args.TaskID)
+	if err != nil {
+		return toolError(fmt.Sprintf("task not found: %v", err))
+	}
+
+	// Filter comments to non-harness only.
+	var userComments []meshContext.TaskComment
+	for _, c := range task.Comments {
+		if c.Author != "harness" {
+			userComments = append(userComments, c)
+		}
+	}
+
+	result := map[string]any{
+		"id":          task.ID,
+		"name":        task.Name,
+		"org":         task.Organization,
+		"project":     task.Project,
+		"repo_path":   task.RepoPath,
+		"git_branch":  task.GitBranch,
+		"description": task.Description,
+		"comments":    userComments,
+	}
+
+	out, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return toolError(fmt.Sprintf("marshal error: %v", err))
+	}
+	return toolSuccess(string(out))
 }

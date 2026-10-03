@@ -143,6 +143,7 @@ func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Project         string  `json:"project"`
 		AssigneeAgentID string  `json:"assignee_agent_id"`
 		WorkKind        string  `json:"work_kind"`
+		Description     string  `json:"description"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -171,6 +172,7 @@ func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Project:         req.Project,
 		AssigneeAgentID: req.AssigneeAgentID,
 		WorkKind:        req.WorkKind,
+		Description:     req.Description,
 	}
 
 	task, err := context.CreateTaskWithOptions(h.db, opts)
@@ -186,6 +188,37 @@ func (h *TasksHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(task)
+}
+
+// UpdateTaskDescription handles PUT /api/tasks/{id}/description
+func (h *TasksHandler) UpdateTaskDescription(w http.ResponseWriter, r *http.Request) {
+	taskID := r.PathValue("id")
+	var req struct {
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	task, err := context.GetTask(h.db, taskID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if err := context.UpsertTaskDescription(h.db, task.ID, req.Description); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update description: "+err.Error())
+		return
+	}
+	updated, err := context.GetTask(h.db, task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fetch updated task: "+err.Error())
+		return
+	}
+	if h.hub != nil {
+		h.hub.Publish("task_updated", updated)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(updated)
 }
 
 // GetComments handles GET /api/tasks/{id}/comments
