@@ -48,19 +48,47 @@ var destructivePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bDROP\s+POLICY\b`),
 }
 
+// stripComments removes -- line comments and /* */ block comments from sql.
+func stripComments(sql string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(sql) {
+		// Line comment
+		if i+1 < len(sql) && sql[i] == '-' && sql[i+1] == '-' {
+			for i < len(sql) && sql[i] != '\n' {
+				i++
+			}
+			continue
+		}
+		// Block comment
+		if i+1 < len(sql) && sql[i] == '/' && sql[i+1] == '*' {
+			i += 2
+			for i+1 < len(sql) && !(sql[i] == '*' && sql[i+1] == '/') {
+				i++
+			}
+			i += 2 // skip */
+			continue
+		}
+		b.WriteByte(sql[i])
+		i++
+	}
+	return b.String()
+}
+
 // CheckRisk scans sql for destructive or locking patterns.
 // Returns the matched snippets and whether any were found.
 func CheckRisk(sql string) (risks []string, hasRisk bool) {
-	lines := strings.Split(sql, "\n")
+	stripped := stripComments(sql)
+	lines := strings.Split(stripped, "\n")
 	seen := map[string]bool{}
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "--") {
+		if trimmed == "" {
 			continue
 		}
 		for _, pat := range destructivePatterns {
-			if loc := pat.FindStringIndex(trimmed); loc != nil {
-				snippet := strings.TrimSpace(trimmed)
+			if pat.FindStringIndex(trimmed) != nil {
+				snippet := trimmed
 				if len(snippet) > 80 {
 					snippet = snippet[:80] + "…"
 				}

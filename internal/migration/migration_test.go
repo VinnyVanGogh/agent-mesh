@@ -71,11 +71,17 @@ func TestCheckRisk_DropPolicy(t *testing.T) {
 	}
 }
 
-func TestCheckRisk_CommentIgnored(t *testing.T) {
-	// comment lines should not trigger risk even if they contain DROP
-	risks, hasRisk := migration.CheckRisk(`-- DROP TABLE users;\nCREATE TABLE new_users (id uuid PRIMARY KEY);`)
+func TestCheckRisk_LineCommentIgnored(t *testing.T) {
+	risks, hasRisk := migration.CheckRisk("-- DROP TABLE users;\nCREATE TABLE new_users (id uuid PRIMARY KEY);")
 	if hasRisk {
-		t.Errorf("comment-only DROP flagged as risky: %v", risks)
+		t.Errorf("line-comment DROP flagged as risky: %v", risks)
+	}
+}
+
+func TestCheckRisk_BlockCommentIgnored(t *testing.T) {
+	risks, hasRisk := migration.CheckRisk("/* DROP TABLE users; TRUNCATE sessions; */\nCREATE TABLE new_users (id uuid PRIMARY KEY);")
+	if hasRisk {
+		t.Errorf("block-comment DROP flagged as risky: %v", risks)
 	}
 }
 

@@ -84,6 +84,32 @@ func ValidateDevURL(rawURL string) error {
 	return validateDevURL(rawURL)
 }
 
+// ValidateSQLEditorURL rejects non-http(s) URLs. Unlike ValidateDevURL it
+// permits external hosts (e.g. supabase.com dashboard links).
+func ValidateSQLEditorURL(rawURL string) error {
+	if rawURL == "" {
+		return nil
+	}
+	lower := strings.ToLower(rawURL)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+		return fmt.Errorf("sql_editor_url must start with http:// or https://")
+	}
+	// Require a non-empty host after the scheme.
+	rest := lower[strings.Index(lower, "//")+2:]
+	host := rest
+	if i := strings.Index(host, "/"); i >= 0 {
+		host = host[:i]
+	}
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		host = host[:i]
+	}
+	host = strings.TrimSpace(strings.Trim(host, "[]"))
+	if host == "" {
+		return fmt.Errorf("sql_editor_url must include a valid host")
+	}
+	return nil
+}
+
 // validateDevURL rejects non-loopback or non-http(s) URLs.
 func validateDevURL(rawURL string) error {
 	if rawURL == "" {

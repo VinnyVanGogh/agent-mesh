@@ -7393,9 +7393,17 @@ async function renderMigrationsPanel(container, taskId) {
   titleRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
   titleRow.appendChild(el('div', 'task-page-section-title', `Migrations (${migrations.length})`));
 
-  if (data.sql_editor_url) {
+  // Validate sql_editor_url scheme before setting href (prevent javascript: XSS).
+  const safeEditorURL = (() => {
+    if (!data.sql_editor_url) return '';
+    try {
+      const u = new URL(data.sql_editor_url);
+      return (u.protocol === 'http:' || u.protocol === 'https:') ? data.sql_editor_url : '';
+    } catch { return ''; }
+  })();
+  if (safeEditorURL) {
     const editorLink = document.createElement('a');
-    editorLink.href = data.sql_editor_url;
+    editorLink.href = safeEditorURL;
     editorLink.target = '_blank';
     editorLink.rel = 'noopener noreferrer';
     editorLink.textContent = 'Open SQL editor →';
