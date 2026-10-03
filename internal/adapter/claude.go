@@ -122,6 +122,8 @@ type claudeEvent struct {
 		Model string `json:"model"`
 		// Content is an array of blocks, or a plain string for replayed user prompts.
 		Content json.RawMessage `json:"content"`
+		// Usage is populated on assistant events; Claude CLI puts usage here, not at top level.
+		Usage *claudeUsage `json:"usage"`
 	} `json:"message"`
 	IsError bool         `json:"is_error"`
 	Result  string       `json:"result"`
@@ -173,23 +175,30 @@ func (ClaudeAdapter) ParseStreamDelta(line []byte) ([]StreamDelta, error) {
 			out = append(out, d)
 		}
 		// Emit usage delta from assistant events so stats bar updates during the turn.
-		if ev.Type == "assistant" && ev.Usage != nil {
-			model := ev.Message.Model
-			if model == "" {
-				model = ev.Model
+		// Claude CLI puts usage inside message.usage (not at the event top level).
+		if ev.Type == "assistant" {
+			usage := ev.Usage
+			if usage == nil {
+				usage = ev.Message.Usage
 			}
-			out = append(out, StreamDelta{
-				Kind:      DeltaUsage,
-				SessionID: ev.SessionID,
-				Model:     model,
-				Usage: &Usage{
-					InputTokens:         ev.Usage.InputTokens,
-					OutputTokens:        ev.Usage.OutputTokens,
-					CacheReadTokens:     ev.Usage.CacheReadInputTokens,
-					CacheCreationTokens: ev.Usage.CacheCreationInputTokens,
-					ThinkingTokens:      ev.Usage.OutputTokensDetails.ThinkingTokens,
-				},
-			})
+			if usage != nil {
+				model := ev.Message.Model
+				if model == "" {
+					model = ev.Model
+				}
+				out = append(out, StreamDelta{
+					Kind:      DeltaUsage,
+					SessionID: ev.SessionID,
+					Model:     model,
+					Usage: &Usage{
+						InputTokens:         usage.InputTokens,
+						OutputTokens:        usage.OutputTokens,
+						CacheReadTokens:     usage.CacheReadInputTokens,
+						CacheCreationTokens: usage.CacheCreationInputTokens,
+						ThinkingTokens:      usage.OutputTokensDetails.ThinkingTokens,
+					},
+				})
+			}
 		}
 		return out, nil
 

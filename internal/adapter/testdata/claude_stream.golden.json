@@ -45,12 +45,36 @@
     "model": "claude-haiku-4-5-20251001"
   },
   {
+    "kind": "usage",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "model": "claude-haiku-4-5-20251001",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 4,
+      "cache_read_tokens": 17820,
+      "cache_creation_tokens": 21093,
+      "thinking_tokens": 0
+    }
+  },
+  {
     "kind": "tool_use",
     "session_id": "00000000-0000-4000-8000-00000000c1a0",
     "model": "claude-haiku-4-5-20251001",
     "tool_name": "Bash",
     "tool_id": "toolu_01Xffa89zoLuGLnk68njQmF4",
     "tool_input": "{\"command\":\"echo hi\",\"description\":\"Echo hi to stdout\"}"
+  },
+  {
+    "kind": "usage",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "model": "claude-haiku-4-5-20251001",
+    "usage": {
+      "input_tokens": 10,
+      "output_tokens": 4,
+      "cache_read_tokens": 17820,
+      "cache_creation_tokens": 21093,
+      "thinking_tokens": 0
+    }
   },
   {
     "kind": "other",
@@ -69,10 +93,34 @@
     "model": "claude-haiku-4-5-20251001"
   },
   {
+    "kind": "usage",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "model": "claude-haiku-4-5-20251001",
+    "usage": {
+      "input_tokens": 8,
+      "output_tokens": 2,
+      "cache_read_tokens": 38913,
+      "cache_creation_tokens": 2076,
+      "thinking_tokens": 0
+    }
+  },
+  {
     "kind": "text",
     "session_id": "00000000-0000-4000-8000-00000000c1a0",
     "model": "claude-haiku-4-5-20251001",
     "text": "done"
+  },
+  {
+    "kind": "usage",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "model": "claude-haiku-4-5-20251001",
+    "usage": {
+      "input_tokens": 8,
+      "output_tokens": 2,
+      "cache_read_tokens": 38913,
+      "cache_creation_tokens": 2076,
+      "thinking_tokens": 0
+    }
   },
   {
     "kind": "usage",

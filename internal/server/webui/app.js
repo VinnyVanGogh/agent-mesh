@@ -388,8 +388,8 @@ function handleEvent(evt) {
     const tid = stats.task_id;
     if (tid) {
       if (!state.tasks[tid]) state.tasks[tid] = {};
-      if (stats.spent_usd != null) state.tasks[tid].spent_usd = stats.spent_usd;
-      if (stats.spent_tokens != null) state.tasks[tid].spent_tokens = stats.spent_tokens;
+      if (stats.spent_usd != null) state.tasks[tid].spent_usd = Math.max(state.tasks[tid].spent_usd || 0, stats.spent_usd);
+      if (stats.spent_tokens != null) state.tasks[tid].spent_tokens = Math.max(state.tasks[tid].spent_tokens || 0, stats.spent_tokens);
     }
     if (tid && state.openDetailTaskId === tid) {
       refreshTaskStatsBar(tid);
@@ -415,8 +415,8 @@ function handleEvent(evt) {
     const tid = stats.task_id;
     if (tid) {
       if (!state.tasks[tid]) state.tasks[tid] = {};
-      if (stats.spent_usd != null) state.tasks[tid].spent_usd = stats.spent_usd;
-      if (stats.spent_tokens != null) state.tasks[tid].spent_tokens = stats.spent_tokens;
+      if (stats.spent_usd != null) state.tasks[tid].spent_usd = Math.max(state.tasks[tid].spent_usd || 0, stats.spent_usd);
+      if (stats.spent_tokens != null) state.tasks[tid].spent_tokens = Math.max(state.tasks[tid].spent_tokens || 0, stats.spent_tokens);
     }
     if (tid && state.openDetailTaskId === tid) {
       const statsBar = document.getElementById(`timeline-stats-${tid}`);
