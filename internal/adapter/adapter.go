@@ -391,7 +391,6 @@ func runWithFailover(ctx context.Context, cwd string, pacerState *router.PacerSt
 		}
 		firstAttempt = false
 
-		var buf bytes.Buffer
 		fmt.Fprintf(stderr, "[staypoint-adapter] trying %s...\n", candidate.Name)
 
 		bin, err := resolve(candidate.Adapter)
@@ -402,25 +401,49 @@ func runWithFailover(ctx context.Context, cwd string, pacerState *router.PacerSt
 		}
 
 		extraEnv := append(ctxEnv, candidate.ExtraEnv...)
-		err = candidate.Adapter.Execute(ctx, ExecRequest{
-			Bin:      bin,
-			Dir:      cwd,
-			Opts:     candidateOpts,
-			ExtraEnv: extraEnv,
-			Stdin:    bytes.NewReader(stdinBytes),
-			Stdout:   &buf,
-			Stderr:   stderr,
-		})
 
-		if err == nil {
-			// Success: flush buffered output to real stdout
-			_, _ = io.Copy(stdout, &buf)
-			return nil
+		// Run the candidate with a pipe so we can stream to stdout as the
+		// provider emits events. We commit (start forwarding) on the first
+		// assistant-class event. Before that point the output is held in a
+		// small buffer so we can still fall back to the next candidate on a
+		// pre-commit failure.
+		pr, pw := io.Pipe()
+		execErrCh := make(chan error, 1)
+		go func(c providerCandidate, b string, opts ParsedOptions, env []string) {
+			e := c.Adapter.Execute(ctx, ExecRequest{
+				Bin:      b,
+				Dir:      cwd,
+				Opts:     opts,
+				ExtraEnv: env,
+				Stdin:    bytes.NewReader(stdinBytes),
+				Stdout:   pw,
+				Stderr:   stderr,
+			})
+			execErrCh <- e
+			if e != nil {
+				pw.CloseWithError(e)
+			} else {
+				pw.Close()
+			}
+		}(candidate, bin, candidateOpts, extraEnv)
+
+		parse := candidate.Adapter.ParseStreamDelta
+		committed, prebuf := streamWithCommit(pr, stdout, func(line []byte) bool {
+			return isAssistantEvent(line, parse)
+		})
+		execErr := <-execErrCh
+
+		if committed || execErr == nil {
+			if !committed && len(prebuf) > 0 {
+				// Provider succeeded without a commit-class event: forward whatever it wrote.
+				_, _ = stdout.Write(prebuf)
+			}
+			return execErr
 		}
 
-		// Failed: swallow stdout, log to stderr, try next candidate
-		fmt.Fprintf(stderr, "[staypoint-adapter] %s failed (%v), trying next provider...\n", candidate.Name, err)
-		lastErr = err
+		// Provider failed before committing: safe to fall back.
+		fmt.Fprintf(stderr, "[staypoint-adapter] %s failed (%v), trying next provider...\n", candidate.Name, execErr)
+		lastErr = execErr
 	}
 
 	// All candidates exhausted
