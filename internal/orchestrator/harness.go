@@ -407,6 +407,10 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	var consecutiveAdapterErrors int
 	var lastTurnWasAdapterError bool
 
+	// lastTurnOutput preserves the raw stream-json bytes from the final adapter
+	// turn so extractFinalResponse can find the agent's last assistant message.
+	var lastTurnOutput []byte
+
 	for turn := 0; turn < maxTurns; turn++ {
 		if ctx.Err() != nil {
 			result.Disposition = "capped"
@@ -508,6 +512,12 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		// One harness turn = one adapter invocation. spent_turns counts these,
 		// not provider-internal tool-use rounds (STA-466).
 		result.Turns++
+
+		// Preserve this turn's raw output for the run-summary comment posted at end of run.
+		if n := outBuf.Len(); n > 0 {
+			lastTurnOutput = make([]byte, n)
+			copy(lastTurnOutput, outBuf.Bytes())
+		}
 
 		// Prefer text-only detection when the stream parser is active; fall back
 		// to raw-byte scan only when no parser is wired (dry-run/test mode).
@@ -652,6 +662,29 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 			taskID, result.DiagnosticMsg,
 		); err != nil {
 			runLog.Warn("inject diagnostic comment failed", slog.Any("error", err))
+		}
+	}
+
+	// Post the agent's final response + run-summary footer so it appears in the
+	// task chat thread — visible to the board without digging into think rows.
+	{
+		agentText := extractFinalResponse(lastTurnOutput)
+		footer := buildRunFooter(result, wtPath)
+		var summaryBody string
+		if agentText != "" {
+			summaryBody = agentText + "\n\n" + footer
+		} else {
+			summaryBody = footer
+		}
+		author := cfg.AgentID
+		if author == "" {
+			author = "agent"
+		}
+		if _, err := h.DB.ExecContext(cleanCtx,
+			`INSERT INTO task_comments (task_id, author, message) VALUES (?, ?, ?)`,
+			taskID, author, summaryBody,
+		); err != nil {
+			runLog.Warn("post run summary comment failed", slog.Any("error", err))
 		}
 	}
 
