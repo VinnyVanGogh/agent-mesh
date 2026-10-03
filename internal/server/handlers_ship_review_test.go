@@ -23,7 +23,7 @@ import (
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-func shipDoReq(t *testing.T, client *http.Client, token, method, urlStr string, body []byte) (*http.Response, []byte) {
+func shipDoReq(t *testing.T, client *http.Client, token, method, urlStr string, body []byte, boardToken ...string) (*http.Response, []byte) {
 	t.Helper()
 	var br io.Reader
 	if body != nil {
@@ -37,6 +37,9 @@ func shipDoReq(t *testing.T, client *http.Client, token, method, urlStr string, 
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if len(boardToken) > 0 && boardToken[0] != "" {
+		req.AddCookie(&http.Cookie{Name: "staypoint_board", Value: boardToken[0]})
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("do request: %v", err)
@@ -47,6 +50,8 @@ func shipDoReq(t *testing.T, client *http.Client, token, method, urlStr string, 
 }
 
 // createShipTask inserts a task with a real git repo so UpsertCard can resolve HEAD.
+// UpsertCard (post-STA-533) always resolves branch "staypoint/<taskID>", so after
+// creating the task we create that branch in the repo and push it.
 // Returns taskID and repoDir.
 func createShipTask(t *testing.T, baseURL, token string, client *http.Client) (taskID, repoDir string) {
 	t.Helper()
@@ -78,8 +83,7 @@ func createShipTask(t *testing.T, baseURL, token string, client *http.Client) (t
 	run(work, "add", ".")
 	run(work, "commit", "-m", "init")
 
-	// Feature branch
-	run(work, "checkout", "-b", "paperclip/ship-test")
+	// Feature commit on main (we'll rename the branch after we know the task ID).
 	_ = os.WriteFile(filepath.Join(work, "feat.txt"), []byte("feature\n"), 0644)
 	run(work, "add", ".")
 	run(work, "commit", "-m", "feat: ship test")
@@ -92,15 +96,14 @@ func createShipTask(t *testing.T, baseURL, token string, client *http.Client) (t
 	}
 	run(work, "remote", "add", "origin", bare)
 	run(work, "push", "origin", "main")
-	run(work, "push", "origin", "paperclip/ship-test")
 
 	// Create task via API pointing at work repo.
 	taskBody, _ := json.Marshal(map[string]any{
-		"name":       fmt.Sprintf("ship-test-%d", len(token)),
-		"repo_path":  work,
-		"git_branch": "paperclip/ship-test",
+		"name":         fmt.Sprintf("ship-test-%d", len(token)),
+		"repo_path":    work,
+		"git_branch":   "main",
 		"organization": "STA",
-		"project":    "ship-review-test",
+		"project":      "ship-review-test",
 	})
 	resp, rb := shipDoReq(t, client, token, "POST", baseURL+"/api/tasks", taskBody)
 	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
@@ -113,6 +116,17 @@ func createShipTask(t *testing.T, baseURL, token string, client *http.Client) (t
 	if taskResp.ID == "" {
 		t.Fatalf("no task id in response: %s", rb)
 	}
+
+	// UpsertCard always resolves "staypoint/<taskID>" — create that branch now.
+	branch := "staypoint/" + taskResp.ID
+	run(work, "checkout", "-b", branch)
+	_ = os.WriteFile(filepath.Join(work, "task.txt"), []byte("task work\n"), 0644)
+	run(work, "add", ".")
+	run(work, "commit", "-m", "task: add work file")
+	run(work, "push", "origin", branch)
+	// Return to main so the repo root is on main (ApproveAndMerge merges into main).
+	run(work, "checkout", "main")
+
 	return taskResp.ID, work
 }
 
@@ -124,6 +138,8 @@ func TestShipReview_DevURLPersistedAfterUpsert(t *testing.T) {
 	database := setupTestDB(t)
 	srv, token := startTestServer(t, database)
 	baseURL := srv.URL()
+	boardToken := srv.BoardToken()
+	_ = boardToken
 	client := &http.Client{}
 
 	taskID, _ := createShipTask(t, baseURL, token, client)
@@ -162,16 +178,15 @@ func TestShipReview_ApproveReturns409WithBodyOnMovedHead(t *testing.T) {
 	database := setupTestDB(t)
 	srv, token := startTestServer(t, database)
 	baseURL := srv.URL()
+	boardToken := srv.BoardToken()
 	client := &http.Client{}
 
 	taskID, repoDir := createShipTask(t, baseURL, token, client)
 
-	// Upsert card with a WRONG (stale) SHA to force head_moved.
+	// Upsert card — get the real HEAD pinned.
 	upsertBody, _ := json.Marshal(map[string]any{
 		"test_steps": []string{"1. Open /"},
 	})
-	// First, get the real HEAD to create a valid card, then we'll manually
-	// push a new commit to move the HEAD before approving.
 	resp, rb := shipDoReq(t, client, token, "PUT", baseURL+"/api/tasks/"+taskID+"/ship-review", upsertBody)
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("UpsertCard: %d %s", resp.StatusCode, rb)
@@ -189,12 +204,14 @@ func TestShipReview_ApproveReturns409WithBodyOnMovedHead(t *testing.T) {
 		cmd.Env = gitEnv
 		_ = cmd.Run()
 	}
+	run("checkout", "staypoint/"+taskID)
 	run("add", ".")
 	run("commit", "-m", "extra commit after pin")
-	run("push", "origin", "paperclip/ship-test")
+	run("push", "origin", "staypoint/"+taskID)
+	run("checkout", "main")
 
-	// Approve should 409.
-	resp3, rb3 := shipDoReq(t, client, token, "POST", baseURL+"/api/tasks/"+taskID+"/ship-review/approve", nil)
+	// Approve should 409 because HEAD moved past pinned SHA.
+	resp3, rb3 := shipDoReq(t, client, token, "POST", baseURL+"/api/tasks/"+taskID+"/ship-review/approve", nil, boardToken)
 	if resp3.StatusCode != http.StatusConflict {
 		t.Fatalf("want 409 on moved head, got %d: %s", resp3.StatusCode, rb3)
 	}
@@ -222,6 +239,7 @@ func TestShipReview_ApproveMovesTaskToDone(t *testing.T) {
 	database := setupTestDB(t)
 	srv, token := startTestServer(t, database)
 	baseURL := srv.URL()
+	boardToken := srv.BoardToken()
 	client := &http.Client{}
 
 	taskID, _ := createShipTask(t, baseURL, token, client)
@@ -235,8 +253,8 @@ func TestShipReview_ApproveMovesTaskToDone(t *testing.T) {
 		t.Fatalf("UpsertCard: %d %s", resp.StatusCode, rb)
 	}
 
-	// Approve — must succeed (200).
-	resp2, rb2 := shipDoReq(t, client, token, "POST", baseURL+"/api/tasks/"+taskID+"/ship-review/approve", nil)
+	// Approve — must succeed (200).  Board session cookie required (post-STA-536).
+	resp2, rb2 := shipDoReq(t, client, token, "POST", baseURL+"/api/tasks/"+taskID+"/ship-review/approve", nil, boardToken)
 	if resp2.StatusCode != http.StatusOK {
 		t.Fatalf("Approve: %d %s", resp2.StatusCode, rb2)
 	}
