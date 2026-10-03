@@ -98,7 +98,7 @@ func (h *ShipReviewHandler) UpsertCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	card, err := shipreview.CreateCard(h.db, taskID, branch, headSHA, req.TestSteps, req.DevURL, workDir, req.CheckRuns)
+	card, err := shipreview.CreateCard(h.db, taskID, branch, headSHA, req.TestSteps, req.DevURL, task.RepoPath, req.CheckRuns)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

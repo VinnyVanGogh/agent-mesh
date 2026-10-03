@@ -52,8 +52,16 @@ type Card struct {
 	RejectComment   string     `json:"reject_comment,omitempty"`
 	FilesChanged    []string   `json:"files_changed"`
 	CheckRuns       []CheckRun `json:"check_runs"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	// AgentSummary is the most recent agent-summary comment for this task (from
+	// task_comments WHERE author='agent-summary'). Not stored on the card; populated
+	// at read time by GetCard so the Board sees the agent's final summary.
+	AgentSummary   string `json:"agent_summary,omitempty"`
+	// HasDBMigration is true when any file in FilesChanged matches a DB migration
+	// path pattern (supabase/migrations/, db/migrations/, prisma/migrations/, *.sql
+	// inside a migrations/ dir). Computed at read time; not stored.
+	HasDBMigration bool      `json:"has_db_migration"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // ErrHeadMoved is returned when the branch HEAD changed after the card was rendered.
@@ -343,7 +351,36 @@ func GetCard(db *sql.DB, taskID string) (*Card, error) {
 	c.RejectComment = reject.String
 	c.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	c.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+
+	// Populate AgentSummary from the most recent agent-summary comment (posted by
+	// the harness postflight; see internal/orchestrator/run_summary.go).
+	var summary sql.NullString
+	_ = db.QueryRow(
+		`SELECT message FROM task_comments WHERE task_id = ? AND author = 'agent-summary' ORDER BY created_at DESC LIMIT 1`,
+		taskID,
+	).Scan(&summary)
+	c.AgentSummary = summary.String
+
+	// Compute HasDBMigration from FilesChanged.
+	c.HasDBMigration = isMigrationInFiles(c.FilesChanged)
+
 	return &c, nil
+}
+
+// isMigrationInFiles returns true when any path looks like a DB migration file.
+func isMigrationInFiles(files []string) bool {
+	for _, f := range files {
+		lower := strings.ToLower(filepath.ToSlash(f))
+		// supabase/migrations/, db/migrations/, prisma/migrations/, etc.
+		if strings.Contains(lower, "/migrations/") {
+			return true
+		}
+		// Bare top-level migrations/ dir
+		if strings.HasPrefix(lower, "migrations/") {
+			return true
+		}
+	}
+	return false
 }
 
 // SetDevPID persists the dev server PID to the card.

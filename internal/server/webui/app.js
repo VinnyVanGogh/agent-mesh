@@ -7376,6 +7376,22 @@ async function renderShipReviewCard(container, taskId) {
     section.appendChild(fbBox);
   }
 
+  // Agent summary — most recent harness-posted run summary for this task.
+  if (card.agent_summary) {
+    const summarySection = el('div', 'ship-review-summary-section');
+    summarySection.appendChild(el('div', 'ship-review-section-title', 'Agent summary'));
+    const summaryBody = el('pre', 'ship-review-summary-body', card.agent_summary);
+    summarySection.appendChild(summaryBody);
+    section.appendChild(summarySection);
+  }
+
+  // DB migration warning — shown when any changed file is a migration.
+  if (card.has_db_migration) {
+    const migBanner = el('div', 'ship-review-migration-banner');
+    migBanner.textContent = '⚠ DB migration detected — apply migration separately before approving.';
+    section.appendChild(migBanner);
+  }
+
   // Dev URL — only render http/https loopback URLs to prevent XSS via javascript: etc.
   if (card.dev_url) {
     let safeDevURL = null;
@@ -7538,6 +7554,13 @@ async function renderShipReviewCard(container, taskId) {
 
   section.appendChild(actions);
   container.appendChild(section);
+
+  // B3: hide Run Now and Mark done while a ship review card is active — the card's
+  // own actions (Approve / Send back / Reject) are the only valid next step.
+  const page = container.closest('.task-page-main') || container;
+  for (const btn of page.querySelectorAll('.run-now-btn, .mark-done-btn, .mark-done-error')) {
+    btn.style.display = 'none';
+  }
 }
 
 // ── Migrations panel ──────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@ package shipreview_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -70,6 +71,13 @@ func openTestDB(t *testing.T) *sql.DB {
 			migration_globs_json TEXT NOT NULL DEFAULT '[]',
 			sql_editor_url TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+		);
+		CREATE TABLE IF NOT EXISTS task_comments (
+			id        INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id   TEXT NOT NULL,
+			author    TEXT NOT NULL DEFAULT 'system',
+			message   TEXT NOT NULL,
+			created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 		);
 	`)
 	if err != nil {
@@ -457,7 +465,7 @@ func TestApproveAndMergeFromRepoRoot(t *testing.T) {
 
 	repoDir, branch, featureSHA := setupGitRepo(t)
 	// Repo root is on main after setupGitRepo — this is the condition we test.
-	card, err := shipreview.CreateCard(db, "t6", branch, featureSHA, []string{"1. Verify"}, "")
+	card, err := shipreview.CreateCard(db, "t6", branch, featureSHA, []string{"1. Verify"}, "", repoDir, nil)
 	if err != nil {
 		t.Fatalf("CreateCard: %v", err)
 	}
@@ -485,7 +493,7 @@ func TestStartDevServerCreatesWorktreeAtPinnedSHA(t *testing.T) {
 
 	repoDir, branch, featureSHA := setupGitRepo(t)
 
-	card, err := shipreview.CreateCard(db, "t7", branch, featureSHA, []string{"1. Check"}, "http://127.0.0.1:9999")
+	card, err := shipreview.CreateCard(db, "t7", branch, featureSHA, []string{"1. Check"}, "http://127.0.0.1:9999", repoDir, nil)
 	if err != nil {
 		t.Fatalf("CreateCard: %v", err)
 	}
@@ -538,7 +546,7 @@ func TestSetDevURL_Persists(t *testing.T) {
 	db := openTestDB(t)
 	_, _ = db.Exec(`INSERT INTO tasks (id, name) VALUES ('t8', 'DevURL persist')`)
 
-	card, err := shipreview.CreateCard(db, "t8", "feature/test", "abc123", []string{"1. check"}, "")
+	card, err := shipreview.CreateCard(db, "t8", "feature/test", "abc123", []string{"1. check"}, "", "", nil)
 	if err != nil {
 		t.Fatalf("CreateCard: %v", err)
 	}
@@ -569,7 +577,7 @@ func TestApproveAndMerge_MainSHAStored(t *testing.T) {
 
 	repoDir, branch, featureSHA := setupGitRepo(t)
 
-	card, err := shipreview.CreateCard(db, "t9", branch, featureSHA, []string{"1. Verify"}, "")
+	card, err := shipreview.CreateCard(db, "t9", branch, featureSHA, []string{"1. Verify"}, "", repoDir, nil)
 	if err != nil {
 		t.Fatalf("CreateCard: %v", err)
 	}
@@ -591,5 +599,78 @@ func TestApproveAndMerge_MainSHAStored(t *testing.T) {
 	}
 	if got.MainSHA != mainSHA || mainSHA == "" {
 		t.Errorf("want main_sha %q, got %q", mainSHA, got.MainSHA)
+	}
+}
+
+func TestAgentSummaryPopulated(t *testing.T) {
+	db := openTestDB(t)
+	_, _ = db.Exec(`INSERT INTO tasks (id, name) VALUES ('t-agsummary', 'Summary test')`)
+
+	// Insert an agent-summary comment before creating the card.
+	_, _ = db.Exec(
+		`INSERT INTO task_comments (task_id, author, message) VALUES ('t-agsummary', 'agent-summary', 'Fixed the login bug. Run go test ./... to verify.')`,
+	)
+
+	card, err := shipreview.CreateCard(db, "t-agsummary", "staypoint/t-agsummary", "abc123", []string{"1. Run tests"}, "", "", nil)
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+
+	got, err := shipreview.GetCard(db, "t-agsummary")
+	if err != nil {
+		t.Fatalf("GetCard: %v", err)
+	}
+	if got.AgentSummary != "Fixed the login bug. Run go test ./... to verify." {
+		t.Errorf("AgentSummary = %q, want non-empty summary", got.AgentSummary)
+	}
+	_ = card
+}
+
+func TestAgentSummaryEmptyWhenNoComment(t *testing.T) {
+	db := openTestDB(t)
+	_, _ = db.Exec(`INSERT INTO tasks (id, name) VALUES ('t-nosum', 'No summary task')`)
+
+	card, err := shipreview.CreateCard(db, "t-nosum", "staypoint/t-nosum", "abc456", []string{"1. Check"}, "", "", nil)
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+
+	got, err := shipreview.GetCard(db, "t-nosum")
+	if err != nil {
+		t.Fatalf("GetCard: %v", err)
+	}
+	if got.AgentSummary != "" {
+		t.Errorf("AgentSummary = %q, want empty when no agent-summary comment", got.AgentSummary)
+	}
+	_ = card
+}
+
+func TestHasDBMigrationDetected(t *testing.T) {
+	db := openTestDB(t)
+	_, _ = db.Exec(`INSERT INTO tasks (id, name) VALUES ('t-migr', 'Migration test')`)
+
+	// We cannot easily control diffFilesChanged without a real repo, but we can
+	// verify that isMigrationInFiles is called correctly by checking the exported
+	// field on a card created without a real repo (files_changed will be empty).
+	// Instead test the helper via a card whose FilesChanged is set via the DB.
+	card, err := shipreview.CreateCard(db, "t-migr", "staypoint/t-migr", "sha789", []string{"1. Check"}, "", "", nil)
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+	if card.HasDBMigration {
+		t.Error("want HasDBMigration=false when no files changed (no repo dir)")
+	}
+
+	// Directly test the path logic via files_changed_json manipulation.
+	migFiles := []string{"supabase/migrations/0001_init.sql", "internal/server/handler.go"}
+	migJSON, _ := json.Marshal(migFiles)
+	_, _ = db.Exec(`UPDATE ship_review_cards SET files_changed_json = ? WHERE task_id = ?`, string(migJSON), "t-migr")
+
+	got, err := shipreview.GetCard(db, "t-migr")
+	if err != nil {
+		t.Fatalf("GetCard after update: %v", err)
+	}
+	if !got.HasDBMigration {
+		t.Errorf("want HasDBMigration=true for supabase/migrations/ path, got false; files=%v", got.FilesChanged)
 	}
 }
