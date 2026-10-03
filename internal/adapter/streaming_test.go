@@ -103,22 +103,23 @@ func (w *timestampWriter) String() string {
 }
 
 // TestStreamingFallback_LiveThroughput asserts that stdout receives its first
-// write before the provider process exits. A slow fake provider writes an init
-// event, sleeps 300 ms, then writes content and exits. Without streaming the
-// first write would arrive only after the full 300 ms; with streaming it arrives
-// within a few milliseconds of the init event.
+// write before the provider process exits. A slow fake provider writes a
+// DeltaToolUse event immediately, sleeps 300 ms, then exits. Without streaming
+// the first write would arrive only after the full 300 ms; with streaming it
+// arrives within a few milliseconds of the first content event.
+//
+// Note: DeltaInit is NOT a commit trigger (see isAssistantEvent). We use a
+// step_update (DeltaToolUse) as the first event so the commit fires immediately.
 func TestStreamingFallback_LiveThroughput(t *testing.T) {
-	// Fake provider: writes an init JSON event, pauses, then writes content and exits.
-	// agy-format JSON so AgyAdapter (the first chain candidate for "gemini") recognises
-	// the init event as DeltaInit and commits immediately.
-	initLine := `{"event":"init","conversation_id":"live-test","init":{"model":"fake"}}`
-	contentLine := `{"event":"step_update","step_update":{"conversation_id":"live-test","step_index":0,"state":"DONE","step_type":"tool","tool_name":"Read"}}`
+	// Fake provider: writes a step_update with state RUNNING (→ DeltaToolUse) immediately —
+	// this is the commit event — then sleeps 300 ms before writing the result and exiting.
+	// DeltaInit is no longer a commit trigger (STA-479), so we use DeltaToolUse here.
+	contentLine := `{"event":"step_update","step_update":{"conversation_id":"live-test","step_index":0,"state":"RUNNING","step_type":"tool","tool_name":"Read"}}`
 	resultLine := `{"event":"result","result":{"conversation_id":"live-test","status":"success","response":"done"}}`
 
 	script := "#!/bin/sh\n" +
-		"echo '" + initLine + "'\n" +
-		"sleep 0.3\n" +
 		"echo '" + contentLine + "'\n" +
+		"sleep 0.3\n" +
 		"echo '" + resultLine + "'\n"
 
 	f, err := os.CreateTemp("", "slow-provider-*.sh")
@@ -268,5 +269,109 @@ func TestStreamingFallback_FallbackOnPreCommitFailure(t *testing.T) {
 	}
 	if !strings.Contains(out, "s2") {
 		t.Errorf("expected second candidate session id in stdout, got: %q", out)
+	}
+}
+
+// TestStreamingFallback_InitThenQuotaError is the regression test for STA-479.
+// It reproduces the exact failure mode: the first candidate (Gemini/agy) emits a
+// DeltaInit event before calling the model, then fails with a quota error. Before
+// the fix, the init event committed the candidate and suppressed fallback. After
+// the fix, init must not count as a commit, so the fallback fires and the second
+// candidate's output reaches stdout.
+func TestStreamingFallback_InitThenQuotaError(t *testing.T) {
+	// First candidate: emits an agy-format init event, then an error result, then exits 3
+	// (the exit code the real agy CLI uses for quota exhaustion).
+	initLine1 := `{"event":"init","conversation_id":"quota-test","init":{"model":"gemini-3.8-flash"}}`
+	errLine1 := `{"event":"result","result":{"conversation_id":"quota-test","status":"error","error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached"}}`
+	firstScript := "#!/bin/sh\n" +
+		"echo '" + initLine1 + "'\n" +
+		"echo '" + errLine1 + "'\n" +
+		"exit 3\n"
+
+	f1, err := os.CreateTemp("", "quota-fail-*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f1.Name())
+	f1.WriteString(firstScript)
+	f1.Close()
+	os.Chmod(f1.Name(), 0755)
+
+	// Second candidate: a working provider that emits content and exits 0.
+	contentLine2 := `{"event":"step_update","step_update":{"conversation_id":"fallback-ok","step_index":0,"state":"DONE","step_type":"tool","tool_name":"Write"}}`
+	resultLine2 := `{"event":"result","result":{"conversation_id":"fallback-ok","status":"success","response":"done"}}`
+	secondScript := "#!/bin/sh\n" +
+		"echo '" + contentLine2 + "'\n" +
+		"echo '" + resultLine2 + "'\n"
+
+	f2, err := os.CreateTemp("", "fallback-ok-*.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f2.Name())
+	f2.WriteString(secondScript)
+	f2.Close()
+	os.Chmod(f2.Name(), 0755)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	opts := ParsedOptions{Prompt: "test", OutputFormat: "stream-json"}
+	var outBuf, errBuf bytes.Buffer
+
+	candidates := []providerCandidate{
+		{Name: "gemini-quota", Adapter: AgyAdapter{}, PoolID: router.PoolGeminiNative},
+		{Name: "personal-claude", Adapter: AgyAdapter{}, PoolID: router.PoolPersonalClaude},
+	}
+	bins := []string{f1.Name(), f2.Name()}
+
+	stdinBytes := []byte{}
+	committed := false
+	for i, cand := range candidates {
+		pr, pw := io.Pipe()
+		execErrCh := make(chan error, 1)
+		go func(c providerCandidate, b string) {
+			e := c.Adapter.Execute(ctx, ExecRequest{
+				Bin:      b,
+				Dir:      ".",
+				Opts:     opts,
+				ExtraEnv: nil,
+				Stdin:    bytes.NewReader(stdinBytes),
+				Stdout:   pw,
+				Stderr:   &errBuf,
+			})
+			execErrCh <- e
+			if e != nil {
+				pw.CloseWithError(e)
+			} else {
+				pw.Close()
+			}
+		}(cand, bins[i])
+
+		parse := cand.Adapter.ParseStreamDelta
+		c, prebuf := streamWithCommit(pr, &outBuf, func(line []byte) bool {
+			return isAssistantEvent(line, parse)
+		})
+		execErr := <-execErrCh
+
+		if c || execErr == nil {
+			committed = true
+			if !c && len(prebuf) > 0 {
+				outBuf.Write(prebuf)
+			}
+			break
+		}
+	}
+
+	if !committed {
+		t.Fatalf("expected fallback to second candidate, but neither committed")
+	}
+
+	out := outBuf.String()
+	if strings.Contains(out, "quota-test") {
+		t.Errorf("first (quota-failed) candidate output must not reach stdout; got: %q", out)
+	}
+	if !strings.Contains(out, "fallback-ok") {
+		t.Errorf("expected second candidate output in stdout; got: %q", out)
 	}
 }

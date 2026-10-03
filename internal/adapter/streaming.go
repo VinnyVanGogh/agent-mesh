@@ -51,14 +51,16 @@ func streamWithCommit(r io.Reader, dst io.Writer, isCommit func(line []byte) boo
 	return
 }
 
-// isAssistantEvent reports whether line signals that the provider has accepted
-// the request and begun generating a response. Used as the commit trigger so
-// the fallback chain can still retry on a pre-commit failure.
+// isAssistantEvent reports whether line signals that the model has begun
+// generating a response. Used as the commit trigger for the fallback chain —
+// once committed, we stop trying other candidates.
 //
-// We commit on: DeltaInit (provider CLI connected), DeltaText / DeltaThinking /
-// DeltaToolUse (model content). We do NOT commit on DeltaResult or DeltaError
-// alone — an error result before any model content means the provider rejected
-// the request cleanly and the next candidate should be tried.
+// We commit on real model output only: DeltaText, DeltaThinking, DeltaToolUse.
+// We do NOT commit on DeltaInit: some CLIs (e.g. agy/Gemini) emit an init event
+// before calling the model, so a quota failure after init would suppress fallback
+// if we treated init as a commit. DeltaResult and DeltaError are also excluded —
+// an error result before any model content means the provider rejected the request
+// and the next candidate should be tried.
 func isAssistantEvent(line []byte, parse func([]byte) ([]StreamDelta, error)) bool {
 	deltas, err := parse(line)
 	if err != nil || len(deltas) == 0 {
@@ -66,7 +68,7 @@ func isAssistantEvent(line []byte, parse func([]byte) ([]StreamDelta, error)) bo
 	}
 	for _, d := range deltas {
 		switch d.Kind {
-		case DeltaInit, DeltaText, DeltaThinking, DeltaToolUse:
+		case DeltaText, DeltaThinking, DeltaToolUse:
 			return true
 		}
 	}
