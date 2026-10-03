@@ -6788,6 +6788,16 @@ function isRealRunGroup(steps) {
   return steps.some(s => s.kind !== 'wake' && s.kind !== 'route' && s.kind !== 'state');
 }
 
+// Return the steps of the most recently started run (the last run_id group),
+// regardless of whether it qualifies as a "real" run. Used for the stuck-age
+// check so a fresh run whose only steps are wake/route does not inherit the
+// previous run's stale last-step timestamp.
+function latestRunSteps(allSteps) {
+  if (!allSteps || !allSteps.length) return [];
+  const groups = groupStepsByRun(allSteps);
+  return groups[groups.length - 1] || [];
+}
+
 // Return the steps of the current or most-recent real run.
 // Falls back to the last run group when no real run exists.
 function currentRunSteps(allSteps) {
@@ -6817,8 +6827,9 @@ function refreshTaskStatsBar(taskId) {
   const allSteps = task.runSteps || [];
   const runSteps = currentRunSteps(allSteps);
   const elapsedMs = runElapsedMs(runSteps, Date.now());
-  const lastStepAt = runSteps.length ? new Date(runSteps[runSteps.length - 1].created_at).getTime() : null;
-  const isStuck = runSteps.length > 0 && (Date.now() - (lastStepAt || 0)) > 5 * 60 * 1000 && task.status !== 'done';
+  const latestSteps = latestRunSteps(allSteps);
+  const lastStepAt = latestSteps.length ? new Date(latestSteps[latestSteps.length - 1].created_at).getTime() : null;
+  const isStuck = lastStepAt !== null && (Date.now() - lastStepAt) > 5 * 60 * 1000 && task.status !== 'done';
   statsBar.innerHTML = '';
   statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, isStuck));
 }
@@ -7231,8 +7242,9 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
   {
     const curSteps = currentRunSteps(runSteps);
     const elapsedMs = runElapsedMs(curSteps, Date.now());
-    const lastAt = curSteps.length ? new Date(curSteps[curSteps.length - 1].created_at).getTime() : null;
-    const isStuck = curSteps.length > 0 && (Date.now() - (lastAt || 0)) > 5 * 60 * 1000 && task.status !== 'done';
+    const latestSteps = latestRunSteps(runSteps);
+    const lastAt = latestSteps.length ? new Date(latestSteps[latestSteps.length - 1].created_at).getTime() : null;
+    const isStuck = lastAt !== null && (Date.now() - lastAt) > 5 * 60 * 1000 && task.status !== 'done';
     statsBar.appendChild(buildTimelineStats(task, curSteps, elapsedMs, isStuck));
   }
   timelineSection.appendChild(statsBar);
