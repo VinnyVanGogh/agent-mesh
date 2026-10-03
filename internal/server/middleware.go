@@ -141,10 +141,12 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 			return
 		}
 
-		// 4. Cookie exchange: if browser hit a UI route with ?token=, set session and
-		// board cookies then redirect to the clean URL. After this, bookmarks work and
-		// WrapBoardAction accepts the browser's requests. The board cookie is NOT in
-		// any meta tag, so agents cannot extract it from the HTML.
+		// 4. Cookie exchange: if browser hit a UI route with ?token=, set the session
+		// cookie and redirect to the clean URL. After this, the bookmark works.
+		// The board cookie is set only when ?board_token= is ALSO present and valid —
+		// so auth_token alone (the agent credential) is NOT sufficient to obtain a
+		// board session. Agents would need to separately read ~/.staypoint/board_token
+		// (now a Red path via sensitiveDirs) and include it explicitly.
 		if qToken := r.URL.Query().Get("token"); qToken != "" && !strings.HasPrefix(r.URL.Path, "/api/") {
 			if subtle.ConstantTimeCompare([]byte(qToken), []byte(sm.token)) == 1 {
 				http.SetCookie(w, &http.Cookie{
@@ -156,18 +158,21 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 					MaxAge:   sessionCookieMaxAge,
 				})
 				if sm.boardToken != "" {
-					http.SetCookie(w, &http.Cookie{
-						Name:     boardCookieName,
-						Value:    sm.boardToken,
-						Path:     "/",
-						HttpOnly: true,
-						SameSite: http.SameSiteStrictMode,
-						MaxAge:   sessionCookieMaxAge,
-					})
+					if qBoard := r.URL.Query().Get("board_token"); subtle.ConstantTimeCompare([]byte(qBoard), []byte(sm.boardToken)) == 1 {
+						http.SetCookie(w, &http.Cookie{
+							Name:     boardCookieName,
+							Value:    sm.boardToken,
+							Path:     "/",
+							HttpOnly: true,
+							SameSite: http.SameSiteStrictMode,
+							MaxAge:   sessionCookieMaxAge,
+						})
+					}
 				}
 				cleanURL := *r.URL
 				q := cleanURL.Query()
 				q.Del("token")
+				q.Del("board_token")
 				cleanURL.RawQuery = q.Encode()
 				http.Redirect(w, r, cleanURL.String(), http.StatusFound)
 				return

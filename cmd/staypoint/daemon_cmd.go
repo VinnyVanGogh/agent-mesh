@@ -185,10 +185,12 @@ var daemonServeCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
+		boardURL := fmt.Sprintf("%s/?token=%s&board_token=%s", srv.URL(), srv.Token(), srv.BoardToken())
 		fmt.Printf("StayPoint local HTTP and SSE server running\n")
 		fmt.Printf("  URL:        %s\n", srv.URL())
 		fmt.Printf("  Auth Token: %s\n", srv.Token())
 		fmt.Printf("  Token File: %s\n", tokenPath)
+		fmt.Printf("  Board URL:  %s\n", boardURL)
 		fmt.Printf("Press Ctrl+C to stop.\n")
 
 		sigChan := make(chan os.Signal, 1)

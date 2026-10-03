@@ -1417,3 +1417,44 @@ func TestServer_BoardToken_Required(t *testing.T) {
 		}
 	}
 }
+
+// TestServer_BoardBootstrap_RequiresBoardToken verifies that the ?token= bootstrap
+// redirect only sets the board cookie when ?board_token= is ALSO present. Agents
+// that present only the auth token cannot obtain a board session.
+func TestServer_BoardBootstrap_RequiresBoardToken(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	boardToken := srv.BoardToken()
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
+	}
+
+	// Bootstrap with auth only → redirect should NOT set staypoint_board cookie.
+	resp, err := client.Get(fmt.Sprintf("%s/?token=%s", srv.URL(), token))
+	if err != nil {
+		t.Fatalf("bootstrap request failed: %v", err)
+	}
+	resp.Body.Close()
+	for _, c := range resp.Cookies() {
+		if c.Name == "staypoint_board" {
+			t.Errorf("board cookie was set from auth token alone — want no board cookie, got %q", c.Value)
+		}
+	}
+
+	// Bootstrap with auth + board_token → redirect SHOULD set staypoint_board cookie.
+	resp, err = client.Get(fmt.Sprintf("%s/?token=%s&board_token=%s", srv.URL(), token, boardToken))
+	if err != nil {
+		t.Fatalf("full bootstrap request failed: %v", err)
+	}
+	resp.Body.Close()
+	var gotBoard bool
+	for _, c := range resp.Cookies() {
+		if c.Name == "staypoint_board" && c.Value == boardToken {
+			gotBoard = true
+		}
+	}
+	if !gotBoard {
+		t.Error("board cookie was not set when both token and board_token are correct")
+	}
+}
