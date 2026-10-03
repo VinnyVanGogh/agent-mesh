@@ -64,14 +64,17 @@ test.describe('ship review card', () => {
       });
     });
 
-    // Auto-accept the confirm dialog (the "Approve and merge?" native confirm).
-    page.once('dialog', (d) => d.accept());
-
-    // Capture the alert that follows the 409.
+    // Use a single handler: confirm → accept silently; alert → capture message.
+    // page.once + page.on both fire for the first dialog, causing a double-accept
+    // crash ("Cannot accept dialog which is already handled!").
     let alertMessage = '';
     page.on('dialog', async (d) => {
-      alertMessage = d.message();
-      await d.accept();
+      if (d.type() === 'confirm') {
+        await d.accept();
+      } else {
+        alertMessage = d.message();
+        await d.accept();
+      }
     });
 
     await card.getByRole('button', { name: /Approve/i }).click();
