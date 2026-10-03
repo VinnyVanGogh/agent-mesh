@@ -11,6 +11,27 @@ import (
 	"strings"
 )
 
+// safeIdentRe rejects any captured identifier that contains characters outside
+// the safe SQL identifier set before it is interpolated into a query.
+var safeIdentRe = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
+// quoteIdent double-quotes a Postgres identifier and escapes embedded quotes.
+// Only identifiers that pass safeIdentRe should reach this function; callers
+// must validate first so that a malformed capture falls back rather than
+// producing an injection vector.
+func quoteIdent(s string) string {
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
+}
+
+// safeQualified returns quoteIdent(schema)+"."+quoteIdent(table) after
+// validating both parts. Returns ("","") if either part is unsafe.
+func safeQualified(schema, table string) (string, string, bool) {
+	if !safeIdentRe.MatchString(schema) || !safeIdentRe.MatchString(table) {
+		return "", "", false
+	}
+	return schema, table, true
+}
+
 // CheckKind classifies how a Check is evaluated.
 type CheckKind string
 
@@ -208,34 +229,38 @@ func ParseChecks(sql string) []Check {
 
 		// Try to find a key column (first column named key/id/name)
 		keyCol := pickKeyColumn(colsRaw)
-		if keyCol != "" {
+		if keyCol != "" && safeIdentRe.MatchString(keyCol) {
 			// Extract string values for the key column
 			keys := extractKeyValues(colsRaw, keyCol, valuesBlock)
 			if len(keys) > 0 {
 				inList := buildInList(keys)
 				schema, table := schemaTable(tbl)
-				add(Check{
-					Kind:        KindRows,
-					Description: fmt.Sprintf("seed rows in %s (%s IN (%s))", tbl, keyCol, truncateList(inList, 60)),
-					SQL: fmt.Sprintf(
-						"SELECT COUNT(*)>=%d AS ok FROM %s.%s WHERE %s IN (%s)",
-						len(keys), schema, table, keyCol, inList,
-					),
-				})
-				continue
+				if s, tb, ok := safeQualified(schema, table); ok {
+					add(Check{
+						Kind:        KindRows,
+						Description: fmt.Sprintf("seed rows in %s (%s IN (%s))", tbl, keyCol, truncateList(inList, 60)),
+						SQL: fmt.Sprintf(
+							"SELECT COUNT(*)>=%d AS ok FROM %s.%s WHERE %s IN (%s)",
+							len(keys), quoteIdent(s), quoteIdent(tb), quoteIdent(keyCol), inList,
+						),
+					})
+					continue
+				}
 			}
 		}
 
 		// Fallback: row-count check
 		schema, table := schemaTable(tbl)
-		add(Check{
-			Kind:        KindRows,
-			Description: fmt.Sprintf("at least %d rows in %s", tuples, tbl),
-			SQL: fmt.Sprintf(
-				"SELECT COUNT(*) >= %d AS ok FROM %s.%s",
-				tuples, schema, table,
-			),
-		})
+		if s, tb, ok := safeQualified(schema, table); ok {
+			add(Check{
+				Kind:        KindRows,
+				Description: fmt.Sprintf("at least %d rows in %s", tuples, tbl),
+				SQL: fmt.Sprintf(
+					"SELECT COUNT(*) >= %d AS ok FROM %s.%s",
+					tuples, quoteIdent(s), quoteIdent(tb),
+				),
+			})
+		}
 	}
 
 	return checks
