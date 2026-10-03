@@ -4399,7 +4399,7 @@ function renderSettings() {
     gateToggle.disabled = true;
     fetch('/api/settings/security-gate', {
       method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' }, TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {}),
+      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeader()),
       body: JSON.stringify({ main_merge_approval: gateToggle.checked }),
     }).then(r => r.ok ? r.json() : null).then(data => {
       gateToggle.disabled = false;
@@ -4437,7 +4437,7 @@ function renderSettings() {
     srToggle.disabled = true;
     fetch('/api/settings/ship-review', {
       method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' }, TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {}),
+      headers: Object.assign({ 'Content-Type': 'application/json' }, authHeader()),
       body: JSON.stringify({ ship_review: srToggle.checked }),
     }).then(r => r.ok ? r.json() : null).then(data => {
       srToggle.disabled = false;
@@ -7295,7 +7295,7 @@ async function renderShipReviewCard(container, taskId) {
     if (!confirm('Approve and merge this branch? Only the pinned SHA will be merged.')) return;
     approveBtn.disabled = true;
     try {
-      const result = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/approve`, { method: 'POST' });
+      const result = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/approve`, { method: 'POST', headers: authHeader() });
       if (result.error === 'head_moved') {
         alert(`Branch HEAD moved since the card was rendered.\nNew HEAD: ${result.new_head_sha}\nThe card will reload.`);
         renderShipReviewCard(container.closest('.task-page-main') || container, taskId);
@@ -7317,7 +7317,7 @@ async function renderShipReviewCard(container, taskId) {
     try {
       await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/send-back`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeader(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ comment: comment.trim() }),
       });
       section.remove();
@@ -7336,7 +7336,7 @@ async function renderShipReviewCard(container, taskId) {
     try {
       await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/reject`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...authHeader(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ comment: comment || '', delete_branch: delBranch }),
       });
       section.remove();

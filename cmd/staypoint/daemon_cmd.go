@@ -166,12 +166,14 @@ var daemonServeCmd = &cobra.Command{
 		defer dbStore.Close()
 
 		tokenPath := filepath.Join(cfg.DataDir, "auth_token")
+		boardTokenPath := filepath.Join(cfg.DataDir, "board_token")
 		srv, err := server.New(server.Options{
-			BindHost:  "127.0.0.1",
-			Port:      port,
-			AuthToken: token,
-			TokenPath: tokenPath,
-			DB:        dbStore.DB(),
+			BindHost:       "127.0.0.1",
+			Port:           port,
+			AuthToken:      token,
+			TokenPath:      tokenPath,
+			BoardTokenPath: boardTokenPath,
+			DB:             dbStore.DB(),
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error creating server: %v\n", err)
@@ -187,6 +189,14 @@ var daemonServeCmd = &cobra.Command{
 		fmt.Printf("  URL:        %s\n", srv.URL())
 		fmt.Printf("  Auth Token: %s\n", srv.Token())
 		fmt.Printf("  Token File: %s\n", tokenPath)
+		// Board URL uses a one-time nonce (not the long-lived board_token).
+		// Only print to a TTY so the URL is not captured in logs or piped output
+		// that an agent process could read.
+		fi, _ := os.Stdout.Stat()
+		if fi != nil && (fi.Mode()&os.ModeCharDevice) != 0 {
+			boardURL := fmt.Sprintf("%s/?token=%s&board_nonce=%s", srv.URL(), srv.Token(), srv.BoardNonce())
+			fmt.Printf("  Board URL:  %s\n", boardURL)
+		}
 		fmt.Printf("Press Ctrl+C to stop.\n")
 
 		sigChan := make(chan os.Signal, 1)

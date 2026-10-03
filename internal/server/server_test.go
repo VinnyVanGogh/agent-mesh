@@ -1330,3 +1330,158 @@ func TestServer_REST_RunControlState(t *testing.T) {
 		t.Fatalf("long-poll returned too fast (%v), expected ~100ms", elapsed)
 	}
 }
+
+// TestServer_BoardToken_Required verifies that Board-only mutation endpoints
+// reject requests that carry only the agent auth token (403 Forbidden) and
+// accept requests that include the staypoint_board session cookie.
+func TestServer_BoardToken_Required(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	boardToken := srv.BoardToken()
+	if boardToken == "" {
+		t.Fatal("BoardToken() returned empty string — board token was not generated")
+	}
+	if boardToken == token {
+		t.Fatal("BoardToken() must differ from the agent AuthToken")
+	}
+
+	authOnly := func(method, url, body string) *http.Response {
+		var b io.Reader
+		if body != "" {
+			b = strings.NewReader(body)
+		}
+		req, _ := http.NewRequest(method, url, b)
+		req.Header.Set("Authorization", "Bearer "+token)
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		return resp
+	}
+
+	withBoard := func(method, url, body string) *http.Response {
+		var b io.Reader
+		if body != "" {
+			b = strings.NewReader(body)
+		}
+		req, _ := http.NewRequest(method, url, b)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.AddCookie(&http.Cookie{Name: "staypoint_board", Value: boardToken})
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		return resp
+	}
+
+	base := srv.URL()
+
+	// Create a task so ship-review and gate endpoints have a valid ID to reject.
+	taskID := "test-board-token-task"
+	createBody := `{"id":"` + taskID + `","name":"Board token test task","repo_path":"/tmp"}`
+	createResp := authOnly("POST", base+"/api/tasks", createBody)
+	createResp.Body.Close()
+
+	boardEndpoints := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{"POST", "/api/tasks/" + taskID + "/ship-review/approve", ""},
+		{"POST", "/api/tasks/" + taskID + "/ship-review/send-back", `{"comment":"test"}`},
+		{"POST", "/api/tasks/" + taskID + "/ship-review/reject", `{"comment":"test"}`},
+		{"POST", "/api/security/gate-requests/nonexistent-id/decide", `{"decision":"approved"}`},
+		{"POST", "/api/settings/security-gate", `{"main_merge_approval":true}`},
+		{"POST", "/api/settings/ship-review", `{"ship_review":true}`},
+	}
+
+	for _, ep := range boardEndpoints {
+		// Agent auth token alone → 403
+		resp := authOnly(ep.method, base+ep.path, ep.body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s %s with agent token only: want 403, got %d", ep.method, ep.path, resp.StatusCode)
+		}
+
+		// Board token included → not 403 (may be 404/409/etc depending on state, but not a token rejection)
+		resp = withBoard(ep.method, base+ep.path, ep.body)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+			t.Errorf("%s %s with board token: want not 401/403, got %d", ep.method, ep.path, resp.StatusCode)
+		}
+	}
+}
+
+// TestServer_BoardBootstrap_RequiresBoardToken verifies that the ?token= bootstrap
+// redirect only sets the board cookie when a board credential (nonce or board_token)
+// is ALSO present. Agents that present only the auth token cannot obtain a board session.
+func TestServer_BoardBootstrap_RequiresBoardToken(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	boardToken := srv.BoardToken()
+	boardNonce := srv.BoardNonce()
+
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
+	}
+
+	hasBoardCookie := func(resp *http.Response) bool {
+		for _, c := range resp.Cookies() {
+			if c.Name == "staypoint_board" && c.Value == boardToken {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Bootstrap with auth only → redirect should NOT set staypoint_board cookie.
+	resp, err := client.Get(fmt.Sprintf("%s/?token=%s", srv.URL(), token))
+	if err != nil {
+		t.Fatalf("bootstrap (auth-only) request failed: %v", err)
+	}
+	resp.Body.Close()
+	for _, c := range resp.Cookies() {
+		if c.Name == "staypoint_board" {
+			t.Errorf("board cookie was set from auth token alone — want no board cookie, got %q", c.Value)
+		}
+	}
+
+	// Bootstrap with auth + board_nonce → redirect SHOULD set staypoint_board cookie.
+	// The nonce is single-use: this call consumes it.
+	resp, err = client.Get(fmt.Sprintf("%s/?token=%s&board_nonce=%s", srv.URL(), token, boardNonce))
+	if err != nil {
+		t.Fatalf("bootstrap (nonce) request failed: %v", err)
+	}
+	resp.Body.Close()
+	if !hasBoardCookie(resp) {
+		t.Error("board cookie was not set when valid board_nonce was provided")
+	}
+
+	// Second request with the SAME nonce → nonce already consumed, no board cookie.
+	resp, err = client.Get(fmt.Sprintf("%s/?token=%s&board_nonce=%s", srv.URL(), token, boardNonce))
+	if err != nil {
+		t.Fatalf("bootstrap (consumed-nonce) request failed: %v", err)
+	}
+	resp.Body.Close()
+	for _, c := range resp.Cookies() {
+		if c.Name == "staypoint_board" {
+			t.Errorf("board cookie was set with already-consumed nonce — want no board cookie, got %q", c.Value)
+		}
+	}
+
+	// Fallback: bootstrap with auth + board_token → should also work.
+	resp, err = client.Get(fmt.Sprintf("%s/?token=%s&board_token=%s", srv.URL(), token, boardToken))
+	if err != nil {
+		t.Fatalf("bootstrap (board_token) request failed: %v", err)
+	}
+	resp.Body.Close()
+	if !hasBoardCookie(resp) {
+		t.Error("board cookie was not set when valid board_token was provided as fallback")
+	}
+}
