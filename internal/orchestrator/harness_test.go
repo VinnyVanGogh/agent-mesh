@@ -1,8 +1,10 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -620,6 +622,80 @@ func TestTaskCompleteMarker_NoFalsePositive(t *testing.T) {
 	if cw.detected {
 		t.Fatal("completionWriter should not have detected marker when not present")
 	}
+}
+
+// testStreamParse is a minimal ParseDelta stub that understands the Claude stream-json
+// format just enough for the text/thinking distinction tests.
+func testStreamParse(line []byte) ([]StepDelta, error) {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
+		return nil, nil
+	}
+	var ev struct {
+		Type    string `json:"type"`
+		Message struct {
+			Content []struct {
+				Type     string `json:"type"`
+				Text     string `json:"text"`
+				Thinking string `json:"thinking"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if err := json.Unmarshal(line, &ev); err != nil {
+		return nil, err
+	}
+	var out []StepDelta
+	for _, b := range ev.Message.Content {
+		switch b.Type {
+		case "text":
+			out = append(out, StepDelta{Kind: StepDeltaText, Text: b.Text})
+		case "thinking":
+			out = append(out, StepDelta{Kind: StepDeltaThinking, Text: b.Thinking})
+		}
+	}
+	return out, nil
+}
+
+// TestStepTeeWriter_TextOnlyCompletion verifies that [[TASK_COMPLETE]] in a thinking
+// block does NOT set textDetected, while the same marker in a text block does (STA-463).
+func TestStepTeeWriter_TextOnlyCompletion(t *testing.T) {
+	thinkingLine := `{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"[[TASK_COMPLETE]]"}]}}` + "\n"
+	textLine := `{"type":"assistant","message":{"content":[{"type":"text","text":"[[TASK_COMPLETE]]"}]}}` + "\n"
+
+	t.Run("thinking block does not trigger completion", func(t *testing.T) {
+		var dst strings.Builder
+		stw := &stepTeeWriter{dst: &dst, rec: nil, parse: testStreamParse}
+		if _, err := stw.Write([]byte(thinkingLine)); err != nil {
+			t.Fatal(err)
+		}
+		if stw.textDetected {
+			t.Fatal("marker in thinking block must not set textDetected")
+		}
+	})
+
+	t.Run("text block triggers completion", func(t *testing.T) {
+		var dst strings.Builder
+		stw := &stepTeeWriter{dst: &dst, rec: nil, parse: testStreamParse}
+		if _, err := stw.Write([]byte(textLine)); err != nil {
+			t.Fatal(err)
+		}
+		if !stw.textDetected {
+			t.Fatal("marker in text block must set textDetected")
+		}
+	})
+
+	t.Run("echoed prompt does not trigger completion", func(t *testing.T) {
+		// The continuation prompt contains the literal marker in a user message.
+		userLine := `{"type":"user","message":{"content":[{"type":"text","text":"emit [[TASK_COMPLETE]] when done"}]}}` + "\n"
+		var dst strings.Builder
+		stw := &stepTeeWriter{dst: &dst, rec: nil, parse: testStreamParse}
+		if _, err := stw.Write([]byte(userLine)); err != nil {
+			t.Fatal(err)
+		}
+		if stw.textDetected {
+			t.Fatal("marker in user/echoed prompt must not set textDetected")
+		}
+	})
 }
 
 // TestInterceptor_Timeout verifies interceptor exits within 30s even with a slow guard.
