@@ -383,6 +383,13 @@ function handleEvent(evt) {
     }
     return;
   }
+  if (type === 'run_control' && evt.data) {
+    const { task_id: tid, action } = evt.data;
+    if (tid && (action === 'pause' || action === 'resume') && tid === state.openDetailTaskId) {
+      syncRunControlBar(tid);
+    }
+    return;
+  }
   if (type === 'run.stats' && evt.data) {
     const stats = evt.data;
     const tid = stats.task_id;
@@ -6821,6 +6828,9 @@ function buildRunControlBar(task) {
   if (!isActive) wrap.classList.add('hidden');
   wrap.setAttribute('data-task-id', task.id || '');
   renderRunControlBarContent(wrap, task.id, stage);
+  // Under the STA-525 step-boundary gate the task stays in_progress while
+  // paused. Sync from run-control-state so a reload after pause shows Resume.
+  if (stage === 'in_progress') syncRunControlBar(task.id);
   return wrap;
 }
 
@@ -6895,8 +6905,23 @@ async function runControlAction(taskId, action, text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    // Sync bar immediately after pause/resume — the task stays in_progress
+    // under STA-525 so no run.state SSE fires to flip the button label.
+    if (action === 'pause' || action === 'resume') syncRunControlBar(taskId);
   } catch (e) {
     console.error('run-control action failed', e);
+  }
+}
+
+// Fetch current pause/stop state and re-render the run-control bar.
+// Called after pause/resume actions and on initial render of in_progress tasks.
+async function syncRunControlBar(taskId) {
+  try {
+    const data = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/run-control-state`);
+    const stage = data.paused ? 'paused' : 'in_progress';
+    updateRunControlBar(taskId, stage);
+  } catch {
+    // ignore — bar stays in current state
   }
 }
 
@@ -6945,9 +6970,9 @@ function buildTimelineStats(task, steps, elapsedMs, isStuck) {
     return s;
   };
 
-  const filesRead    = steps.filter(s => s && s.kind === 'read').length;
-  const filesEdited  = steps.filter(s => s && s.kind === 'edit').length;
-  const commandsOk   = steps.filter(s => s && s.kind === 'run' && s.status === 'done').length;
+  const filesRead    = steps.filter(s => s && s.kind === 'read'  && s.status === 'done').length;
+  const filesEdited  = steps.filter(s => s && s.kind === 'edit'  && s.status === 'done').length;
+  const commandsOk   = steps.filter(s => s && s.kind === 'run'   && s.status === 'done').length;
   const commandsFail = steps.filter(s => s && s.kind === 'run' && (s.status === 'error' || s.status === 'failed')).length;
   const lastStep     = steps.length ? steps[steps.length - 1] : null;
   const currentStep  = (lastStep && lastStep.title) ? lastStep.title : 'idle';
