@@ -36,6 +36,7 @@ const state = {
   currentOrgDetail: null,
   openDetailTaskId: null,
   chatPollTimer:    null,
+  statsElapsedTimer: null,
   bossReportCache:           {},   // reportId -> html string
   bossReportCacheTimestamps: {},   // reportId -> epoch ms
   bossReportLastRenderedAt:  0,    // epoch ms of last full render/refresh
@@ -360,6 +361,8 @@ function handleEvent(evt) {
     }
     if (tid && state.openDetailTaskId === tid) {
       appendRunStepToTimeline(tid, step);
+      // Stop ticking when a terminal state step arrives (Finished: …)
+      if (step.kind === 'state') stopElapsedTicker();
     }
     return;
   }
@@ -382,17 +385,7 @@ function handleEvent(evt) {
       if (stats.spent_tokens != null) state.tasks[tid].spent_tokens = stats.spent_tokens;
     }
     if (tid && state.openDetailTaskId === tid) {
-      const statsBar = document.getElementById(`timeline-stats-${tid}`);
-      if (statsBar) {
-        const task = state.tasks[tid] || {};
-        const runSteps = task.runSteps || [];
-        const createdAtMs = task.created_at ? new Date(task.created_at).getTime() : null;
-        const lastStepAt = runSteps.length ? new Date(runSteps[runSteps.length - 1].created_at).getTime() : null;
-        const elapsedMs = lastStepAt && createdAtMs ? lastStepAt - createdAtMs : (createdAtMs ? Date.now() - createdAtMs : null);
-        const isStuck = runSteps.length > 0 && (Date.now() - (lastStepAt || 0)) > 5 * 60 * 1000 && task.status !== 'done';
-        statsBar.innerHTML = '';
-        statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, isStuck));
-      }
+      refreshTaskStatsBar(tid);
     }
     return;
   }
@@ -5801,6 +5794,7 @@ function startChatPoll(taskId) {
 
 function stopChatPoll() {
   if (state.chatPollTimer) { clearInterval(state.chatPollTimer); state.chatPollTimer = null; }
+  stopElapsedTicker();
 }
 
 async function refreshChatMessages(taskId) {
@@ -6774,6 +6768,79 @@ async function runControlAction(taskId, action, text) {
   }
 }
 
+// ── Timeline stats helpers ─────────────────────────────────
+
+// Group all steps by run_id, returning arrays in order of first appearance.
+function groupStepsByRun(allSteps) {
+  const runs = new Map();
+  const order = [];
+  for (const s of allSteps) {
+    const rid = s.run_id || '';
+    if (!runs.has(rid)) { runs.set(rid, []); order.push(rid); }
+    runs.get(rid).push(s);
+  }
+  return order.map(rid => runs.get(rid));
+}
+
+// A run is "real" when it has at least one step beyond the overhead trio
+// (wake / route / state). Refused runs (lock held) only ever write those three.
+function isRealRunGroup(steps) {
+  return steps.some(s => s.kind !== 'wake' && s.kind !== 'route' && s.kind !== 'state');
+}
+
+// Return the steps of the current or most-recent real run.
+// Falls back to the last run group when no real run exists.
+function currentRunSteps(allSteps) {
+  if (!allSteps || !allSteps.length) return [];
+  const groups = groupStepsByRun(allSteps);
+  for (let i = groups.length - 1; i >= 0; i--) {
+    if (isRealRunGroup(groups[i])) return groups[i];
+  }
+  return groups[groups.length - 1] || [];
+}
+
+// Elapsed for a run's own steps: from the first step to the last state step
+// (if the run ended) or to nowMs (if still running).
+function runElapsedMs(runSteps, nowMs) {
+  if (!runSteps.length) return null;
+  const startMs = new Date(runSteps[0].created_at).getTime();
+  const stateStep = [...runSteps].reverse().find(s => s.kind === 'state');
+  if (stateStep) return new Date(stateStep.created_at).getTime() - startMs;
+  return nowMs - startMs;
+}
+
+// Refresh the stats bar for the given task, using only current-run steps.
+function refreshTaskStatsBar(taskId) {
+  const statsBar = document.getElementById(`timeline-stats-${taskId}`);
+  if (!statsBar) return;
+  const task = state.tasks[taskId] || {};
+  const allSteps = task.runSteps || [];
+  const runSteps = currentRunSteps(allSteps);
+  const elapsedMs = runElapsedMs(runSteps, Date.now());
+  const lastStepAt = runSteps.length ? new Date(runSteps[runSteps.length - 1].created_at).getTime() : null;
+  const isStuck = runSteps.length > 0 && (Date.now() - (lastStepAt || 0)) > 5 * 60 * 1000 && task.status !== 'done';
+  statsBar.innerHTML = '';
+  statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, isStuck));
+}
+
+// Start a 1-second ticker that updates the open task's Elapsed stat while running.
+function startElapsedTicker(taskId) {
+  stopElapsedTicker();
+  state.statsElapsedTimer = setInterval(() => {
+    const task = state.tasks[taskId] || {};
+    const allSteps = task.runSteps || [];
+    const runSteps = currentRunSteps(allSteps);
+    // Stop ticking once the run has a terminal state step
+    const stateStep = runSteps.find(s => s.kind === 'state');
+    if (stateStep) { stopElapsedTicker(); return; }
+    refreshTaskStatsBar(taskId);
+  }, 1000);
+}
+
+function stopElapsedTicker() {
+  if (state.statsElapsedTimer) { clearInterval(state.statsElapsedTimer); state.statsElapsedTimer = null; }
+}
+
 function buildTimelineStats(task, steps, elapsedMs, isStuck) {
   const wrap = el('div', 'timeline-stats-inner');
   const stat = (label, value, cls) => {
@@ -6881,18 +6948,8 @@ function appendRunStepToTimeline(taskId, step) {
     }
   }
 
-  // Refresh stats bar
-  const statsBar = document.getElementById(`timeline-stats-${taskId}`);
-  if (statsBar) {
-    const task = state.tasks[taskId] || {};
-    const runSteps = task.runSteps || [];
-    const createdAtMs = task.created_at ? new Date(task.created_at).getTime() : null;
-    const lastStepAt = runSteps.length ? new Date(runSteps[runSteps.length - 1].created_at).getTime() : null;
-    const elapsedMs = lastStepAt && createdAtMs ? lastStepAt - createdAtMs : (createdAtMs ? Date.now() - createdAtMs : null);
-    const isStuck = false;
-    statsBar.innerHTML = '';
-    statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, isStuck));
-  }
+  // Refresh stats bar with current-run steps
+  refreshTaskStatsBar(taskId);
 }
 
 // ── Full-page task view ────────────────────────────────────
@@ -7162,16 +7219,27 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
   timelineSection.setAttribute('data-task-id', task.id || '');
   timelineSection.appendChild(el('div', 'task-page-section-title', `Timeline${runSteps.length ? ` (${runSteps.length})` : ''}`));
 
-  // Stats bar
+  // Stats bar — use currentRunSteps so refused runs don't pollute the display.
   const statsBar = el('div', 'timeline-stats-bar');
   statsBar.id = `timeline-stats-${task.id}`;
   statsBar.setAttribute('data-task-id', task.id || '');
-  const createdAtMs = task.created_at ? new Date(task.created_at).getTime() : null;
-  const lastStepAt = runSteps.length ? new Date(runSteps[runSteps.length - 1].created_at).getTime() : null;
-  const elapsedMs = lastStepAt && createdAtMs ? lastStepAt - createdAtMs : null;
-  const isStuck = runSteps.length > 0 && (Date.now() - (lastStepAt || 0)) > 5 * 60 * 1000 && task.status !== 'done';
-  statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, isStuck));
+  {
+    const curSteps = currentRunSteps(runSteps);
+    const elapsedMs = runElapsedMs(curSteps, Date.now());
+    const lastAt = curSteps.length ? new Date(curSteps[curSteps.length - 1].created_at).getTime() : null;
+    const isStuck = curSteps.length > 0 && (Date.now() - (lastAt || 0)) > 5 * 60 * 1000 && task.status !== 'done';
+    statsBar.appendChild(buildTimelineStats(task, curSteps, elapsedMs, isStuck));
+  }
   timelineSection.appendChild(statsBar);
+
+  // Start live elapsed ticker if the run is still active.
+  {
+    const curSteps = currentRunSteps(runSteps);
+    const hasTerminal = curSteps.some(s => s.kind === 'state');
+    if (!hasTerminal && task.status !== 'done' && task.status !== 'cancelled') {
+      startElapsedTicker(task.id);
+    }
+  }
 
   // Run-control bar (pause / stop / send message)
   const rcBar = buildRunControlBar(task);

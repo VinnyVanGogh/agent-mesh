@@ -96,6 +96,20 @@ CREATE TABLE IF NOT EXISTS run_errors (
     adapter      TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+CREATE TABLE IF NOT EXISTS run_steps (
+    id         TEXT PRIMARY KEY,
+    run_id     TEXT NOT NULL,
+    task_id    TEXT,
+    seq        INTEGER NOT NULL DEFAULT 0,
+    parent_seq INTEGER,
+    kind       TEXT NOT NULL DEFAULT '',
+    title      TEXT NOT NULL DEFAULT '',
+    body       TEXT,
+    status     TEXT NOT NULL DEFAULT '',
+    started_at TEXT,
+    ended_at   TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 `
 
 // insertTask inserts a task row with execution_stage = 'todo'.
@@ -279,6 +293,51 @@ func TestConcurrencyCap(t *testing.T) {
 	err := h.Claim(context.Background(), "cap-task-2", "run-2", "agent")
 	if err != ErrConcurrencyCap {
 		t.Fatalf("expected ErrConcurrencyCap, got: %v", err)
+	}
+}
+
+// TestRefusedRun_NoSteps verifies that when h.Run returns ErrConcurrencyCap
+// (another run holds the lock), the refused attempt writes zero run_steps rows.
+// This prevents the stats bar from showing a stale "Finished: error" step from
+// a refused Run Now click (STA-462).
+func TestRefusedRun_NoSteps(t *testing.T) {
+	activeClaims.Store(0)
+	db := openTestDB(t)
+	insertTask(t, db, "refused-task", "/tmp")
+	h := &Harness{DB: db}
+
+	// Saturate the concurrency cap (simulates an active run).
+	activeClaims.Store(1)
+	defer activeClaims.Store(0)
+
+	var emittedWake bool
+	var emittedRoute bool
+	sr := NewStepRecorder(db, func(string, any) {}, "refused-run-id", "refused-task")
+
+	_, err := h.Run(context.Background(), "refused-task", RunConfig{
+		StepRecorder: sr,
+		WakeReason:   "run now",
+		EmitRoute: func(*StepRecorder) {
+			emittedRoute = true
+		},
+		RunAdapter: func(_ context.Context, _, _ string, _, _ []string, _, _ io.Writer) error {
+			emittedWake = true // should never reach adapter
+			return nil
+		},
+	})
+	if err != ErrConcurrencyCap {
+		t.Fatalf("expected ErrConcurrencyCap, got: %v", err)
+	}
+	if emittedWake || emittedRoute {
+		t.Fatal("refused run must not emit wake or route callbacks")
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM run_steps WHERE run_id = 'refused-run-id'`).Scan(&count); err != nil {
+		t.Fatal("count run_steps:", err)
+	}
+	if count != 0 {
+		t.Fatalf("refused run must write 0 run_steps rows, got %d", count)
 	}
 }
 

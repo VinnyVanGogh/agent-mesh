@@ -77,6 +77,10 @@ type RunConfig struct {
 	ParseDelta func(line []byte) ([]StepDelta, error)
 	// WakeReason is forwarded to StepRecorder.EmitWake when recording is enabled.
 	WakeReason string
+	// EmitRoute, if set, is called once after EmitWake and before the adapter starts.
+	// Use it to write a provider-routing step without importing router from this package.
+	// Only called when StepRecorder is non-nil.
+	EmitRoute func(sr *StepRecorder)
 	// RunControl, when set, enables pause/stop/message-inject controls for this run.
 	RunControl *RunControl
 }
@@ -241,7 +245,9 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		providerEnv = append(providerEnv, "STAYPOINT_SKIP_PERMISSIONS=1")
 	}
 
-	// Emit wake step if recording is enabled.
+	// Emit wake + route steps now that the claim succeeded.
+	// These are intentionally emitted after Claim so that refused runs
+	// (ErrConcurrencyCap before this point) never write any timeline steps.
 	sr := cfg.StepRecorder
 	if sr != nil {
 		wakeReason := cfg.WakeReason
@@ -249,6 +255,9 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 			wakeReason = "run started"
 		}
 		sr.EmitWake(wakeReason)
+		if cfg.EmitRoute != nil {
+			cfg.EmitRoute(sr)
+		}
 	}
 
 	result := &RunResult{TaskID: taskID, RunID: runID}
