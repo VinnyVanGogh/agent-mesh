@@ -2,6 +2,7 @@ package security
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -56,6 +57,10 @@ func (v *Verdict) merge(o Verdict) {
 type Classifier struct {
 	Worktree *Boundary
 	Home     string // defaults to the user's home directory
+	// CWD is the working directory of the command being classified. When set,
+	// classifyGit uses it for bare-push branch resolution. If empty the
+	// bare-push check is fail-closed (returns Red when no explicit refspec).
+	CWD string
 }
 
 // Classify classifies a shell command line. Unparseable input is Red (fail closed).
@@ -317,11 +322,30 @@ func skipWrapper(name string, args []string) []string {
 }
 
 func (c *Classifier) classifyGit(args []string, v *Verdict) {
-	// skip global options such as -C dir, -c k=v
+	// Skip global options, tracking any -C dir changes for bare-push resolution.
+	// -c config-override is skipped; --git-dir/--work-tree can't be modelled → fail-closed.
+	effectiveDir := c.CWD
 	i := 0
 	for i < len(args) && strings.HasPrefix(args[i], "-") {
-		if args[i] == "-C" || args[i] == "-c" {
+		switch {
+		case args[i] == "-C":
 			i++
+			if i < len(args) {
+				effectiveDir = resolveGitWorkDir(effectiveDir, args[i])
+			}
+		case strings.HasPrefix(args[i], "-C"):
+			effectiveDir = resolveGitWorkDir(effectiveDir, args[i][2:])
+		case args[i] == "--git-dir" || args[i] == "--work-tree":
+			// Can't model effective repo — fail-closed for bare-push detection.
+			effectiveDir = ""
+			i++ // consume value
+		case strings.HasPrefix(args[i], "--git-dir=") || strings.HasPrefix(args[i], "--work-tree="):
+			effectiveDir = ""
+		case args[i] == "-c":
+			// -c can redirect push destination (remote.*.push, push.default);
+			// force bare-push detection fail-closed when present.
+			effectiveDir = ""
+			i++ // skip key=value token
 		}
 		i++
 	}
@@ -370,6 +394,9 @@ func (c *Classifier) classifyGit(args []string, v *Verdict) {
 		if pushTargetsMain(rest) {
 			v.raise(Red, "git push targets main/master; Board approval required")
 		}
+		if barePushTargetsMain(effectiveDir, rest) {
+			v.raise(Red, "git push targets main/master; Board approval required")
+		}
 		v.raise(Yellow, "")
 	case "config":
 		// git config --get is read-only; writes are local edits, global writes touch dotfiles
@@ -395,6 +422,62 @@ func (c *Classifier) classifyGit(args []string, v *Verdict) {
 			v.raise(Yellow, "")
 		}
 	}
+}
+
+// resolveGitWorkDir resolves a git -C argument against the current effective
+// dir, mirroring git's cumulative -C application. Returns "" when base is
+// empty and rel is relative, so the fail-closed path triggers downstream.
+func resolveGitWorkDir(base, rel string) string {
+	if rel == "" {
+		return base
+	}
+	if filepath.IsAbs(rel) {
+		return rel
+	}
+	if base == "" {
+		return ""
+	}
+	return filepath.Join(base, rel)
+}
+
+// pushValueFlags are git push options that consume the next token as a value.
+// Values must not be counted as refspec positionals.
+var pushValueFlags = map[string]bool{
+	"-o": true, "--push-option": true,
+	"--receive-pack": true, "--exec": true, "--repo": true,
+}
+
+// barePushTargetsMain reports whether a bare `git push` (no explicit refspec)
+// targets main/master by resolving the current branch in dir.
+// Returns true (fail-closed) when dir is empty or branch resolution fails —
+// a git push should always happen inside a real repo.
+// When rest contains 2+ positionals the first is remote and second is a
+// refspec — pushTargetsMain already classified it, so we return false.
+func barePushTargetsMain(dir string, rest []string) bool {
+	var positionals []string
+	for j := 0; j < len(rest); j++ {
+		a := rest[j]
+		if strings.HasPrefix(a, "-") {
+			// Skip flag value when flag takes a separate argument and has no = form.
+			if !strings.Contains(a, "=") && pushValueFlags[a] {
+				j++
+			}
+			continue
+		}
+		positionals = append(positionals, a)
+	}
+	if len(positionals) >= 2 {
+		return false
+	}
+	if dir == "" {
+		return true
+	}
+	// symbolic-ref works on unborn branches; rev-parse --abbrev-ref fails there.
+	out, err := exec.Command("git", "-C", dir, "symbolic-ref", "--short", "HEAD").Output()
+	if err != nil {
+		return true
+	}
+	return isMainRef(strings.TrimSpace(string(out)))
 }
 
 // isMainRef reports whether a git ref name is a protected default branch.

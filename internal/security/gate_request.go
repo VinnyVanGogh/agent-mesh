@@ -6,8 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"strings"
 	"time"
 )
 
@@ -139,47 +137,12 @@ func scanGateRequest(row scanner) (*GateRequest, error) {
 	return &r, nil
 }
 
+
 func genID() (string, error) {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
-}
-
-// BareGitPushTargetsMain reports whether a bare `git push` or `git push <remote>`
-// (no explicit refspec) would land on main/master by resolving the current branch
-// in dir. Returns false on any resolution failure (fail-open for bare pushes where
-// the branch cannot be determined — the user should use explicit refspecs).
-func BareGitPushTargetsMain(cmdline, dir string) bool {
-	// Only apply to bare-push forms: "git push" or "git push <remote>".
-	// If there is an explicit refspec the tier classifier already handles it.
-	parts := strings.Fields(cmdline)
-	if len(parts) < 2 || parts[0] != "git" || parts[1] != "push" {
-		return false
-	}
-	// Count non-flag positionals after "push": index-0 = remote, index-1+ = refspecs.
-	var positionals []string
-	for _, a := range parts[2:] {
-		if !strings.HasPrefix(a, "-") {
-			positionals = append(positionals, a)
-		}
-	}
-	// If there are 2+ positionals the first is remote and second is a refspec —
-	// the classifier already handled it.
-	if len(positionals) >= 2 {
-		return false
-	}
-
-	if dir == "" {
-		return false
-	}
-	// symbolic-ref works on unborn branches (empty repos); rev-parse fails there.
-	out, err := exec.Command("git", "-C", dir, "symbolic-ref", "--short", "HEAD").Output()
-	if err != nil {
-		return false
-	}
-	branch := strings.TrimSpace(string(out))
-	return isMainRef(branch)
 }
 

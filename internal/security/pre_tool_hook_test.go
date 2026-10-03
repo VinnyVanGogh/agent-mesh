@@ -92,8 +92,10 @@ func TestPreToolHookAllowedCommands(t *testing.T) {
 	}
 }
 
-// TestBareGitPushTargetsMain verifies that bare `git push` on a main branch is detected.
-func TestBareGitPushTargetsMain(t *testing.T) {
+// TestBarePushViaClassifier verifies that bare `git push` (no explicit refspec)
+// on a main branch is detected as Red by the classifier when CWD is set.
+// This is the real harness call path — the hook sets c.CWD from the payload.
+func TestBarePushViaClassifier(t *testing.T) {
 	// Create a temp git repo on a branch called "main".
 	dir := t.TempDir()
 	run := func(args ...string) {
@@ -106,17 +108,46 @@ func TestBareGitPushTargetsMain(t *testing.T) {
 	run("git", "-C", dir, "config", "user.email", "test@test.com")
 	run("git", "-C", dir, "config", "user.name", "Test")
 
-	// Bare push on main branch → should be detected.
-	if !BareGitPushTargetsMain("git push", dir) {
-		t.Error("bare 'git push' on main branch: want true, got false")
+	cwd := func() *Classifier { return &Classifier{CWD: dir} }
+
+	red := func(t *testing.T, cmd string) {
+		t.Helper()
+		v := cwd().Classify(cmd)
+		if v.Tier != Red {
+			t.Errorf("want Red for %q, got %s", cmd, v.Tier)
+		}
 	}
-	if !BareGitPushTargetsMain("git push origin", dir) {
-		t.Error("bare 'git push origin' on main branch: want true, got false")
+	notRed := func(t *testing.T, cmd string) {
+		t.Helper()
+		v := cwd().Classify(cmd)
+		if v.Tier == Red {
+			t.Errorf("want !Red for %q, got Red (%s)", cmd, strings.Join(v.Reasons, "; "))
+		}
 	}
 
-	// Explicit refspec — classifier handles it; BareGitPushTargetsMain must not double-count.
-	if BareGitPushTargetsMain("git push origin main", dir) {
-		t.Error("'git push origin main' has explicit refspec: BareGitPushTargetsMain should return false")
+	// Bare push on main branch → Red.
+	red(t, "git push")
+	red(t, "git push origin")
+
+	// Global -C flag tracked correctly inside classifier.
+	red(t, "git -C "+dir+" push")
+
+	// -c config override → fail-closed (Red) regardless of branch.
+	red(t, "git -c core.hooksPath=/dev/null push origin")
+
+	// Explicit refspec — pushTargetsMain already handles; not a bare-push.
+	notRed(t, "git push origin feature-branch")
+
+	// Empty CWD → fail-closed (Red).
+	v := (&Classifier{CWD: ""}).Classify("git push")
+	if v.Tier != Red {
+		t.Error("bare 'git push' with empty CWD: want fail-closed (Red)")
+	}
+
+	// Non-git CWD → fail-closed (Red).
+	v = (&Classifier{CWD: t.TempDir()}).Classify("git push")
+	if v.Tier != Red {
+		t.Error("bare 'git push' in non-git CWD: want fail-closed (Red)")
 	}
 }
 

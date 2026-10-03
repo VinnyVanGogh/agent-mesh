@@ -455,19 +455,10 @@ func handleHookPreTool() {
 		cwd, _ = os.Getwd()
 	}
 
-	c := &security.Classifier{}
+	// CWD enables bare-push branch resolution inside the classifier so the
+	// same parsed argv handles `git -C /dir push` correctly.
+	c := &security.Classifier{CWD: cwd}
 	verdict := c.Classify(bashInput.Command)
-
-	// A bare `git push` / `git push <remote>` with no refspec lands wherever the
-	// current branch's upstream points. If we're on main/master, that's a
-	// main-push and must be gated even though pushTargetsMain returns false
-	// (no explicit refspec to inspect). Resolve the branch from cwd and re-raise.
-	if verdict.Tier < security.Red {
-		if security.BareGitPushTargetsMain(bashInput.Command, cwd) {
-			verdict.Tier = security.Red
-			verdict.Reasons = append(verdict.Reasons, "git push (no refspec) while on main/master; Board approval required")
-		}
-	}
 
 	if verdict.Tier < security.Red {
 		preToolAllow()
