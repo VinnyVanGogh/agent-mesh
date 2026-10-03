@@ -31,9 +31,12 @@ function setupGitRepoWithDiff(): string {
   git('add', 'main.go');
   git('commit', '-m', 'init');
 
-  // Create checkpoint ref pointing at HEAD (pre-run baseline)
+  // Create checkpoint refs pointing at HEAD (pre-run baseline).
+  // Both the session-scoped and the global latest refs must exist so that
+  // resolveCheckpointRef("") → "refs/staypoint/checkpoints/latest" succeeds.
   const head = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   git('update-ref', 'refs/staypoint/checkpoints/global/latest', head);
+  git('update-ref', 'refs/staypoint/checkpoints/latest', head);
 
   // Modify main.go to produce a diff
   fs.writeFileSync(path.join(dir, 'main.go'), 'package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("hello")\n}\n');
@@ -79,7 +82,7 @@ test.describe('diff sidebar — file click opens diff modal', () => {
     await expect(modal.locator('.file-diff-header-path')).toContainText('main.go');
 
     // The diff body should show actual changed lines
-    await expect(modal.locator('.ds-add, .ds-del')).toBeVisible({ timeout: 5_000 });
+    await expect(modal.locator('.ds-add, .ds-del').first()).toBeVisible({ timeout: 5_000 });
 
     // Escape closes the modal
     await page.keyboard.press('Escape');
