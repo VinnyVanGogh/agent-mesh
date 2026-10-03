@@ -103,12 +103,29 @@ export class StayPointAPI {
     return this.json('GET', `/api/tasks/${encodeURIComponent(id)}/run-control-state`);
   }
 
-  async getMigrations(id: string): Promise<{ migrations: Array<{ path: string; sql: string; risk_statements: string[]; additive_only: boolean }>; sql_editor_url: string }> {
+  async getMigrations(id: string): Promise<{
+    migrations: Array<{
+      path: string; sql: string; risk_statements: string[]; additive_only: boolean;
+      verification_checks: Array<{ kind: string; description: string; sql: string }>;
+      verification_query: string;
+    }>;
+    sql_editor_url: string;
+    has_auto_verify: boolean;
+  }> {
     return this.json('GET', `/api/tasks/${encodeURIComponent(id)}/migrations`);
   }
 
-  async markMigrationApplied(id: string, path: string, appliedBy = 'board'): Promise<{ ok: boolean; path: string; applied_by: string }> {
-    return this.json('POST', `/api/tasks/${encodeURIComponent(id)}/migrations/mark-applied`, { path, applied_by: appliedBy });
+  async markMigrationApplied(
+    id: string, path: string, appliedBy = 'board',
+    extra: Record<string, unknown> = {},
+  ): Promise<{ ok: boolean; path: string; applied_by: string; mode?: string; verification_query?: string; checks?: unknown[] }> {
+    const res = await this.request.fetch(`/api/tasks/${encodeURIComponent(id)}/migrations/mark-applied`, {
+      method: 'POST',
+      headers: this.headers(),
+      data: { path, applied_by: appliedBy, ...extra },
+    });
+    const text = await res.text();
+    return (text ? JSON.parse(text) : {}) as { ok: boolean; path: string; applied_by: string; mode?: string; verification_query?: string; checks?: unknown[] };
   }
 
   /** Seeds a ship review card directly into the DB (test-only endpoint). */
