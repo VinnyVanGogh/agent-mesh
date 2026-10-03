@@ -9339,7 +9339,7 @@ setInterval(() => {
       for (const t of taskArr) { state.tasks[t.id] = t; }
       renderTaskStatusPage();
       // Navigate to new task
-      if (task && task.id) openDetail(task.id);
+      if (task && task.id) openTaskPage(task.id);
     } catch (err) {
       showErr(err.message || 'Failed to create task.');
       submitBtn.disabled = false;
