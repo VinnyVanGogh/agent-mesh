@@ -227,10 +227,11 @@ func TestRunPostsAgentSummaryComment(t *testing.T) {
 		t.Fatalf("expected in_review, got %q (diagnostic: %s)", result.Disposition, result.DiagnosticMsg)
 	}
 
-	// Must have a comment authored by 'agent-test' (not 'harness').
+	// Must have a comment authored by 'agent-summary' (not 'harness' and not the
+	// agent ID — agent-summary is excluded from fetchUserComments to prevent re-injection).
 	var msg string
 	_ = db.QueryRow(
-		`SELECT message FROM task_comments WHERE task_id='summary-task' AND author='agent-test' LIMIT 1`,
+		`SELECT message FROM task_comments WHERE task_id='summary-task' AND author='agent-summary' LIMIT 1`,
 	).Scan(&msg)
 	if msg == "" {
 		t.Fatal("expected agent-authored run summary comment in task_comments")
