@@ -180,6 +180,121 @@ func TestListAndPruneCheckpoints(t *testing.T) {
 	}
 }
 
+// TestDiffCheckpointFilesBareID verifies that DiffCheckpointFiles and
+// DiffCheckpointFilesAgainstRef resolve bare cp_ IDs (not full refs/SHA) via
+// for-each-ref, so file_stats is non-empty. Regression for STA-500 bug 1.
+func TestDiffCheckpointFilesBareID(t *testing.T) {
+	dir := setupTestGitRepo(t)
+	ctx := context.Background()
+
+	// Modify tracked file so there is a diff to report.
+	fileA := filepath.Join(dir, "file_a.txt")
+	if err := os.WriteFile(fileA, []byte("modified content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cp, err := CreateCheckpoint(ctx, CreateOptions{
+		WorkDir:   dir,
+		SessionID: "test-bare-id",
+		Message:   "checkpoint for bare-ID test",
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckpoint failed: %v", err)
+	}
+
+	// Modify again so the working tree differs from the checkpoint.
+	if err := os.WriteFile(fileA, []byte("content after checkpoint"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Use cp.ID (bare e.g. "cp_20261003_…") not the full ref.
+	stats, err := DiffCheckpointFiles(ctx, dir, cp.ID)
+	if err != nil {
+		t.Fatalf("DiffCheckpointFiles with bare ID failed: %v", err)
+	}
+	if len(stats) == 0 {
+		t.Errorf("expected file_stats to be non-empty for bare checkpoint ID %q, got []", cp.ID)
+	}
+
+	// Also verify DiffCheckpointFilesAgainstRef with bare ID.
+	head, err := runGit(ctx, dir, nil, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	statsRef, err := DiffCheckpointFilesAgainstRef(ctx, dir, cp.ID, head)
+	if err != nil {
+		t.Fatalf("DiffCheckpointFilesAgainstRef with bare ID failed: %v", err)
+	}
+	if len(statsRef) == 0 {
+		t.Errorf("expected file_stats to be non-empty for bare checkpoint ID %q (AgainstRef), got []", cp.ID)
+	}
+}
+
+// TestFindPreRunCheckpoint verifies FindPreRunCheckpoint returns the pre-run
+// checkpoint for a given task ID and ignores checkpoints from other tasks.
+// Regression for STA-500 bug 2.
+func TestFindPreRunCheckpoint(t *testing.T) {
+	dir := setupTestGitRepo(t)
+	ctx := context.Background()
+	taskID := "task-abc123"
+
+	// Create a non-pre-run checkpoint first.
+	if err := os.WriteFile(filepath.Join(dir, "file_a.txt"), []byte("v2"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := CreateCheckpoint(ctx, CreateOptions{
+		WorkDir:   dir,
+		SessionID: "sess-other",
+		Message:   "some other checkpoint",
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckpoint failed: %v", err)
+	}
+
+	// Create the pre-run checkpoint for our task.
+	if err := os.WriteFile(filepath.Join(dir, "file_a.txt"), []byte("v3"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	preCP, err := CreateCheckpoint(ctx, CreateOptions{
+		WorkDir:   dir,
+		SessionID: "run-xyz",
+		Message:   "pre-run " + taskID,
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckpoint pre-run failed: %v", err)
+	}
+
+	// Create another checkpoint after the pre-run (simulates turn checkpoints).
+	if err := os.WriteFile(filepath.Join(dir, "file_a.txt"), []byte("v4"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = CreateCheckpoint(ctx, CreateOptions{
+		WorkDir:   dir,
+		SessionID: "run-xyz",
+		Message:   "turn 1 " + taskID,
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckpoint turn failed: %v", err)
+	}
+
+	found, err := FindPreRunCheckpoint(ctx, dir, taskID)
+	if err != nil {
+		t.Fatalf("FindPreRunCheckpoint failed: %v", err)
+	}
+	if found != preCP.ID {
+		t.Errorf("FindPreRunCheckpoint returned %q, want %q", found, preCP.ID)
+	}
+
+	// Should not match a different task.
+	notFound, err := FindPreRunCheckpoint(ctx, dir, "task-other")
+	if err != nil {
+		t.Fatalf("FindPreRunCheckpoint (other task) failed: %v", err)
+	}
+	if notFound != "" {
+		t.Errorf("FindPreRunCheckpoint returned %q for unknown task, want empty", notFound)
+	}
+}
+
 func TestUndoCleanIgnored(t *testing.T) {
 	dir := setupTestGitRepo(t)
 	ctx := context.Background()

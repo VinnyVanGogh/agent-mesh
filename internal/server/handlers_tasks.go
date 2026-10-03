@@ -710,6 +710,15 @@ func (h *TasksHandler) GetTaskDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	cpID := r.URL.Query().Get("checkpoint")
 
+	// "Whole run" (empty checkpoint) should diff against the task's pre-run
+	// baseline, not refs/staypoint/checkpoints/latest (which is the newest
+	// turn checkpoint and shows "No changes" after a run completes).
+	if cpID == "" {
+		if preRunID, _ := checkpoint.FindPreRunCheckpoint(r.Context(), task.RepoPath, task.ID); preRunID != "" {
+			cpID = preRunID
+		}
+	}
+
 	workDir, hasWorktree := taskCheckpointWorkDir(task)
 	var stat string
 	var fileStats []checkpoint.FileDiffStat
