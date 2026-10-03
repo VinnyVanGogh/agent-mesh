@@ -278,6 +278,31 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 			sessID = "paperclip-" + taskID[:8]
 		}
 
+		// Resolve work_kind from DB and pick provider+model via the kind chain.
+		// Both adapterFn and EmitRoute use this same result so the route row
+		// always names the provider and model that actually ran (STA-531).
+		var kindRes adapter.KindChainResolution
+		var kindWorkKind string
+		{
+			var repoPath, wk string
+			if err := dbStore.DB().QueryRowContext(context.Background(),
+				"SELECT COALESCE(repo_path,''), COALESCE(work_kind,'coding') FROM tasks WHERE id=?", taskID,
+			).Scan(&repoPath, &wk); err != nil {
+				slog.Warn("wake: work_kind lookup failed; defaulting to coding",
+					slog.String("task", taskID), slog.Any("error", err))
+				wk = "coding"
+			}
+			kindWorkKind = wk
+			pacer, err := router.LoadPacerState()
+			if err != nil {
+				slog.Warn("wake: pacer state load failed; using empty pacer",
+					slog.String("task", taskID), slog.Any("error", err))
+				pacer = &router.PacerState{Pools: make(map[router.PoolID]*router.QuotaPool)}
+			}
+			kindRes = adapter.ResolveKindProviderChain(router.WorkKind(wk), pacer)
+			_ = repoPath // used only by kindRes internally
+		}
+
 		// resolvedProv is set by adapterFn before each adapter turn writes to
 		// stdout; parseDelta reads it to select the right stream parser.
 		var resolvedProv string
@@ -294,7 +319,25 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 			}
 		} else {
 			adapterFn = func(runCtx context.Context, cwd, prov string, rawArgs, extraEnv []string, stdout, stderr io.Writer) error {
-				agentType := prov
+				// Use the kind-resolved provider and model unless the harness
+				// already has an explicit provider (e.g. from RunConfig.Provider).
+				effectiveProv := prov
+				effectiveArgs := rawArgs
+				if effectiveProv == "" && !kindRes.AllLocked {
+					effectiveProv = kindRes.Provider
+					// Prepend --model only when rawArgs doesn't already contain one.
+					hasModel := false
+					for _, a := range rawArgs {
+						if a == "--model" {
+							hasModel = true
+							break
+						}
+					}
+					if !hasModel {
+						effectiveArgs = append(kindRes.ModelArgs, rawArgs...)
+					}
+				}
+				agentType := effectiveProv
 				if agentType == "" {
 					agentType = "claude"
 				}
@@ -311,7 +354,12 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 				if len(extraEnv) > 0 {
 					runCtx = adapter.WithExtraEnv(runCtx, extraEnv)
 				}
-				return adapter.RunAdapter(runCtx, cwd, nil, prov, rawArgs, nil, stdout, stderr)
+				// Pass real pacer so RunAdapter can skip locked slots on failover.
+				kindPacer, _ := router.LoadPacerState()
+				if kindPacer == nil {
+					kindPacer = &router.PacerState{Pools: make(map[router.PoolID]*router.QuotaPool)}
+				}
+				return adapter.RunAdapter(runCtx, cwd, kindPacer, effectiveProv, effectiveArgs, nil, stdout, stderr)
 			}
 		}
 
@@ -370,13 +418,22 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 		// Use context.Background() so daemon shutdown does not abruptly kill
 		// in-flight harness work; the dispatcher's Drain() provides the graceful
 		// drain window during shutdown.
-		db := dbStore.DB()
 		result, runErr := h.Run(context.Background(), taskID, orchestrator.RunConfig{
 			AgentID:    agentID,
 			WakeReason: reason,
 			RunAdapter: adapterFn,
 			EmitRoute: func(sr *orchestrator.StepRecorder) {
-				emitRouteStep(sr, db, taskID)
+				// Use the pre-computed kindRes so the route row always matches
+				// the provider+model the adapter will actually receive (STA-531).
+				if kindRes.AllLocked {
+					sr.EmitRoute("All providers locked", "No viable provider in the chain")
+					return
+				}
+				if kindRes.Slot != nil && kindRes.Slot.Provider == "claude-cloud" {
+					sr.EmitRoute("Running in Claude Cloud", "Kind of work: "+kindWorkKind)
+					return
+				}
+				sr.EmitRoute(kindRes.RouteDisplay, "Kind of work: "+kindWorkKind)
 			},
 			StepRecorder:     sr,
 			ParseDelta:       parseDelta,
@@ -404,48 +461,6 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 	}
 }
 
-// emitRouteStep looks up the task's repo_path and work_kind, resolves the
-// actual adapter provider chain (the same chain RunAdapter will execute), and
-// emits a route step as the first substantive timeline row.
-//
-// Using adapter.ResolveProviderChain instead of router.DefaultKindChains
-// ensures the label matches the provider that actually runs (STA-481).
-func emitRouteStep(sr *orchestrator.StepRecorder, dbConn *sql.DB, taskID string) {
-	var repoPath, workKind string
-	if err := dbConn.QueryRowContext(context.Background(),
-		"SELECT COALESCE(repo_path,''), COALESCE(work_kind,'coding') FROM tasks WHERE id=?", taskID,
-	).Scan(&repoPath, &workKind); err != nil {
-		slog.Warn("route step: task lookup failed", slog.String("task", taskID), slog.Any("err", err))
-		return
-	}
-
-	isWork, _, _ := router.IsWorkRepo(repoPath)
-
-	pacer, err := router.LoadPacerState()
-	if err != nil {
-		slog.Warn("route step: pacer state load failed", slog.Any("err", err))
-		pacer = &router.PacerState{Pools: make(map[router.PoolID]*router.QuotaPool)}
-	}
-
-	res := adapter.ResolveProviderChain(isWork, "", pacer)
-
-	if res.AllLocked {
-		sr.EmitRoute("All providers locked", "No viable provider in the chain")
-		return
-	}
-	if res.IsCloud {
-		sr.EmitRoute("Running in Claude Cloud", "Kind of work: "+workKind)
-		return
-	}
-	if res.FallbackFromDisplay != "" {
-		sr.EmitRoute(
-			"Fell back to "+res.SelectedDisplay+": "+res.FallbackFromDisplay+" quota locked",
-			"Kind of work: "+workKind,
-		)
-	} else {
-		sr.EmitRoute("Ran on "+res.SelectedDisplay, "Kind of work: "+workKind)
-	}
-}
 
 // resolveStaypointCLIBin returns the absolute path of the staypoint CLI binary
 // for injection as STAYPOINT_HOOK_BIN into adapter runs (STA-525).
