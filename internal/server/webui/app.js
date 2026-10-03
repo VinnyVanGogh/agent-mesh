@@ -6034,7 +6034,7 @@ function renderDetailContent(content, task) {
     `${fmtCurrency(task.spent_usd || 0)} · ${fmtCompactNum(task.spent_tokens || 0)} tokens`);
 
   // Budget
-  addPanelField(content, 'Budget', `${fmtCurrency(task.max_budget_usd || 0)} · ${task.max_turns || 50} turns max`);
+  addPanelField(content, 'Budget', `${fmtCurrency(task.max_budget_usd || 0)} · ${task.max_turns || 50} runs max`);
 
   // Governance Section: Reviewers, Approvers, Quality Gates
   const gov = task.governance;
@@ -7320,7 +7320,7 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
       : null);
   addMetaField('Budget',
     (task.max_budget_usd || task.max_turns)
-      ? `${fmtCurrency(task.max_budget_usd || 0)} · ${task.max_turns || 50} turns max`
+      ? `${fmtCurrency(task.max_budget_usd || 0)} · ${task.max_turns || 50} runs max`
       : null);
   addMetaField('Internal ID', task.id || null);
 

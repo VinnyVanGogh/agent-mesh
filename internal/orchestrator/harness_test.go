@@ -1116,3 +1116,64 @@ func TestRun_BranchSurvivesAfterRun(t *testing.T) {
 		t.Errorf("work product reference = %q, want %q", ref, branch)
 	}
 }
+
+// TestSpentTurnsEqualsAdapterInvocations verifies STA-466: spent_turns equals
+// the number of harness adapter invocations, not the number of provider
+// API calls the telemetry watcher observes.
+//
+// Before the fix, the watcher passed turns=1 to RecordTaskSpend per provider
+// API call, inflating spent_turns by tool-use rounds per harness turn.
+// After the fix the watcher passes turns=0; the harness is the sole authority.
+func TestSpentTurnsEqualsAdapterInvocations(t *testing.T) {
+	activeClaims.Store(0)
+
+	const wantTurns = 3
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	db := openTestDB(t)
+	insertTask(t, db, "sta466-task", repoDir)
+	_, _ = db.Exec(`INSERT INTO task_work_products (task_id, product_type, reference) VALUES ('sta466-task', 'workspace_file', '.worktrees/sta466-task')`)
+
+	h := &Harness{
+		DB:          db,
+		RepoRoot:    repoDir,
+		WM:          workspace.NewWorktreeManager(repoDir, db),
+		Interceptor: NewInterceptor(db),
+	}
+	h.Interceptor.Guards = []GuardFunc{h.Interceptor.checkWorkProducts}
+
+	var adapterCalls int
+	var mu sync.Mutex
+
+	// Adapter does NOT emit TASK_COMPLETE, so all wantTurns invocations run.
+	result, err := h.Run(context.Background(), "sta466-task", RunConfig{
+		MaxTurns:     wantTurns,
+		AgentID:      "tester",
+		MaxWallclock: 10 * time.Second,
+		RunAdapter: func(_ context.Context, _, _ string, _, _ []string, _ io.Writer, _ io.Writer) error {
+			mu.Lock()
+			adapterCalls++
+			mu.Unlock()
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if adapterCalls != wantTurns {
+		t.Fatalf("expected %d adapter calls, got %d", wantTurns, adapterCalls)
+	}
+
+	var spentTurns int
+	_ = db.QueryRow(`SELECT spent_turns FROM tasks WHERE id='sta466-task'`).Scan(&spentTurns)
+	if spentTurns != wantTurns {
+		t.Fatalf("STA-466: spent_turns=%d, want %d (one per adapter invocation)", spentTurns, wantTurns)
+	}
+
+	if result.Disposition != "in_review" {
+		t.Fatalf("expected disposition=in_review, got %q", result.Disposition)
+	}
+}
