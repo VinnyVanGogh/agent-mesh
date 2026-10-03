@@ -1062,21 +1062,35 @@ func (h *TasksHandler) GetTaskMigrations(w http.ResponseWriter, r *http.Request)
 
 	// Read SQL content and check risk for each detected migration file.
 	files := make([]migration.File, 0, len(migPaths))
+	branch := "staypoint/" + task.ID
 	for _, p := range migPaths {
-		sqlContent, readErr := migration.ReadContent(workDir, p)
-		if readErr != nil {
-			sqlContent, _ = migration.ReadContent(task.RepoPath, p)
+		var sqlContent string
+		var readErr error
+		if hasWorktree {
+			sqlContent, readErr = migration.ReadContent(workDir, p)
 		}
-		risks, hasRisk := migration.CheckRisk(sqlContent)
-		if risks == nil {
-			risks = []string{}
+		if !hasWorktree || readErr != nil {
+			// The worktree is gone (or lacks the file): read it from the task
+			// branch. The repo checkout is usually on main, where the file
+			// doesn't exist yet.
+			sqlContent, readErr = migration.ReadContentAtRef(r.Context(), task.RepoPath, branch, p)
 		}
-		files = append(files, migration.File{
-			Path:           p,
-			SQL:            sqlContent,
-			RiskStatements: risks,
-			AdditiveOnly:   !hasRisk,
-		})
+		f := migration.File{Path: p, SQL: sqlContent, RiskStatements: []string{}}
+		if readErr != nil || strings.TrimSpace(sqlContent) == "" {
+			// Never call unreadable SQL "additive only".
+			f.ReadError = "could not read migration file from the task branch"
+			if readErr != nil {
+				f.ReadError += ": " + readErr.Error()
+			}
+			f.AdditiveOnly = false
+		} else {
+			risks, hasRisk := migration.CheckRisk(sqlContent)
+			if risks != nil {
+				f.RiskStatements = risks
+			}
+			f.AdditiveOnly = !hasRisk
+		}
+		files = append(files, f)
 	}
 
 	writeJSON(w, map[string]any{

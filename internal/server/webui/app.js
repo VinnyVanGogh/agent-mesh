@@ -7576,7 +7576,7 @@ async function renderMigrationsPanel(container, taskId) {
 
     // Risk badge
     const riskBadge = el('span', mig.additive_only ? 'migration-badge-safe' : 'migration-badge-risk',
-      mig.additive_only ? 'Additive only ✓' : '⚠ Destructive');
+      mig.read_error ? '⚠ Could not read file' : (mig.additive_only ? 'Additive only ✓' : '⚠ Destructive'));
     pathRow.appendChild(riskBadge);
     card.appendChild(pathRow);
 
@@ -7588,6 +7588,10 @@ async function renderMigrationsPanel(container, taskId) {
         riskList.appendChild(li);
       }
       card.appendChild(riskList);
+    }
+
+    if (mig.read_error) {
+      card.appendChild(el('div', 'migration-risk-list', mig.read_error));
     }
 
     // SQL block with syntax highlighting
@@ -7603,23 +7607,30 @@ async function renderMigrationsPanel(container, taskId) {
 
     const copyBtn = el('button', 'btn btn-secondary btn-sm migration-copy-btn', 'Copy SQL');
     copyBtn.title = 'Copy SQL to clipboard';
+    copyBtn.disabled = !mig.sql;
+    const flash = (label) => {
+      copyBtn.textContent = label;
+      setTimeout(() => { copyBtn.textContent = 'Copy SQL'; }, 2000);
+    };
     copyBtn.addEventListener('click', async () => {
+      const sql = mig.sql || '';
+      if (!sql) { flash('Nothing to copy'); return; }
       try {
-        await navigator.clipboard.writeText(mig.sql || '');
-        copyBtn.textContent = '✓ Copied';
-        setTimeout(() => { copyBtn.textContent = 'Copy SQL'; }, 2000);
-      } catch {
-        // Fallback for non-HTTPS contexts
-        const ta = document.createElement('textarea');
-        ta.value = mig.sql || '';
-        ta.style.cssText = 'position:fixed;opacity:0;';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        copyBtn.textContent = '✓ Copied';
-        setTimeout(() => { copyBtn.textContent = 'Copy SQL'; }, 2000);
-      }
+        await navigator.clipboard.writeText(sql);
+        flash('✓ Copied');
+        return;
+      } catch { /* fall through to the textarea fallback */ }
+      const ta = document.createElement('textarea');
+      ta.value = sql;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch { ok = false; }
+      document.body.removeChild(ta);
+      flash(ok ? '✓ Copied' : 'Copy failed: select the SQL above');
     });
     actions.appendChild(copyBtn);
 

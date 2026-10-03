@@ -1,7 +1,9 @@
 package migration_test
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -126,5 +128,41 @@ func TestReadContent(t *testing.T) {
 	}
 	if got != content {
 		t.Errorf("got %q, want %q", got, content)
+	}
+}
+
+func TestReadContentAtRef_ReadsFromBranchNotCheckout(t *testing.T) {
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-q", "-b", "main")
+	run("commit", "-q", "--allow-empty", "-m", "init")
+	run("checkout", "-q", "-b", "staypoint/task-x")
+	if err := os.MkdirAll(filepath.Join(dir, "supabase", "migrations"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := "CREATE TABLE IF NOT EXISTS public.t (id int);\n"
+	if err := os.WriteFile(filepath.Join(dir, "supabase", "migrations", "1_t.sql"), []byte(want), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "-A")
+	run("commit", "-q", "-m", "add migration")
+	run("checkout", "-q", "main") // the file is absent from this checkout
+
+	if _, err := migration.ReadContent(dir, "supabase/migrations/1_t.sql"); err == nil {
+		t.Fatal("expected ReadContent to fail on the main checkout")
+	}
+	got, err := migration.ReadContentAtRef(context.Background(), dir, "staypoint/task-x", "supabase/migrations/1_t.sql")
+	if err != nil {
+		t.Fatalf("ReadContentAtRef: %v", err)
+	}
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

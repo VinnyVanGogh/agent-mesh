@@ -3,7 +3,9 @@
 package migration
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -20,10 +22,13 @@ var DefaultGlobs = []string{
 
 // File holds a detected migration file with its content and risk analysis.
 type File struct {
-	Path          string   `json:"path"`
-	SQL           string   `json:"sql"`
+	Path           string   `json:"path"`
+	SQL            string   `json:"sql"`
 	RiskStatements []string `json:"risk_statements"`
-	AdditiveOnly  bool     `json:"additive_only"`
+	AdditiveOnly   bool     `json:"additive_only"`
+	// ReadError is set when the file content could not be read; SQL is then
+	// empty and the file must not be treated as safe.
+	ReadError string `json:"read_error,omitempty"`
 }
 
 // destructivePatterns is compiled once at startup.
@@ -185,4 +190,14 @@ func ReadContent(workDir, relPath string) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// ReadContentAtRef reads relPath as committed on ref (e.g. the task branch)
+// without needing a checkout, so it works after the task worktree is pruned.
+func ReadContentAtRef(ctx context.Context, repoPath, ref, relPath string) (string, error) {
+	out, err := exec.CommandContext(ctx, "git", "-C", repoPath, "show", ref+":"+filepath.ToSlash(relPath)).Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
 }
