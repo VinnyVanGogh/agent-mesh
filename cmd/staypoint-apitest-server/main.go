@@ -21,6 +21,7 @@ import (
 
 	"github.com/VinnyVanGogh/staypoint/internal/config"
 	"github.com/VinnyVanGogh/staypoint/internal/db"
+	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
 	"github.com/VinnyVanGogh/staypoint/internal/server"
 )
 
@@ -92,6 +93,7 @@ func run() error {
 		return fmt.Errorf("open db: %w", err)
 	}
 	defer store.Close()
+	orchestrator.GlobalRunControl.SetDB(store.DB())
 
 	srv, err := server.New(server.Options{
 		BindHost:        "127.0.0.1",
