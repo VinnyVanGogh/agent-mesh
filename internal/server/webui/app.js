@@ -357,7 +357,14 @@ function handleEvent(evt) {
     if (tid) {
       if (!state.tasks[tid]) state.tasks[tid] = {};
       if (!state.tasks[tid].runSteps) state.tasks[tid].runSteps = [];
-      state.tasks[tid].runSteps.push(step);
+      // Upsert: running steps publish twice (status:running then status:done/error).
+      // Replace the existing entry by id so the array stays accurate.
+      const existingIdx = step.id ? state.tasks[tid].runSteps.findIndex(s => s.id === step.id) : -1;
+      if (existingIdx >= 0) {
+        state.tasks[tid].runSteps[existingIdx] = step;
+      } else {
+        state.tasks[tid].runSteps.push(step);
+      }
     }
     if (tid && state.openDetailTaskId === tid) {
       appendRunStepToTimeline(tid, step);
@@ -399,6 +406,29 @@ function handleEvent(evt) {
         const existing = document.getElementById(`ship-review-${tid}`);
         if (existing) existing.remove();
         renderShipReviewCard(main, tid);
+      }
+    }
+    return;
+  }
+  if (type === 'run.stats' && evt.data) {
+    const stats = evt.data;
+    const tid = stats.task_id;
+    if (tid) {
+      if (!state.tasks[tid]) state.tasks[tid] = {};
+      if (stats.spent_usd != null) state.tasks[tid].spent_usd = stats.spent_usd;
+      if (stats.spent_tokens != null) state.tasks[tid].spent_tokens = stats.spent_tokens;
+    }
+    if (tid && state.openDetailTaskId === tid) {
+      const statsBar = document.getElementById(`timeline-stats-${tid}`);
+      if (statsBar) {
+        const task = state.tasks[tid] || {};
+        const runSteps = task.runSteps || [];
+        const createdAtMs = task.created_at ? new Date(task.created_at).getTime() : null;
+        const lastStepAt = runSteps.length ? new Date(runSteps[runSteps.length - 1].created_at).getTime() : null;
+        const elapsedMs = lastStepAt && createdAtMs ? lastStepAt - createdAtMs : (createdAtMs ? Date.now() - createdAtMs : null);
+        const isStuck = runSteps.length > 0 && (Date.now() - (lastStepAt || 0)) > 5 * 60 * 1000 && task.status !== 'done';
+        statsBar.innerHTML = '';
+        statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, isStuck));
       }
     }
     return;
@@ -7023,7 +7053,15 @@ function appendRunStepToTimeline(taskId, step) {
   // Remove empty placeholder
   const empty = stepList.querySelector('.timeline-empty');
   if (empty) empty.remove();
-  stepList.appendChild(buildRunStepRow(step));
+  // Upsert: if a row with this step id already exists (e.g. status:running → status:done),
+  // replace it in-place instead of appending a duplicate.
+  const existingRow = step.id ? stepList.querySelector(`[data-step-id="${CSS.escape(step.id)}"]`) : null;
+  const newRow = buildRunStepRow(step);
+  if (existingRow) {
+    existingRow.replaceWith(newRow);
+  } else {
+    stepList.appendChild(newRow);
+  }
 
   // Update section title count
   const section = document.getElementById(`timeline-section-${taskId}`);

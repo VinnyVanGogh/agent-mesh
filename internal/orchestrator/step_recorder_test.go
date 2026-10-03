@@ -40,21 +40,39 @@ func TestStepRecorder_ThinkingStep(t *testing.T) {
 }
 
 func TestStepRecorder_GroupsToolPair(t *testing.T) {
-	pub, types := collectPublished(t)
+	var published []RunStep
+	var mu sync.Mutex
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				published = append(published, s)
+				mu.Unlock()
+			}
+		}
+	}
 	r := NewStepRecorder(nil, pub, "run1", "task1")
 
 	r.Feed(StepDelta{Kind: StepDeltaToolUse, ToolName: "Read", ToolID: "t1"})
 	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "t1"})
 
-	// tool_use+tool_result should publish exactly one run.step
-	stepCount := 0
-	for _, tp := range *types {
-		if tp == "run.step" {
-			stepCount++
-		}
+	mu.Lock()
+	defer mu.Unlock()
+	// tool_use emits a live "running" row; tool_result emits the final "done" row with the same ID.
+	if len(published) != 2 {
+		t.Fatalf("expected 2 run.step events (live+final), got %d", len(published))
 	}
-	if stepCount != 1 {
-		t.Errorf("expected 1 run.step event, got %d (events: %v)", stepCount, *types)
+	if published[0].Status != "running" {
+		t.Errorf("first event: expected status 'running', got %q", published[0].Status)
+	}
+	if published[1].Status != "done" {
+		t.Errorf("second event: expected status 'done', got %q", published[1].Status)
+	}
+	if published[0].ID == "" {
+		t.Error("live event must have a non-empty ID")
+	}
+	if published[0].ID != published[1].ID {
+		t.Errorf("live and final events must share the same ID; got %q vs %q", published[0].ID, published[1].ID)
 	}
 }
 
@@ -151,21 +169,36 @@ func TestStepRecorder_MultipleThinkMerged(t *testing.T) {
 }
 
 func TestStepRecorder_ErrorToolResult(t *testing.T) {
-	pub, types := collectPublished(t)
+	var published []RunStep
+	var mu sync.Mutex
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				published = append(published, s)
+				mu.Unlock()
+			}
+		}
+	}
 	r := NewStepRecorder(nil, pub, "run1", "task1")
 
 	r.Feed(StepDelta{Kind: StepDeltaToolUse, ToolName: "Bash", ToolID: "t2"})
 	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "t2", IsError: true})
 
-	// Should still produce one run.step, status error
-	stepCount := 0
-	for _, tp := range *types {
-		if tp == "run.step" {
-			stepCount++
-		}
+	mu.Lock()
+	defer mu.Unlock()
+	// live "running" event + final "error" event with the same ID
+	if len(published) != 2 {
+		t.Fatalf("expected 2 run.step events for error result, got %d", len(published))
 	}
-	if stepCount != 1 {
-		t.Errorf("expected 1 run.step for error result, got %d", stepCount)
+	if published[0].Status != "running" {
+		t.Errorf("first event: expected status 'running', got %q", published[0].Status)
+	}
+	if published[1].Status != "error" {
+		t.Errorf("second event: expected status 'error', got %q", published[1].Status)
+	}
+	if published[0].ID != published[1].ID {
+		t.Errorf("live and final events must share the same ID; got %q vs %q", published[0].ID, published[1].ID)
 	}
 }
 
@@ -235,16 +268,22 @@ func TestStepRecorder_ToolInputInTitle(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(published) != 1 {
-		t.Fatalf("expected 1 run.step, got %d", len(published))
+	// live "running" + final "done", both with the same ID and title
+	if len(published) != 2 {
+		t.Fatalf("expected 2 run.step events (live+final), got %d", len(published))
 	}
-	s := published[0]
-	if s.Title != "go test ./internal/server/..." {
-		t.Errorf("expected command as title, got %q", s.Title)
+	// Both events carry the title extracted from ToolInput.
+	for i, s := range published {
+		if s.Title != "go test ./internal/server/..." {
+			t.Errorf("published[%d]: expected command as title, got %q", i, s.Title)
+		}
 	}
-	// Body is set from tool result text; empty result → empty body.
-	if s.Body != "" {
-		t.Errorf("expected empty body for result with no text, got %q", s.Body)
+	if published[0].ID != published[1].ID {
+		t.Errorf("live and final events must share the same ID; got %q vs %q", published[0].ID, published[1].ID)
+	}
+	// Live event body holds the tool input JSON; final body is empty (no result text).
+	if published[0].Body == "" {
+		t.Error("live event: expected non-empty body with tool input JSON")
 	}
 }
 
@@ -276,15 +315,22 @@ func TestStepRecorder_ToolResultSetsBody(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(published) != 1 {
-		t.Fatalf("expected 1 run.step, got %d", len(published))
+	// live "running" event + final "done" event with the same ID
+	if len(published) != 2 {
+		t.Fatalf("expected 2 run.step events (live+final), got %d", len(published))
 	}
-	s := published[0]
-	if s.Status != "done" {
-		t.Errorf("expected status done, got %q", s.Status)
+	if published[0].Status != "running" {
+		t.Errorf("live event: expected status 'running', got %q", published[0].Status)
 	}
-	if s.Body != "127.0.0.1 localhost\n" {
-		t.Errorf("expected output in body, got %q", s.Body)
+	final := published[1]
+	if final.Status != "done" {
+		t.Errorf("final event: expected status done, got %q", final.Status)
+	}
+	if final.Body != "127.0.0.1 localhost\n" {
+		t.Errorf("final event: expected output in body, got %q", final.Body)
+	}
+	if published[0].ID != final.ID {
+		t.Errorf("live and final events must share the same ID; got %q vs %q", published[0].ID, final.ID)
 	}
 }
 
@@ -316,15 +362,22 @@ func TestStepRecorder_ToolResultError(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(published) != 1 {
-		t.Fatalf("expected 1 run.step, got %d", len(published))
+	// live "running" event + final "error" event with the same ID
+	if len(published) != 2 {
+		t.Fatalf("expected 2 run.step events (live+final), got %d", len(published))
 	}
-	s := published[0]
-	if s.Status != "error" {
-		t.Errorf("expected status error, got %q", s.Status)
+	if published[0].Status != "running" {
+		t.Errorf("live event: expected status 'running', got %q", published[0].Status)
 	}
-	if s.Body != "cat: does-not-exist.txt: No such file or directory\n" {
-		t.Errorf("unexpected body: %q", s.Body)
+	final := published[1]
+	if final.Status != "error" {
+		t.Errorf("final event: expected status error, got %q", final.Status)
+	}
+	if final.Body != "cat: does-not-exist.txt: No such file or directory\n" {
+		t.Errorf("final event: unexpected body: %q", final.Body)
+	}
+	if published[0].ID != final.ID {
+		t.Errorf("live and final events must share the same ID; got %q vs %q", published[0].ID, final.ID)
 	}
 }
 
@@ -619,16 +672,27 @@ func TestStepRecorder_ParallelToolCallsInOrder(t *testing.T) {
 	r.Close()
 
 	got := *steps
-	if len(got) != 2 {
-		t.Fatalf("expected 2 run.step events, got %d: %+v", len(got), got)
+	// Each tool_use emits a live "running" event then a final "done"/"error" event:
+	// 2 tools × 2 events = 4 total. Filter to finals for assertions.
+	if len(got) != 4 {
+		t.Fatalf("expected 4 run.step events (2 live + 2 final), got %d: %+v", len(got), got)
 	}
-
-	byID := map[string]RunStep{}
+	var finals []RunStep
 	for _, s := range got {
-		byID[s.Title] = s
+		if s.Status != "running" {
+			finals = append(finals, s)
+		}
+	}
+	if len(finals) != 2 {
+		t.Fatalf("expected 2 final (non-running) events, got %d", len(finals))
 	}
 
-	s1 := got[0]
+	byTitle := map[string]RunStep{}
+	for _, s := range finals {
+		byTitle[s.Title] = s
+	}
+
+	s1 := finals[0]
 	if s1.Body != "hello\n" {
 		t.Errorf("step 1 body = %q, want %q", s1.Body, "hello\n")
 	}
@@ -636,7 +700,7 @@ func TestStepRecorder_ParallelToolCallsInOrder(t *testing.T) {
 		t.Errorf("step 1 status = %q, want done", s1.Status)
 	}
 
-	s2 := got[1]
+	s2 := finals[1]
 	if s2.Body != "slept-again\n" {
 		t.Errorf("step 2 body = %q, want %q", s2.Body, "slept-again\n")
 	}
@@ -662,13 +726,16 @@ func TestStepRecorder_ParallelToolCallsReverseOrder(t *testing.T) {
 	r.Close()
 
 	got := *steps
-	if len(got) != 2 {
-		t.Fatalf("expected 2 run.step events, got %d: %+v", len(got), got)
+	if len(got) != 4 {
+		t.Fatalf("expected 4 run.step events (2 live + 2 final), got %d: %+v", len(got), got)
 	}
 
+	// Build title map from finals only — live events have tool-input JSON as body.
 	byTitle := map[string]RunStep{}
 	for _, s := range got {
-		byTitle[s.Title] = s
+		if s.Status != "running" {
+			byTitle[s.Title] = s
+		}
 	}
 
 	if sa, ok := byTitle["Read a.txt"]; ok {
@@ -722,11 +789,15 @@ func TestStepRecorder_ParallelToolCallDuration(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(entries) != 2 {
-		t.Fatalf("expected 2 steps, got %d", len(entries))
+	if len(entries) != 4 {
+		t.Fatalf("expected 4 steps (2 live + 2 final), got %d", len(entries))
 	}
 
+	// Duration check only applies to final events (live events have no EndedAt).
 	for _, e := range entries {
+		if e.step.EndedAt == nil {
+			continue
+		}
 		startedAt, err := time.Parse(time.RFC3339Nano, e.step.StartedAt)
 		if err != nil {
 			t.Fatalf("StartedAt parse: %v", err)
@@ -756,12 +827,15 @@ func TestStepRecorder_ParallelToolCallErrorStatus(t *testing.T) {
 	r.Close()
 
 	got := *steps
-	if len(got) != 2 {
-		t.Fatalf("expected 2 steps, got %d", len(got))
+	if len(got) != 4 {
+		t.Fatalf("expected 4 steps (2 live + 2 final), got %d", len(got))
 	}
+	// Only check final events — live events carry tool-input JSON, not result text.
 	statusByBody := map[string]string{}
 	for _, s := range got {
-		statusByBody[s.Body] = s.Status
+		if s.Status != "running" {
+			statusByBody[s.Body] = s.Status
+		}
 	}
 	if statusByBody["ok\n"] != "done" {
 		t.Errorf("ok step status = %q, want done", statusByBody["ok\n"])

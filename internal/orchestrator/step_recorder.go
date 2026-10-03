@@ -120,6 +120,7 @@ type StepRecorder struct {
 // openStep is a step that has been started but not yet closed.
 type openStep struct {
 	seq       int
+	id        string // pre-assigned for tool_use steps so the live row can be updated on result
 	kind      StepKind
 	title     string
 	body      strings.Builder
@@ -271,8 +272,10 @@ func (r *StepRecorder) Feed(d StepDelta) {
 		// other in-flight tool steps so parallel tool_use blocks each get their own row.
 		r.closeCurrentLocked()
 		r.seq++
+		liveID := uuid.New().String()
 		p := &openStep{
 			seq:       r.seq,
+			id:        liveID,
 			kind:      toolUseKind(d.ToolName),
 			title:     extractToolTitle(d.ToolName, d.ToolInput, r.worktreeRoot),
 			startedAt: time.Now().UTC(),
@@ -290,6 +293,20 @@ func (r *StepRecorder) Feed(d StepDelta) {
 			// No ID: fall back to single-pending slot (legacy / non-parallel path).
 			r.pending = p
 		}
+		// Publish a live row immediately so the timeline shows the running command.
+		liveStep := RunStep{
+			ID:        liveID,
+			RunID:     r.runID,
+			TaskID:    r.taskID,
+			Seq:       p.seq,
+			Kind:      p.kind,
+			Title:     p.title,
+			Body:      p.body.String(),
+			Status:    "running",
+			StartedAt: p.startedAt.Format(time.RFC3339Nano),
+		}
+		r.persist(liveStep)
+		r.publish("run.step", liveStep)
 
 	case StepDeltaToolResult:
 		// Fast path: match by tool_use_id in the parallel map.
@@ -439,6 +456,7 @@ func (r *StepRecorder) closePendingWithStatusLocked(p *openStep, status string) 
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	step := RunStep{
+		ID:        p.id, // reuse pre-assigned ID so INSERT OR REPLACE updates the live row
 		RunID:     r.runID,
 		TaskID:    r.taskID,
 		Seq:       p.seq,
@@ -465,6 +483,7 @@ func (r *StepRecorder) closeToolStepLocked(p *openStep, status string) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	step := RunStep{
+		ID:        p.id, // reuse pre-assigned ID so INSERT OR REPLACE updates the live row
 		RunID:     r.runID,
 		TaskID:    r.taskID,
 		Seq:       p.seq,
@@ -515,14 +534,14 @@ func (r *StepRecorder) persist(step RunStep) {
 	}
 
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO run_steps (id, run_id, task_id, seq, parent_seq, kind, title, body, status, started_at, ended_at)
+		INSERT OR REPLACE INTO run_steps (id, run_id, task_id, seq, parent_seq, kind, title, body, status, started_at, ended_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		step.ID, step.RunID, step.TaskID, step.Seq, parentSeqNull,
 		string(step.Kind), step.Title, step.Body, step.Status,
 		step.StartedAt, endedAtNull,
 	)
 	if err != nil {
-		slog.Warn("run_steps insert failed", slog.Any("err", err))
+		slog.Warn("run_steps upsert failed", slog.Any("err", err))
 	}
 }
 
