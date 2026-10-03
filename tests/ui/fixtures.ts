@@ -102,6 +102,14 @@ export class StayPointAPI {
   async getRunControlState(id: string): Promise<{ paused: boolean; stop_requested: boolean }> {
     return this.json('GET', `/api/tasks/${encodeURIComponent(id)}/run-control-state`);
   }
+
+  async getMigrations(id: string): Promise<{ migrations: Array<{ path: string; sql: string; risk_statements: string[]; additive_only: boolean }>; sql_editor_url: string }> {
+    return this.json('GET', `/api/tasks/${encodeURIComponent(id)}/migrations`);
+  }
+
+  async markMigrationApplied(id: string, path: string, appliedBy = 'board'): Promise<{ ok: boolean; path: string; applied_by: string }> {
+    return this.json('POST', `/api/tasks/${encodeURIComponent(id)}/migrations/mark-applied`, { path, applied_by: appliedBy });
+  }
 }
 
 /** URL of the full task page, matching taskToPath() in app.js for local tasks. */

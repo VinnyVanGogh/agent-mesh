@@ -328,6 +328,12 @@ func (h *ShipReviewHandler) UpsertProjectDevConfig(w http.ResponseWriter, r *htt
 			return
 		}
 	}
+	if cfg.SQLEditorURL != "" {
+		if err := shipreview.ValidateSQLEditorURL(cfg.SQLEditorURL); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if err := shipreview.UpsertProjectDevConfig(h.db, &cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

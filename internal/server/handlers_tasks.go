@@ -13,7 +13,9 @@ import (
 
 	"github.com/VinnyVanGogh/staypoint/internal/checkpoint"
 	"github.com/VinnyVanGogh/staypoint/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/migration"
 	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
+	"github.com/VinnyVanGogh/staypoint/internal/shipreview"
 	"github.com/google/uuid"
 )
 
@@ -943,4 +945,115 @@ func (h *TasksHandler) GetAllRunErrors(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"errors": errs})
+}
+
+// GetTaskMigrations handles GET /api/tasks/{id}/migrations
+// Returns migration files found in the task's diff, with SQL content and risk analysis.
+func (h *TasksHandler) GetTaskMigrations(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id required")
+		return
+	}
+	task, err := context.GetTask(h.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	// Load per-project config for globs + SQL editor URL.
+	projCfg, _ := shipreview.GetProjectDevConfig(h.db, task.RepoPath)
+	globs := migration.DefaultGlobs
+	sqlEditorURL := ""
+	if projCfg != nil {
+		if len(projCfg.MigrationGlobs) > 0 {
+			globs = projCfg.MigrationGlobs
+		}
+		sqlEditorURL = projCfg.SQLEditorURL
+	}
+
+	// Get the full diff file list.
+	cpID := ""
+	if preRunID, _ := checkpoint.FindPreRunCheckpoint(r.Context(), task.RepoPath, task.ID); preRunID != "" {
+		cpID = preRunID
+	}
+	workDir, hasWorktree := taskCheckpointWorkDir(task)
+	var fileStats []checkpoint.FileDiffStat
+	if hasWorktree {
+		fileStats, _ = checkpoint.DiffCheckpointFiles(r.Context(), workDir, cpID)
+	} else {
+		branch := "staypoint/" + task.ID
+		fileStats, _ = checkpoint.DiffCheckpointFilesAgainstRef(r.Context(), task.RepoPath, cpID, branch)
+	}
+
+	filePaths := make([]string, len(fileStats))
+	for i, s := range fileStats {
+		filePaths[i] = s.Path
+	}
+
+	migPaths := migration.Detect(filePaths, globs)
+
+	// Read SQL content and check risk for each detected migration file.
+	files := make([]migration.File, 0, len(migPaths))
+	for _, p := range migPaths {
+		sqlContent, readErr := migration.ReadContent(workDir, p)
+		if readErr != nil {
+			sqlContent, _ = migration.ReadContent(task.RepoPath, p)
+		}
+		risks, hasRisk := migration.CheckRisk(sqlContent)
+		if risks == nil {
+			risks = []string{}
+		}
+		files = append(files, migration.File{
+			Path:           p,
+			SQL:            sqlContent,
+			RiskStatements: risks,
+			AdditiveOnly:   !hasRisk,
+		})
+	}
+
+	writeJSON(w, map[string]any{
+		"migrations":     files,
+		"sql_editor_url": sqlEditorURL,
+	})
+}
+
+// MarkMigrationApplied handles POST /api/tasks/{id}/migrations/mark-applied
+// Records a migration_applied event in the task's activity log.
+func (h *TasksHandler) MarkMigrationApplied(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id required")
+		return
+	}
+	if _, err := context.GetTask(h.db, id); err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	var body struct {
+		Path      string `json:"path"`
+		AppliedBy string `json:"applied_by"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if body.Path == "" {
+		writeError(w, http.StatusBadRequest, "path required")
+		return
+	}
+	if body.AppliedBy == "" {
+		body.AppliedBy = "board"
+	}
+
+	details, _ := json.Marshal(map[string]string{
+		"path":       body.Path,
+		"applied_by": body.AppliedBy,
+	})
+	if err := context.LogActivity(h.db, id, "migration_applied", string(details)); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "path": body.Path, "applied_by": body.AppliedBy})
 }

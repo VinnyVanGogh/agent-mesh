@@ -65,6 +65,8 @@ func openTestDB(t *testing.T) *sql.DB {
 			dev_command TEXT NOT NULL DEFAULT '',
 			dev_url TEXT NOT NULL DEFAULT '',
 			setup_steps_json TEXT NOT NULL DEFAULT '[]',
+			migration_globs_json TEXT NOT NULL DEFAULT '[]',
+			sql_editor_url TEXT NOT NULL DEFAULT '',
 			updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 		);
 	`)
