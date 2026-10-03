@@ -452,3 +452,61 @@ func runWithFailover(ctx context.Context, cwd string, pacerState *router.PacerSt
 	}
 	return fmt.Errorf("[staypoint-adapter] all providers exhausted or locked for this environment")
 }
+
+// ChainResolution describes which provider was selected for a run.
+type ChainResolution struct {
+	// SelectedDisplay is the human-readable name of the candidate that will run.
+	SelectedDisplay string
+	// FallbackFromDisplay is the primary candidate's name when a fallback
+	// occurred (i.e. the primary was quota-locked). Empty when no fallback.
+	FallbackFromDisplay string
+	// AllLocked is set when every candidate in the chain is quota-locked.
+	AllLocked bool
+	// IsCloud is set when the selected candidate is the cloud_session provider.
+	IsCloud bool
+}
+
+// candidateDisplayName maps a providerCandidate.Name to a human-readable label.
+func candidateDisplayName(name string) string {
+	switch name {
+	case "gemini":
+		return "Gemini"
+	case "work-claude":
+		return "Claude (work)"
+	case "personal-claude":
+		return "Claude"
+	case "cloud_session":
+		return "Claude Cloud"
+	default:
+		return name
+	}
+}
+
+// ResolveProviderChain builds the failover chain for isWork+provider, walks it
+// using the supplied pacer quota state (nil = no locks), and returns which
+// candidate would actually run. This is the single source of truth for the
+// route-row label so it matches what RunAdapter executes.
+func ResolveProviderChain(isWork bool, provider string, pacer *router.PacerState) ChainResolution {
+	chain := BuildProviderChain(isWork, provider)
+	if len(chain) == 0 {
+		return ChainResolution{AllLocked: true}
+	}
+	for i, c := range chain {
+		pool := (*router.QuotaPool)(nil)
+		if pacer != nil {
+			pool = pacer.Pools[c.PoolID]
+		}
+		if isPoolLocked(pool) {
+			continue
+		}
+		res := ChainResolution{
+			SelectedDisplay: candidateDisplayName(c.Name),
+			IsCloud:         c.Name == "cloud_session",
+		}
+		if i > 0 {
+			res.FallbackFromDisplay = candidateDisplayName(chain[0].Name)
+		}
+		return res
+	}
+	return ChainResolution{AllLocked: true}
+}
