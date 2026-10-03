@@ -46,8 +46,11 @@ const (
 
 // StepUsage carries token accounting from a stream event.
 type StepUsage struct {
-	InputTokens  int64
-	OutputTokens int64
+	InputTokens         int64
+	OutputTokens        int64
+	CacheReadTokens     int64
+	CacheCreationTokens int64
+	Model               string
 }
 
 // StepDelta is the recorder's internal representation of one stream event.
@@ -83,6 +86,7 @@ type RunStats struct {
 	TaskID       string  `json:"task_id"`
 	InputTokens  int64   `json:"input_tokens"`
 	OutputTokens int64   `json:"output_tokens"`
+	SpentTokens  int64   `json:"spent_tokens,omitempty"`
 	SpentUSD     float64 `json:"spent_usd,omitempty"`
 	ElapsedSec   float64 `json:"elapsed_sec"`
 }
@@ -103,6 +107,13 @@ type StepRecorder struct {
 	seq          int
 	pending      *openStep // step being assembled
 	worktreeRoot string    // set by harness after worktree creation; relativizes file paths
+
+	// cumulative token accounting for live stats bar
+	model           string
+	cumulInput      int64
+	cumulOutput     int64
+	cumulCacheRead  int64
+	cumulCacheCreate int64
 }
 
 // openStep is a step that has been started but not yet closed.
@@ -294,11 +305,31 @@ func (r *StepRecorder) Feed(d StepDelta) {
 
 	case StepDeltaUsage:
 		if d.Usage != nil {
+			// Accumulate; each usage event from Claude carries totals for the turn.
+			if d.Usage.InputTokens > r.cumulInput {
+				r.cumulInput = d.Usage.InputTokens
+			}
+			if d.Usage.OutputTokens > r.cumulOutput {
+				r.cumulOutput = d.Usage.OutputTokens
+			}
+			if d.Usage.CacheReadTokens > r.cumulCacheRead {
+				r.cumulCacheRead = d.Usage.CacheReadTokens
+			}
+			if d.Usage.CacheCreationTokens > r.cumulCacheCreate {
+				r.cumulCacheCreate = d.Usage.CacheCreationTokens
+			}
+			if d.Usage.Model != "" {
+				r.model = d.Usage.Model
+			}
+			spentTokens := r.cumulInput + r.cumulOutput + r.cumulCacheRead + r.cumulCacheCreate
+			spentUSD := estimateRunCost(r.model, r.cumulInput, r.cumulOutput, r.cumulCacheRead, r.cumulCacheCreate)
 			r.publish("run.stats", RunStats{
 				RunID:        r.runID,
 				TaskID:       r.taskID,
-				InputTokens:  d.Usage.InputTokens,
-				OutputTokens: d.Usage.OutputTokens,
+				InputTokens:  r.cumulInput,
+				OutputTokens: r.cumulOutput,
+				SpentTokens:  spentTokens,
+				SpentUSD:     spentUSD,
 				ElapsedSec:   time.Since(r.startedAt).Seconds(),
 			})
 		}
@@ -523,4 +554,34 @@ func toolUseTitle(name string) string {
 func (s RunStep) MarshalJSON() ([]byte, error) {
 	type Alias RunStep
 	return json.Marshal(Alias(s))
+}
+
+// estimateRunCost returns an estimated USD cost using published API list prices.
+// Mirrors telemetry.EstimateModelCost without importing the telemetry package
+// (which would create an import cycle through telemetry → context → orchestrator).
+func estimateRunCost(model string, inputTokens, outputTokens, cacheRead, cacheCreation int64) float64 {
+	lower := strings.ToLower(model)
+	var inPerM, outPerM, cacheReadPerM, cacheCreatePerM float64
+	switch {
+	case strings.Contains(lower, "opus-5-5") || strings.Contains(lower, "opus-5.5"):
+		inPerM, outPerM, cacheReadPerM, cacheCreatePerM = 4.00, 20.00, 0.20, 5.00
+	case strings.Contains(lower, "opus-5"):
+		inPerM, outPerM, cacheReadPerM, cacheCreatePerM = 5.00, 25.00, 0.50, 6.25
+	case strings.Contains(lower, "opus"):
+		inPerM, outPerM, cacheReadPerM, cacheCreatePerM = 15.00, 75.00, 1.50, 18.75
+	case strings.Contains(lower, "haiku"):
+		inPerM, outPerM, cacheReadPerM, cacheCreatePerM = 0.80, 4.00, 0.08, 1.00
+	case strings.Contains(lower, "gemini-3.1-flash-lite") || strings.Contains(lower, "flash-lite"):
+		inPerM, outPerM, cacheReadPerM, cacheCreatePerM = 0.25, 1.50, 0.025, 0.25
+	case strings.Contains(lower, "gemini") && strings.Contains(lower, "flash"):
+		inPerM, outPerM, cacheReadPerM, cacheCreatePerM = 0.75, 3.75, 0.075, 0.75
+	case strings.Contains(lower, "gemini") && strings.Contains(lower, "pro"):
+		inPerM, outPerM, cacheReadPerM, cacheCreatePerM = 2.00, 12.00, 0.20, 2.00
+	default: // sonnet-class default
+		inPerM, outPerM, cacheReadPerM, cacheCreatePerM = 3.00, 15.00, 0.30, 3.75
+	}
+	return (float64(inputTokens)*inPerM +
+		float64(outputTokens)*outPerM +
+		float64(cacheRead)*cacheReadPerM +
+		float64(cacheCreation)*cacheCreatePerM) / 1_000_000.0
 }

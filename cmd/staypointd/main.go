@@ -355,8 +355,11 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 				}
 				if d.Usage != nil {
 					sd.Usage = &orchestrator.StepUsage{
-						InputTokens:  d.Usage.InputTokens,
-						OutputTokens: d.Usage.OutputTokens,
+						InputTokens:         d.Usage.InputTokens,
+						OutputTokens:        d.Usage.OutputTokens,
+						CacheReadTokens:     d.Usage.CacheReadTokens,
+						CacheCreationTokens: d.Usage.CacheCreationTokens,
+						Model:               d.Model,
 					}
 				}
 				out = append(out, sd)
