@@ -435,6 +435,8 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 			_ = stw.Close()
 		}
 
+		// One harness turn = one adapter invocation. spent_turns counts these,
+		// not provider-internal tool-use rounds (STA-466).
 		result.Turns++
 
 		// Prefer text-only detection when the stream parser is active; fall back

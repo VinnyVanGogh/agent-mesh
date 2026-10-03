@@ -403,3 +403,50 @@ func TestListRunStepsByTask_Duration(t *testing.T) {
 	}
 }
 
+// TestRecordTaskSpend_ZeroTurnsDoesNotInflateSpentTurns verifies STA-466:
+// the telemetry watcher calls RecordTaskSpend with turns=0 per provider API
+// call so that only harness turns (adapter invocations) count toward spent_turns.
+// Multiple calls with turns=0 must never change spent_turns.
+func TestRecordTaskSpend_ZeroTurnsDoesNotInflateSpentTurns(t *testing.T) {
+	database := setupTestDB(t)
+
+	task, err := CreateTask(database, "STA-466 regression", "/tmp/repo", "main", "personal")
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	// Simulate 3 harness turns (what the harness records).
+	for i := 0; i < 3; i++ {
+		if err := RecordTaskSpend(database, task.ID, 0, 0, 1); err != nil {
+			t.Fatalf("RecordTaskSpend harness turn %d: %v", i, err)
+		}
+	}
+
+	// Simulate 12 provider API calls from the fixed watcher (turns=0 each).
+	// Before STA-466: the watcher passed turns=1 here, inflating spent_turns to 15.
+	// After STA-466:  the watcher passes turns=0; spent_turns must stay at 3.
+	for i := 0; i < 12; i++ {
+		if err := RecordTaskSpend(database, task.ID, 1000, 0.01, 0); err != nil {
+			t.Fatalf("RecordTaskSpend watcher call %d: %v", i, err)
+		}
+	}
+
+	got, err := GetTask(database, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	const wantTurns = 3
+	if got.SpentTurns != wantTurns {
+		t.Fatalf("STA-466: spent_turns=%d, want %d; "+
+			"watcher calls with turns=0 must not inflate the turn count",
+			got.SpentTurns, wantTurns)
+	}
+	// USD and tokens from watcher calls must still be recorded.
+	if got.SpentUSD == 0 {
+		t.Error("spent_usd should be non-zero from watcher calls")
+	}
+	if got.SpentTokens == 0 {
+		t.Error("spent_tokens should be non-zero from watcher calls")
+	}
+}
+

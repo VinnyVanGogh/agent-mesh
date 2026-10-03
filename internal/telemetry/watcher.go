@@ -562,7 +562,11 @@ func (w *Watcher) ingest(line []byte, sourcePath string, record bool) {
 		return
 	}
 
-	// Record spend to active task in mesh.db
+	// Record spend to active task in mesh.db.
+	// turns=0: the watcher records token/dollar spend per provider API call, but
+	// spent_turns counts harness turns (adapter invocations). The harness is the
+	// sole authority for turn accounting; counting here would inflate spent_turns
+	// by the number of provider tool-use rounds per harness turn (STA-466).
 	if w.meshDB != nil && cwd != "" {
 		var taskID string
 		err := w.meshDB.QueryRow(`
@@ -571,7 +575,7 @@ func (w *Watcher) ingest(line []byte, sourcePath string, record bool) {
 			ORDER BY updated_at DESC LIMIT 1;
 		`, cwd, cwd).Scan(&taskID)
 		if err == nil && taskID != "" {
-			_ = meshContext.RecordTaskSpend(w.meshDB, taskID, totalTokens, costUSD, 1)
+			_ = meshContext.RecordTaskSpend(w.meshDB, taskID, totalTokens, costUSD, 0)
 		}
 	}
 }
