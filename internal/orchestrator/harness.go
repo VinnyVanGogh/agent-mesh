@@ -359,13 +359,20 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		cfg.RunControl.ClearForRun(taskID)
 	}
 
+	// consecutiveAdapterErrors counts back-to-back adapter failures with no
+	// successful output between them. lastTurnWasAdapterError suppresses the
+	// checkpoint that would otherwise be written at the start of the next turn
+	// when the adapter failed and produced no filesystem changes.
+	var consecutiveAdapterErrors int
+	var lastTurnWasAdapterError bool
+
 	for turn := 0; turn < maxTurns; turn++ {
 		if ctx.Err() != nil {
 			result.Disposition = "capped"
 			break
 		}
 
-		if turn > 0 {
+		if turn > 0 && !lastTurnWasAdapterError {
 			cp, _ := checkpoint.CreateCheckpoint(ctx, checkpoint.CreateOptions{
 				WorkDir:   wtPath,
 				SessionID: runID,
@@ -375,6 +382,7 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 				sr.EmitCheckpoint(cp.ID, fmt.Sprintf("turn %d", turn))
 			}
 		}
+		lastTurnWasAdapterError = false
 
 		// Drive one adapter turn. Tee stdout through StepRecorder line scanner if enabled.
 		var outBuf bytes.Buffer
@@ -409,6 +417,8 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 
 			turnDuration := time.Since(turnStart)
 			if turnErr != nil {
+				lastTurnWasAdapterError = true
+				consecutiveAdapterErrors++
 				stderrTail := stderrBuf.String()
 				exitCode := exitCodeFrom(turnErr)
 				runLog.Warn("adapter turn error",
@@ -430,6 +440,20 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 					`INSERT INTO activity_log (task_id, event_type, details) VALUES (?, 'adapter_failure', ?)`,
 					taskID, plainAdapterError(turnErr, exitCode, stderrTail),
 				)
+				// Stop the run after 2 consecutive adapter failures to avoid burning
+				// turns against a persistently failing provider (e.g. quota-exceeded).
+				if consecutiveAdapterErrors >= 2 {
+					result.Turns++ // count this turn; the normal counter below won't run
+					result.Disposition = "error"
+					result.DiagnosticMsg = fmt.Sprintf(
+						"Run stopped: adapter failed %d turns in a row. Last error: %s",
+						consecutiveAdapterErrors,
+						plainAdapterError(turnErr, exitCode, stderrTail),
+					)
+					break
+				}
+			} else {
+				consecutiveAdapterErrors = 0
 			}
 		}
 		if stw, ok := stdout.(*stepTeeWriter); ok {
