@@ -76,6 +76,12 @@ func (h *ShipReviewHandler) UpsertCard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, shipreview.ErrTestStepsRequired.Error())
 		return
 	}
+	if req.DevURL != "" {
+		if err := shipreview.ValidateDevURL(req.DevURL); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 
 	task, err := context.GetTask(h.db, taskID)
 	if err != nil {

@@ -7190,14 +7190,27 @@ async function renderShipReviewCard(container, taskId) {
     section.appendChild(fbBox);
   }
 
-  // Dev URL
+  // Dev URL — only render http/https loopback URLs to prevent XSS via javascript: etc.
   if (card.dev_url) {
+    let safeDevURL = null;
+    try {
+      const u = new URL(card.dev_url);
+      if ((u.protocol === 'http:' || u.protocol === 'https:') &&
+          (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1' || u.hostname.startsWith('127.'))) {
+        safeDevURL = u.toString();
+      }
+    } catch { /* invalid URL — skip */ }
     const devRow = el('div', 'ship-review-row');
     devRow.appendChild(el('span', 'ship-review-row-label', 'Preview'));
-    const devLink = el('a', 'ship-review-dev-link', card.dev_url);
-    devLink.href = card.dev_url;
-    devLink.target = '_blank';
-    devRow.appendChild(devLink);
+    if (safeDevURL) {
+      const devLink = el('a', 'ship-review-dev-link', safeDevURL);
+      devLink.href = safeDevURL;
+      devLink.target = '_blank';
+      devLink.rel = 'noopener noreferrer';
+      devRow.appendChild(devLink);
+    } else {
+      devRow.appendChild(el('span', 'ship-review-dev-link', card.dev_url + ' (invalid URL)'));
+    }
     const restartBtn = el('button', 'ship-review-restart-btn', '↺ Restart');
     restartBtn.title = 'Restart dev server';
     restartBtn.addEventListener('click', async () => {

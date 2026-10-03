@@ -56,6 +56,60 @@ var ErrNoCard = errors.New("no ship review card found")
 // ErrTestStepsRequired is returned when test_steps is empty.
 var ErrTestStepsRequired = errors.New("test_steps are required to create a ship review card")
 
+// ErrInvalidBranch is returned when a branch name is unsafe.
+var ErrInvalidBranch = errors.New("invalid branch name")
+
+// ErrInvalidDevURL is returned when dev_url is not a safe loopback http/https URL.
+var ErrInvalidDevURL = errors.New("dev_url must be an http/https URL pointing to a loopback address")
+
+// validateBranch rejects branch names that could be injected as git flags or
+// path-traversal vectors.
+func validateBranch(branch string) error {
+	if branch == "" {
+		return ErrInvalidBranch
+	}
+	if strings.HasPrefix(branch, "-") {
+		return fmt.Errorf("%w: branch name may not start with '-'", ErrInvalidBranch)
+	}
+	// Disallow shell metacharacters; branch names are passed directly to exec.
+	for _, c := range branch {
+		if c == ' ' || c == '\t' || c == '\n' || c == ';' || c == '&' || c == '|' || c == '`' || c == '$' || c == '>' || c == '<' {
+			return fmt.Errorf("%w: branch name contains disallowed character %q", ErrInvalidBranch, c)
+		}
+	}
+	return nil
+}
+
+// ValidateDevURL rejects non-loopback or non-http(s) URLs.
+func ValidateDevURL(rawURL string) error {
+	return validateDevURL(rawURL)
+}
+
+// validateDevURL rejects non-loopback or non-http(s) URLs.
+func validateDevURL(rawURL string) error {
+	if rawURL == "" {
+		return nil // empty is ok (no dev server)
+	}
+	// Only http/https, only loopback hosts allowed.
+	lower := strings.ToLower(rawURL)
+	if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+		return ErrInvalidDevURL
+	}
+	// Allow 127.x.x.x, [::1], and "localhost" only.
+	host := lower[strings.Index(lower, "//")+2:]
+	if i := strings.Index(host, "/"); i >= 0 {
+		host = host[:i]
+	}
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		host = host[:i]
+	}
+	host = strings.Trim(host, "[]")
+	if host != "localhost" && host != "::1" && !strings.HasPrefix(host, "127.") {
+		return fmt.Errorf("%w: host %q is not a loopback address", ErrInvalidDevURL, host)
+	}
+	return nil
+}
+
 // devServerManager tracks running dev-server subprocesses by task ID.
 var devServerManager = &procManager{procs: make(map[string]*os.Process)}
 
@@ -92,6 +146,12 @@ func (m *procManager) has(taskID string) bool {
 func CreateCard(db *sql.DB, taskID, branch, headSHA string, testSteps []string, devURL string) (*Card, error) {
 	if len(testSteps) == 0 {
 		return nil, ErrTestStepsRequired
+	}
+	if err := validateBranch(branch); err != nil {
+		return nil, err
+	}
+	if err := validateDevURL(devURL); err != nil {
+		return nil, err
 	}
 
 	stepsJSON, err := json.Marshal(testSteps)
@@ -243,9 +303,10 @@ func ApproveAndMerge(ctx context.Context, db *sql.DB, card *Card, repoDir, targe
 			return "", fmt.Errorf("pull %s: %w", targetBranch, err)
 		}
 	}
+	// Merge the exact pinned commit (not the branch ref) to prevent TOCTOU.
 	if _, err := gitOutput(ctx, repoDir, "merge", "--no-ff", "-m",
 		fmt.Sprintf("Merge branch '%s' (reviewed SHA %s)", card.Branch, card.HeadSHA),
-		card.Branch); err != nil {
+		card.HeadSHA); err != nil {
 		return "", fmt.Errorf("merge: %w", err)
 	}
 
@@ -297,7 +358,11 @@ func Reject(db *sql.DB, card *Card, comment string) error {
 
 // DeleteBranch deletes the remote branch for a rejected review.
 func DeleteBranch(ctx context.Context, repoDir, branch string) error {
-	_, err := gitOutput(ctx, repoDir, "push", "origin", "--delete", branch)
+	if err := validateBranch(branch); err != nil {
+		return err
+	}
+	// Use refs/heads/ form so the arg can never be misinterpreted as a flag.
+	_, err := gitOutput(ctx, repoDir, "push", "origin", "--delete", "refs/heads/"+branch)
 	return err
 }
 
