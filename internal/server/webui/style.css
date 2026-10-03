@@ -3202,6 +3202,7 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
   border-radius: 3px;
 }
 .timeline-exit-error { background: #7f1d1d44; color: #f87171; }
+.timeline-exit-pass  { background: #14532d44; color: #4ade80; }
 .timeline-row-summary {
   display: flex;
   align-items: center;

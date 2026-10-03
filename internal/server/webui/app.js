@@ -7017,7 +7017,7 @@ function buildRunStepRow(s) {
   }
 
   const summary = el('div', 'timeline-row-summary');
-  summary.style.cursor = s.body ? 'pointer' : 'default';
+  summary.style.cursor = (s.body || s.kind === 'run') ? 'pointer' : 'default';
 
   const icon = el('span', 'timeline-icon', stepKindIcon(s.kind));
   const kindBadge = el('span', `timeline-kind timeline-kind-${s.kind || 'unknown'}`, s.kind || 'step');
@@ -7033,17 +7033,34 @@ function buildRunStepRow(s) {
   summary.appendChild(kindBadge);
   summary.appendChild(title);
   if (durEl) summary.appendChild(durEl);
-  // Exit-status badge for run/read/edit steps.
-  if (s.status === 'error') {
+  // Exit-status badge for run steps: "exit 0" (pass) or "error" (fail).
+  if (s.kind === 'run') {
+    if (s.status === 'error') {
+      summary.appendChild(el('span', 'timeline-exit timeline-exit-error', 'error'));
+    } else if (s.status === 'done') {
+      summary.appendChild(el('span', 'timeline-exit timeline-exit-pass', 'exit 0'));
+    }
+  } else if (s.status === 'error') {
     summary.appendChild(el('span', 'timeline-exit timeline-exit-error', 'error'));
   }
   summary.appendChild(ts);
   row.appendChild(summary);
 
-  if (s.body) {
-    const body = el('pre', 'timeline-body hidden', s.body);
-    row.appendChild(body);
-    summary.addEventListener('click', () => body.classList.toggle('hidden'));
+  // Build expanded body: for run steps, prepend "$ <command>" and append exit status.
+  const hasBody = !!(s.body && s.body.trim());
+  const isRunStep = s.kind === 'run';
+  if (isRunStep || hasBody) {
+    let bodyText = s.body || '';
+    if (isRunStep) {
+      const cmdHeader = s.title ? '$ ' + s.title : '';
+      const exitFooter = s.status === 'done' ? 'exit 0' : '';
+      bodyText = [cmdHeader, bodyText, exitFooter].filter(Boolean).join('\n');
+    }
+    if (bodyText) {
+      const body = el('pre', 'timeline-body hidden', bodyText);
+      row.appendChild(body);
+      summary.addEventListener('click', () => body.classList.toggle('hidden'));
+    }
   }
   return row;
 }
