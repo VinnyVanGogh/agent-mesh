@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
-	"path/filepath"
 
 	"github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/shipreview"
@@ -88,20 +86,15 @@ func (h *ShipReviewHandler) UpsertCard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "task not found: "+err.Error())
 		return
 	}
+	// Always use the harness branch name. task.GitBranch is the repo's branch at
+	// task-creation time (usually "main") and must never override the real work branch.
 	branch := "staypoint/" + task.ID
-	if task.GitBranch != "" {
-		branch = task.GitBranch
-	}
 
-	workDir := worktreeDir(task)
-	headSHA, err := shipreview.CurrentBranchHEAD(r.Context(), workDir, branch)
+	// Resolve HEAD from the repo root (always knows all local branches).
+	headSHA, err := shipreview.CurrentBranchHEAD(r.Context(), task.RepoPath, branch)
 	if err != nil {
-		// Fall back to task repo path.
-		headSHA, err = shipreview.CurrentBranchHEAD(r.Context(), task.RepoPath, branch)
-		if err != nil {
-			writeError(w, http.StatusConflict, "cannot resolve branch HEAD: "+err.Error())
-			return
-		}
+		writeError(w, http.StatusConflict, "cannot resolve branch HEAD: "+err.Error())
+		return
 	}
 
 	card, err := shipreview.CreateCard(h.db, taskID, branch, headSHA, req.TestSteps, req.DevURL)
@@ -111,9 +104,10 @@ func (h *ShipReviewHandler) UpsertCard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Auto-start dev server if a project config exists.
+	// Pass task.RepoPath so StartDevServer creates a temp worktree at the pinned SHA.
 	cfg, _ := shipreview.GetProjectDevConfig(h.db, task.RepoPath)
 	if cfg != nil && cfg.DevCommand != "" {
-		startedURL, startErr := shipreview.StartDevServer(h.db, card, cfg, workDir)
+		startedURL, startErr := shipreview.StartDevServer(h.db, card, cfg, task.RepoPath)
 		if startErr == nil && startedURL != "" && card.DevURL == "" {
 			card.DevURL = startedURL
 		}
@@ -145,8 +139,7 @@ func (h *ShipReviewHandler) StartDev(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "no dev_command configured for this project")
 		return
 	}
-	workDir := worktreeDir(task)
-	url, err := shipreview.StartDevServer(h.db, card, cfg, workDir)
+	url, err := shipreview.StartDevServer(h.db, card, cfg, task.RepoPath)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "start dev server: "+err.Error())
 		return
@@ -179,10 +172,11 @@ func (h *ShipReviewHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workDir := worktreeDir(task)
-	mainSHA, err := shipreview.ApproveAndMerge(r.Context(), h.db, card, workDir, "main")
+	// Always merge from the repo root (on main), never from a task worktree which
+	// may be gone or have main checked out elsewhere (causing checkout conflicts).
+	mainSHA, err := shipreview.ApproveAndMerge(r.Context(), h.db, card, task.RepoPath, "main")
 	if errors.Is(err, shipreview.ErrHeadMoved) {
-		newHead, _ := shipreview.CurrentBranchHEAD(r.Context(), workDir, card.Branch)
+		newHead, _ := shipreview.CurrentBranchHEAD(r.Context(), task.RepoPath, card.Branch)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -262,8 +256,10 @@ func (h *ShipReviewHandler) Reject(w http.ResponseWriter, r *http.Request) {
 	shipreview.StopDevServer(h.db, card)
 
 	if req.DeleteBranch {
-		workDir := worktreeDir(task)
-		_ = shipreview.DeleteBranch(r.Context(), workDir, card.Branch)
+		if err := shipreview.DeleteBranch(r.Context(), task.RepoPath, card.Branch); err != nil {
+			writeError(w, http.StatusConflict, "delete branch failed: "+err.Error())
+			return
+		}
 	}
 
 	h.hub.Publish("ship_review_rejected", map[string]any{
@@ -362,11 +358,3 @@ func (h *ShipReviewHandler) requireCard(w http.ResponseWriter, taskID string) (*
 	return card, task, true
 }
 
-// worktreeDir returns the task's isolated worktree path if it exists, else the repo root.
-func worktreeDir(task *context.Task) string {
-	wt := filepath.Join(task.RepoPath, ".worktrees", task.ID)
-	if _, err := os.Stat(wt); err == nil {
-		return wt
-	}
-	return task.RepoPath
-}

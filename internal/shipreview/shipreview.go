@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +58,9 @@ var ErrTestStepsRequired = errors.New("test_steps are required to create a ship 
 
 // ErrInvalidBranch is returned when a branch name is unsafe.
 var ErrInvalidBranch = errors.New("invalid branch name")
+
+// ErrProtectedBranch is returned when trying to delete a protected branch.
+var ErrProtectedBranch = errors.New("refusing to delete protected branch")
 
 // ErrInvalidDevURL is returned when dev_url is not a safe loopback http/https URL.
 var ErrInvalidDevURL = errors.New("dev_url must be an http/https URL pointing to a loopback address")
@@ -110,26 +114,45 @@ func validateDevURL(rawURL string) error {
 }
 
 // devServerManager tracks running dev-server subprocesses by task ID.
-var devServerManager = &procManager{procs: make(map[string]*os.Process)}
-
-type procManager struct {
-	mu    sync.Mutex
-	procs map[string]*os.Process
+var devServerManager = &procManager{
+	procs:      make(map[string]*os.Process),
+	repoPaths:  make(map[string]string),
+	worktrees:  make(map[string]string),
 }
 
-func (m *procManager) store(taskID string, p *os.Process) {
+type procManager struct {
+	mu         sync.Mutex
+	procs      map[string]*os.Process
+	repoPaths  map[string]string // taskID -> repoPath (for worktree cleanup)
+	worktrees  map[string]string // taskID -> temp worktree path
+}
+
+func (m *procManager) store(taskID string, p *os.Process, repoPath, wtPath string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.procs[taskID] = p
+	if repoPath != "" {
+		m.repoPaths[taskID] = repoPath
+	}
+	if wtPath != "" {
+		m.worktrees[taskID] = wtPath
+	}
 }
 
 func (m *procManager) kill(taskID string) {
 	m.mu.Lock()
 	p, ok := m.procs[taskID]
 	delete(m.procs, taskID)
+	repoPath := m.repoPaths[taskID]
+	delete(m.repoPaths, taskID)
+	wtPath := m.worktrees[taskID]
+	delete(m.worktrees, taskID)
 	m.mu.Unlock()
 	if ok && p != nil {
 		_ = p.Kill()
+	}
+	if wtPath != "" {
+		removeDevWorktree(repoPath, wtPath)
 	}
 }
 
@@ -138,6 +161,18 @@ func (m *procManager) has(taskID string) bool {
 	defer m.mu.Unlock()
 	_, ok := m.procs[taskID]
 	return ok
+}
+
+// removeDevWorktree removes a temporary dev-server worktree.
+// Uses `git worktree remove --force` when a repoPath is available, else os.RemoveAll.
+func removeDevWorktree(repoPath, wtPath string) {
+	if repoPath != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_, _ = gitOutput(ctx, repoPath, "worktree", "remove", "--force", wtPath)
+		return
+	}
+	_ = os.RemoveAll(wtPath)
 }
 
 // CreateCard inserts a new ship review card or replaces an existing pending one.
@@ -223,19 +258,31 @@ func SetDevPID(db *sql.DB, cardID string, pid int) error {
 }
 
 // StartDevServer launches the dev server for a card and stores the PID.
-// cfg is the per-project dev config. workDir is the task's worktree directory.
+// repoPath is the main repository root; a temporary detached worktree is created
+// at card.HeadSHA so the dev server always runs on the exact pinned commit, not
+// whatever the repo root or any stale task worktree happens to be checked out at.
 // Returns the URL to show the Board.
-func StartDevServer(db *sql.DB, card *Card, cfg *ProjectDevConfig, workDir string) (string, error) {
+func StartDevServer(db *sql.DB, card *Card, cfg *ProjectDevConfig, repoPath string) (string, error) {
 	if cfg.DevCommand == "" {
 		return "", fmt.Errorf("no dev_command configured for this project")
 	}
 
-	// Kill any stale server for this task first.
+	// Kill any stale server (and clean up its worktree) for this task first.
 	devServerManager.kill(card.TaskID)
 
-	// Run setup steps before starting dev server.
+	// Create a temporary detached worktree at the pinned commit SHA so the dev
+	// server always serves the exact reviewed code, not the repo root (main).
+	wtPath := filepath.Join(repoPath, ".worktrees", "devserver-"+card.TaskID)
+	_ = os.RemoveAll(wtPath) // clean any stale leftover
+	bgCtx := context.Background()
+	if _, err := gitOutput(bgCtx, repoPath, "worktree", "add", "--detach", wtPath, card.HeadSHA); err != nil {
+		return "", fmt.Errorf("create dev worktree at %s: %w", card.HeadSHA, err)
+	}
+
+	// Run setup steps inside the new worktree.
 	for _, step := range cfg.SetupSteps {
-		if err := runShellStep(step, workDir); err != nil {
+		if err := runShellStep(step, wtPath); err != nil {
+			removeDevWorktree(repoPath, wtPath)
 			return "", fmt.Errorf("setup step %q failed: %w", step, err)
 		}
 	}
@@ -243,17 +290,18 @@ func StartDevServer(db *sql.DB, card *Card, cfg *ProjectDevConfig, workDir strin
 	// Start the dev server in background.
 	parts := strings.Fields(cfg.DevCommand)
 	cmd := exec.Command(parts[0], parts[1:]...) //nolint:gosec
-	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(), fmt.Sprintf("FORCE_COLOR=1"))
+	cmd.Dir = wtPath
+	cmd.Env = append(os.Environ(), "FORCE_COLOR=1")
 
 	if err := cmd.Start(); err != nil {
+		removeDevWorktree(repoPath, wtPath)
 		return "", fmt.Errorf("start dev server: %w", err)
 	}
 
-	devServerManager.store(card.TaskID, cmd.Process)
+	devServerManager.store(card.TaskID, cmd.Process, repoPath, wtPath)
 	_ = SetDevPID(db, card.ID, cmd.Process.Pid)
 
-	// Reap zombie when process exits to avoid log spam.
+	// Reap zombie when process exits; also cleans up the temp worktree.
 	go func() {
 		_ = cmd.Wait()
 		devServerManager.kill(card.TaskID)
@@ -356,9 +404,20 @@ func Reject(db *sql.DB, card *Card, comment string) error {
 }
 
 // DeleteBranch deletes the remote branch for a rejected review.
+// It refuses to delete main, master, or the remote default branch.
 func DeleteBranch(ctx context.Context, repoDir, branch string) error {
 	if err := validateBranch(branch); err != nil {
 		return err
+	}
+	if branch == "main" || branch == "master" {
+		return fmt.Errorf("%w: %q", ErrProtectedBranch, branch)
+	}
+	// Detect remote default branch (e.g. "origin/main" → "main").
+	if remoteRef, err := gitOutput(ctx, repoDir, "rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil {
+		defaultBranch := strings.TrimPrefix(remoteRef, "origin/")
+		if defaultBranch != "" && branch == defaultBranch {
+			return fmt.Errorf("%w: %q is the remote default branch", ErrProtectedBranch, branch)
+		}
 	}
 	// Use refs/heads/ form so the arg can never be misinterpreted as a flag.
 	_, err := gitOutput(ctx, repoDir, "push", "origin", "--delete", "refs/heads/"+branch)
