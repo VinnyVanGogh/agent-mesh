@@ -7376,6 +7376,22 @@ async function renderShipReviewCard(container, taskId) {
     section.appendChild(fbBox);
   }
 
+  // Agent summary — most recent harness-posted run summary for this task.
+  if (card.agent_summary) {
+    const summarySection = el('div', 'ship-review-summary-section');
+    summarySection.appendChild(el('div', 'ship-review-section-title', 'Agent summary'));
+    const summaryBody = el('pre', 'ship-review-summary-body', card.agent_summary);
+    summarySection.appendChild(summaryBody);
+    section.appendChild(summarySection);
+  }
+
+  // DB migration warning — shown when any changed file is a migration.
+  if (card.has_db_migration) {
+    const migBanner = el('div', 'ship-review-migration-banner');
+    migBanner.textContent = '⚠ DB migration detected — apply migration separately before approving.';
+    section.appendChild(migBanner);
+  }
+
   // Dev URL — only render http/https loopback URLs to prevent XSS via javascript: etc.
   if (card.dev_url) {
     let safeDevURL = null;
@@ -7425,6 +7441,41 @@ async function renderShipReviewCard(container, taskId) {
     }
     testSection.appendChild(list);
     section.appendChild(testSection);
+  }
+
+  // Files changed
+  if (card.files_changed && card.files_changed.length > 0) {
+    const filesSection = el('div', 'ship-review-files-section');
+    filesSection.appendChild(el('div', 'ship-review-section-title', `Files changed (${card.files_changed.length})`));
+    const fileList = el('ul', 'ship-review-file-list');
+    for (const f of card.files_changed) {
+      fileList.appendChild(el('li', 'ship-review-file-item', f));
+    }
+    filesSection.appendChild(fileList);
+    section.appendChild(filesSection);
+  }
+
+  // Check runs (agent-reported; not independently verified by the server)
+  if (card.check_runs && card.check_runs.length > 0) {
+    const checksSection = el('div', 'ship-review-checks-section');
+    const checksTitle = el('div', 'ship-review-section-title', 'Check runs');
+    const unverifiedBadge = el('span', 'ship-review-unverified-badge', 'agent-reported');
+    checksTitle.appendChild(unverifiedBadge);
+    checksSection.appendChild(checksTitle);
+    for (const run of card.check_runs) {
+      const exitCode = typeof run.exit_code === 'number' ? run.exit_code : -1;
+      const row = el('div', 'ship-review-check-row');
+      const exitLabel = el('code', 'ship-review-check-exit', `exit ${exitCode}`);
+      const cmdEl = el('code', 'ship-review-check-cmd', run.command || '');
+      row.appendChild(exitLabel);
+      row.appendChild(cmdEl);
+      if (run.output_tail) {
+        const out = el('pre', 'ship-review-check-output', run.output_tail.slice(0, 2000));
+        row.appendChild(out);
+      }
+      checksSection.appendChild(row);
+    }
+    section.appendChild(checksSection);
   }
 
   // Approve / Send back / Reject buttons
@@ -7503,6 +7554,13 @@ async function renderShipReviewCard(container, taskId) {
 
   section.appendChild(actions);
   container.appendChild(section);
+
+  // B3: hide Run Now and Mark done while a ship review card is active — the card's
+  // own actions (Approve / Send back / Reject) are the only valid next step.
+  const page = container.closest('.task-page-main') || container;
+  for (const btn of page.querySelectorAll('.run-now-btn, .mark-done-btn, .mark-done-error')) {
+    btn.style.display = 'none';
+  }
 }
 
 // ── Migrations panel ──────────────────────────────────────────────────────────

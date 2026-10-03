@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/security"
+	"github.com/VinnyVanGogh/staypoint/internal/shipreview"
 )
 
 // Diagnostic is returned when the interceptor rejects a completion transition.
@@ -43,6 +44,7 @@ func NewInterceptor(db *sql.DB) *Interceptor {
 		ic.checkWorkProducts,
 		ic.checkGitSync,
 		ic.checkMutexLease,
+		ic.checkShipReviewCard,
 	}
 	return ic
 }
@@ -182,6 +184,69 @@ func (ic *Interceptor) checkMutexLease(_ context.Context, taskID, _, repoRoot st
 		return "", err
 	}
 	return fmt.Sprintf("task %s is still in_progress on the same repo; stop or cancel it first", identifier), nil
+}
+
+// checkShipReviewCard requires that a pending Ship Review card exists when the
+// ship_review gate is enabled and the task's branch has commits ahead of main.
+// This prevents a run from silently transitioning to in_review without giving
+// the Board anything to act on.
+func (ic *Interceptor) checkShipReviewCard(_ context.Context, taskID, wtPath, _ string) (string, error) {
+	if ic.DB == nil {
+		return "", nil
+	}
+
+	// Skip if ship_review gate is disabled.
+	var gateVal string
+	_ = ic.DB.QueryRow(`SELECT value FROM settings_kv WHERE key='gates.ship_review'`).Scan(&gateVal)
+	if gateVal == "false" {
+		return "", nil
+	}
+
+	// Skip if the worktree has no commits ahead of main (nothing shipped).
+	if wtPath != "" {
+		if _, err := os.Stat(wtPath); err == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "git", "rev-list", "--count", "main..HEAD")
+			cmd.Dir = wtPath
+			cmd.Env = security.ChildEnv()
+			if out, err := cmd.Output(); err == nil {
+				ahead := strings.TrimSpace(string(out))
+				if ahead == "" || ahead == "0" {
+					return "", nil
+				}
+			}
+		}
+	}
+
+	// Check for a pending ship review card.
+	card, err := shipreview.GetCard(ic.DB, taskID)
+	if err != nil {
+		// No card at all.
+		return "No Ship Review card found. Use the `staypoint_ship_review` MCP tool (or `staypoint ship-review create`) to create one with a numbered test list before marking done.", nil
+	}
+	if card.Status != shipreview.StatusPending && card.Status != shipreview.StatusSentBack {
+		return fmt.Sprintf("Ship Review card is in status %q. Create a fresh card with `staypoint_ship_review` after addressing any Board feedback.", card.Status), nil
+	}
+
+	// Verify the pinned SHA still matches the current branch HEAD to prevent
+	// a stale card from silently satisfying the gate after further commits.
+	if wtPath != "" {
+		if _, err := os.Stat(wtPath); err == nil {
+			ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel2()
+			cmd := exec.CommandContext(ctx2, "git", "rev-parse", "HEAD")
+			cmd.Dir = wtPath
+			cmd.Env = security.ChildEnv()
+			if out, err := cmd.Output(); err == nil {
+				currentHEAD := strings.TrimSpace(string(out))
+				if currentHEAD != "" && currentHEAD != card.HeadSHA {
+					return "Ship Review card SHA does not match current branch HEAD. Re-create the card with `staypoint_ship_review` to pin the latest commit.", nil
+				}
+			}
+		}
+	}
+	return "", nil
 }
 
 // buildDiagnostic formats failed checks into a plain-English self-correcting message.

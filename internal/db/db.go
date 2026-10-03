@@ -890,6 +890,21 @@ var Migrations = []Migration{
 			return nil
 		},
 	},
+	{
+		Version: 19,
+		Name:    "ship_review_files_checks",
+		Up: func(conn *sql.DB) error {
+			for _, stmt := range []string{
+				`ALTER TABLE ship_review_cards ADD COLUMN files_changed_json TEXT NOT NULL DEFAULT '[]';`,
+				`ALTER TABLE ship_review_cards ADD COLUMN check_runs_json    TEXT NOT NULL DEFAULT '[]';`,
+			} {
+				if _, err := conn.Exec(stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+					return err
+				}
+			}
+			return nil
+		},
+	},
 }
 
 func copyFile(src, dst string) error {

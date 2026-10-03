@@ -120,6 +120,29 @@ CREATE TABLE IF NOT EXISTS run_steps (
     ended_at   TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+CREATE TABLE IF NOT EXISTS settings_kv (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE TABLE IF NOT EXISTS ship_review_cards (
+    id                  TEXT PRIMARY KEY,
+    task_id             TEXT NOT NULL,
+    branch              TEXT NOT NULL,
+    head_sha            TEXT NOT NULL,
+    test_steps_json     TEXT NOT NULL DEFAULT '[]',
+    dev_url             TEXT NOT NULL DEFAULT '',
+    dev_pid             INTEGER NOT NULL DEFAULT 0,
+    status              TEXT NOT NULL DEFAULT 'pending',
+    approved_sha        TEXT,
+    main_sha            TEXT,
+    send_back_comment   TEXT,
+    reject_comment      TEXT,
+    files_changed_json  TEXT NOT NULL DEFAULT '[]',
+    check_runs_json     TEXT NOT NULL DEFAULT '[]',
+    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
 `
 
 // insertTask inserts a task row with execution_stage = 'todo'.
@@ -535,6 +558,96 @@ func TestInterceptor_InjectsMessageOnRejection(t *testing.T) {
 	_ = db.QueryRow(`SELECT COUNT(1) FROM task_comments WHERE task_id='inject-task' AND author='harness'`).Scan(&count)
 	if count == 0 {
 		t.Fatal("expected diagnostic comment in task_comments")
+	}
+}
+
+// TestInterceptor_ShipReviewRequired verifies the interceptor blocks when
+// the ship_review gate is on, the branch has commits, but no card exists.
+func TestInterceptor_ShipReviewRequired(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	// Commit a file on a feature branch so HEAD is ahead of main.
+	gitEnv := []string{"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@t.com"}
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		cmd.Env = append(os.Environ(), gitEnv...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v (%s)", args, err, out)
+		}
+	}
+	run("checkout", "-b", "feature/sr-test")
+	if err := os.WriteFile(repoDir+"/newfile.txt", []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "newfile.txt")
+	run("commit", "-m", "add newfile")
+
+	db := openTestDB(t)
+	insertTask(t, db, "sr-task", repoDir)
+	_, _ = db.Exec(`INSERT INTO task_work_products (task_id, product_type, reference) VALUES ('sr-task', 'branch', 'feature/sr-test')`)
+
+	ic := NewInterceptor(db)
+	ic.Guards = []GuardFunc{ic.checkShipReviewCard}
+
+	approved, diag, err := ic.InterceptCompletion(context.Background(), "sr-task", repoDir, repoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved {
+		t.Fatal("should be rejected when no ship review card exists")
+	}
+	if diag == nil || diag.Message == "" {
+		t.Fatal("expected diagnostic message")
+	}
+	if !strings.Contains(diag.Message, "staypoint_ship_review") {
+		t.Errorf("expected message to mention staypoint_ship_review tool, got: %s", diag.Message)
+	}
+}
+
+// TestInterceptor_ShipReviewPassesWithCard verifies the interceptor passes
+// when a pending ship review card exists.
+func TestInterceptor_ShipReviewPassesWithCard(t *testing.T) {
+	db := openTestDB(t)
+	insertTask(t, db, "sr-pass-task", "/tmp")
+
+	_, _ = db.Exec(`
+		INSERT INTO ship_review_cards
+			(id, task_id, branch, head_sha, test_steps_json, status,
+			 files_changed_json, check_runs_json, created_at, updated_at)
+		VALUES ('card-1', 'sr-pass-task', 'feature/x', 'abc', '["1. test"]', 'pending',
+		        '[]', '[]', strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))`)
+
+	ic := NewInterceptor(db)
+	ic.Guards = []GuardFunc{ic.checkShipReviewCard}
+
+	approved, _, err := ic.InterceptCompletion(context.Background(), "sr-pass-task", "", "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !approved {
+		t.Fatal("should pass when pending card exists")
+	}
+}
+
+// TestInterceptor_ShipReviewSkipsWhenGateOff verifies the guard is a no-op
+// when gates.ship_review is set to "false".
+func TestInterceptor_ShipReviewSkipsWhenGateOff(t *testing.T) {
+	db := openTestDB(t)
+	insertTask(t, db, "sr-off-task", "/tmp")
+	_, _ = db.Exec(`INSERT INTO settings_kv (key, value) VALUES ('gates.ship_review', 'false')`)
+
+	ic := NewInterceptor(db)
+	ic.Guards = []GuardFunc{ic.checkShipReviewCard}
+
+	approved, _, err := ic.InterceptCompletion(context.Background(), "sr-off-task", "", "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !approved {
+		t.Fatal("guard should be skipped when gate is off")
 	}
 }
 

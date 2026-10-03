@@ -14,6 +14,7 @@ import (
 	meshContext "github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
 	"github.com/VinnyVanGogh/staypoint/internal/router"
+	"github.com/VinnyVanGogh/staypoint/internal/shipreview"
 	"github.com/VinnyVanGogh/staypoint/internal/wire"
 )
 
@@ -228,6 +229,32 @@ func (s *Server) getToolsList() []Tool {
 				},
 			},
 		},
+		{
+			Name:        "staypoint_ship_review",
+			Description: "Create or refresh a Ship Review card so the Board can approve and merge your branch. Call this when your branch is ready for review. Requires a numbered test list. Files changed are populated automatically from git diff. Use check_runs to attach CI/verification evidence.",
+			InputSchema: InputSchema{
+				Type: "object",
+				Properties: map[string]Property{
+					"task_id": {
+						Type:        "string",
+						Description: "ID of the current task (leave empty to use STAYPOINT_TASK_ID env var)",
+					},
+					"test_steps": {
+						Type:        "string",
+						Description: `JSON array of numbered test instructions, e.g. ["1. Run npm test","2. Open /dashboard and verify X"]`,
+					},
+					"dev_url": {
+						Type:        "string",
+						Description: "Optional loopback URL for the running dev server, e.g. http://localhost:3000",
+					},
+					"check_runs": {
+						Type:        "string",
+						Description: `Optional JSON array of check run results: [{"command":"go test ./...","exit_code":0,"output_tail":"ok  ..."}, ...]`,
+					},
+				},
+				Required: []string{"test_steps"},
+			},
+		},
 	}
 }
 
@@ -253,6 +280,8 @@ func (s *Server) handleCallTool(ctx context.Context, params CallToolParams) *Too
 		return s.handleCreateInteraction(ctx, params.Arguments)
 	case "staypoint_task_get":
 		return s.handleTaskGet(ctx, params.Arguments)
+	case "staypoint_ship_review":
+		return s.handleShipReview(ctx, params.Arguments)
 	default:
 		return toolError(fmt.Sprintf("unknown tool: %s", params.Name))
 	}
@@ -608,4 +637,84 @@ func (s *Server) handleTaskGet(ctx context.Context, rawArgs json.RawMessage) *To
 		return toolError(fmt.Sprintf("marshal error: %v", err))
 	}
 	return toolSuccess(string(out))
+}
+
+func (s *Server) handleShipReview(ctx context.Context, rawArgs json.RawMessage) *ToolCallResult {
+	var args struct {
+		TaskID     string `json:"task_id"`
+		TestSteps  string `json:"test_steps"`
+		DevURL     string `json:"dev_url"`
+		CheckRuns  string `json:"check_runs"`
+	}
+	if len(rawArgs) > 0 {
+		_ = json.Unmarshal(rawArgs, &args)
+	}
+
+	// Resolve task ID: explicit arg > env var.
+	taskID := strings.TrimSpace(args.TaskID)
+	if taskID == "" {
+		taskID = strings.TrimSpace(os.Getenv("STAYPOINT_TASK_ID"))
+	}
+	if taskID == "" {
+		return toolError("task_id is required (or set STAYPOINT_TASK_ID)")
+	}
+
+	// Parse test_steps (JSON array string).
+	if strings.TrimSpace(args.TestSteps) == "" {
+		return toolError("test_steps is required (JSON array of strings)")
+	}
+	var testSteps []string
+	if err := json.Unmarshal([]byte(args.TestSteps), &testSteps); err != nil {
+		return toolError(fmt.Sprintf("test_steps must be a JSON array of strings: %v", err))
+	}
+	if len(testSteps) == 0 {
+		return toolError("test_steps must not be empty")
+	}
+
+	// Parse check_runs (optional JSON array).
+	var checkRuns []shipreview.CheckRun
+	if cr := strings.TrimSpace(args.CheckRuns); cr != "" {
+		if err := json.Unmarshal([]byte(cr), &checkRuns); err != nil {
+			return toolError(fmt.Sprintf("check_runs must be a JSON array: %v", err))
+		}
+	}
+
+	dbConn, err := s.getDB()
+	if err != nil {
+		return toolError(fmt.Sprintf("database error: %v", err))
+	}
+
+	task, err := meshContext.GetTask(dbConn, taskID)
+	if err != nil {
+		return toolError(fmt.Sprintf("task not found: %v", err))
+	}
+
+	branch := "staypoint/" + task.ID
+	if task.GitBranch != "" {
+		branch = task.GitBranch
+	}
+
+	// Resolve workDir from the task's own worktree/RepoPath, not from MCP server cwd,
+	// so we always diff and resolve HEAD against the correct repository.
+	workDir := task.RepoPath
+	wt := task.RepoPath + "/.worktrees/" + task.ID
+	if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
+		workDir = wt
+	}
+
+	headSHA, err := shipreview.CurrentBranchHEAD(ctx, workDir, branch)
+	if err != nil {
+		return toolError(fmt.Sprintf("cannot resolve branch HEAD for %q: %v", branch, err))
+	}
+
+	card, err := shipreview.CreateCard(dbConn, taskID, branch, headSHA, testSteps, args.DevURL, workDir, checkRuns)
+	if err != nil {
+		return toolError(fmt.Sprintf("create ship review card: %v", err))
+	}
+
+	data, err := json.MarshalIndent(card, "", "  ")
+	if err != nil {
+		return toolError(fmt.Sprintf("json marshal error: %v", err))
+	}
+	return toolSuccess(fmt.Sprintf("Ship Review card created.\n\n%s\n\nThe Board can now approve, send back, or reject this branch.", string(data)))
 }

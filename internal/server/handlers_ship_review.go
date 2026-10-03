@@ -63,8 +63,9 @@ func (h *ShipReviewHandler) UpsertCard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		TestSteps []string `json:"test_steps"`
-		DevURL    string   `json:"dev_url"`
+		TestSteps []string               `json:"test_steps"`
+		DevURL    string                 `json:"dev_url"`
+		CheckRuns []shipreview.CheckRun  `json:"check_runs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -97,7 +98,7 @@ func (h *ShipReviewHandler) UpsertCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	card, err := shipreview.CreateCard(h.db, taskID, branch, headSHA, req.TestSteps, req.DevURL)
+	card, err := shipreview.CreateCard(h.db, taskID, branch, headSHA, req.TestSteps, req.DevURL, task.RepoPath, req.CheckRuns)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
