@@ -773,12 +773,15 @@ func buildBriefBlock(brief taskBrief, comments []harnessComment, isFirstTurn boo
 
 // safeField strips control markers from user-supplied strings so field content
 // cannot forge task completion or break out of the brief delimiters.
+// Replacements use parentheses so the original bracket-delimited form can never
+// be reconstructed from the replacement text (e.g. "[[[TASK_COMPLETE]]]" would
+// produce "[[TASK_COMPLETE]]" if we replaced with "[TASK_COMPLETE]").
 func safeField(s string) string {
-	s = strings.ReplaceAll(s, taskCompleteMarker, "[TASK_COMPLETE]")
-	s = strings.ReplaceAll(s, "<<<TASK_BRIEF_BEGIN>>>", "[TASK_BRIEF_BEGIN]")
-	s = strings.ReplaceAll(s, "<<<TASK_BRIEF_END>>>", "[TASK_BRIEF_END]")
-	s = strings.ReplaceAll(s, "<<<NEW_COMMENTS_BEGIN>>>", "[NEW_COMMENTS_BEGIN]")
-	s = strings.ReplaceAll(s, "<<<NEW_COMMENTS_END>>>", "[NEW_COMMENTS_END]")
+	s = strings.ReplaceAll(s, taskCompleteMarker, "(TASK_COMPLETE)")
+	s = strings.ReplaceAll(s, "<<<TASK_BRIEF_BEGIN>>>", "(TASK_BRIEF_BEGIN)")
+	s = strings.ReplaceAll(s, "<<<TASK_BRIEF_END>>>", "(TASK_BRIEF_END)")
+	s = strings.ReplaceAll(s, "<<<NEW_COMMENTS_BEGIN>>>", "(NEW_COMMENTS_BEGIN)")
+	s = strings.ReplaceAll(s, "<<<NEW_COMMENTS_END>>>", "(NEW_COMMENTS_END)")
 	return s
 }
 
