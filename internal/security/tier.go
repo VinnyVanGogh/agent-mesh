@@ -543,40 +543,61 @@ func (c *Classifier) classifyGh(args []string, v *Verdict) {
 		}
 		v.raise(Yellow, "")
 	case "api":
+		// Any body-submitting flag means the call mutates state — Red immediately.
+		// For the method, only GET and HEAD are safe reads; anything else (POST, PUT,
+		// PATCH, DELETE, or any unrecognized/custom method) is Red (fail-closed on unknown).
+		// Default when no method flag is present: gh api defaults to GET when no body
+		// flags, so we allow that through; body flags above would have already raised Red.
+		ghAPIRed := func(reason string) {
+			v.raise(Red, reason)
+		}
+		apiMethodSeen := false
 		for j, a := range rest {
 			lower := strings.ToLower(a)
-			// -XPOST / --method=POST / -X POST / --method POST (mutating methods)
 			switch {
-			case (a == "-X" || a == "--method") && j+1 < len(rest):
-				switch strings.ToUpper(rest[j+1]) {
-				case "POST", "PUT", "PATCH", "DELETE":
-					v.raise(Red, "gh api mutating method; Board approval required")
-					return
-				}
-			case strings.HasPrefix(lower, "-x") && len(a) > 2:
-				switch strings.ToUpper(a[2:]) {
-				case "POST", "PUT", "PATCH", "DELETE":
-					v.raise(Red, "gh api mutating method; Board approval required")
-					return
-				}
-			case strings.HasPrefix(lower, "--method="):
-				switch strings.ToUpper(a[9:]) {
-				case "POST", "PUT", "PATCH", "DELETE":
-					v.raise(Red, "gh api mutating method; Board approval required")
-					return
-				}
-			// -f/-F/--field/--raw-field/--input (any form) imply a POST body
-			case a == "-f" || a == "-F" || strings.HasPrefix(lower, "--field") ||
-				strings.HasPrefix(lower, "--raw-field") || lower == "--input" || strings.HasPrefix(lower, "--input="):
-				v.raise(Red, "gh api submits data; Board approval required")
+			// -f/-F/--field/--raw-field/--input (any attached or separate form) → POST body
+			case a == "-f" || a == "-F",
+				strings.HasPrefix(lower, "--field"),
+				strings.HasPrefix(lower, "--raw-field"),
+				lower == "--input",
+				strings.HasPrefix(lower, "--input="):
+				ghAPIRed("gh api submits data; Board approval required")
 				return
+			// -X METHOD or --method METHOD (separate value token)
+			case (a == "-X" || strings.EqualFold(a, "--method")) && j+1 < len(rest):
+				m := strings.ToUpper(rest[j+1])
+				if m != "GET" && m != "HEAD" {
+					ghAPIRed("gh api mutating or unrecognized method; Board approval required")
+					return
+				}
+				apiMethodSeen = true
+			// -XMETHOD or -X=METHOD (attached, with or without =)
+			case strings.HasPrefix(lower, "-x") && len(a) > 2:
+				raw := a[2:]
+				m := strings.ToUpper(strings.TrimPrefix(raw, "="))
+				if m != "GET" && m != "HEAD" {
+					ghAPIRed("gh api mutating or unrecognized method; Board approval required")
+					return
+				}
+				apiMethodSeen = true
+			// --method=METHOD (attached with =)
+			case strings.HasPrefix(lower, "--method="):
+				m := strings.ToUpper(a[strings.Index(a, "=")+1:])
+				if m != "GET" && m != "HEAD" {
+					ghAPIRed("gh api mutating or unrecognized method; Board approval required")
+					return
+				}
+				apiMethodSeen = true
 			}
 			// Merge endpoint by URL
 			if !strings.HasPrefix(a, "-") && strings.Contains(lower, "/merge") {
-				v.raise(Red, "gh api targets a merge endpoint; Board approval required")
+				ghAPIRed("gh api targets a merge endpoint; Board approval required")
 				return
 			}
 		}
+		// If no explicit method: gh api defaults to GET when no body flags, which is safe.
+		// If method was explicitly set and passed the GET/HEAD check above, allow through.
+		_ = apiMethodSeen
 		v.raise(Yellow, "")
 	default:
 		v.raise(Yellow, "")
