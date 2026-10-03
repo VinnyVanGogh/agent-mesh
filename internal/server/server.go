@@ -143,6 +143,15 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/checklist/{id}/history", checklistH.GetHistory)
 		mux.HandleFunc("POST /api/checklist/seed", checklistH.Seed)
 		mux.HandleFunc("POST /api/checklist/evaluate", checklistH.Evaluate)
+
+		// Security Gate REST API (Board approval for Red-tier agent commands)
+		gateH := NewSecurityGateHandler(s.opts.DB, s.hub)
+		mux.HandleFunc("GET /api/security/gate-requests", gateH.ListGateRequests)
+		mux.HandleFunc("POST /api/security/gate-requests", gateH.CreateGateRequest)
+		mux.HandleFunc("GET /api/security/gate-requests/{id}", gateH.GetGateRequest)
+		mux.HandleFunc("POST /api/security/gate-requests/{id}/decide", gateH.DecideGateRequest)
+		mux.HandleFunc("GET /api/settings/security-gate", gateH.GetSecurityGateSettings)
+		mux.HandleFunc("POST /api/settings/security-gate", gateH.UpdateSecurityGateSettings)
 	}
 
 	// Embedded web UI (must be registered last so /api/* patterns take precedence)

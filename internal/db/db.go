@@ -771,6 +771,37 @@ var Migrations = []Migration{
 			return nil
 		},
 	},
+	{
+		Version: 16,
+		Name:    "security_gate",
+		Up: func(conn *sql.DB) error {
+			queries := []string{
+				`CREATE TABLE IF NOT EXISTS security_gate_requests (
+					id           TEXT PRIMARY KEY,
+					cmdline      TEXT NOT NULL,
+					reasons_json TEXT NOT NULL DEFAULT '[]',
+					run_id       TEXT,
+					status       TEXT NOT NULL DEFAULT 'pending'
+					             CHECK (status IN ('pending','approved','denied')),
+					created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+					decided_at   TEXT
+				);`,
+				`CREATE INDEX IF NOT EXISTS idx_security_gate_pending ON security_gate_requests (status, created_at)
+				 WHERE status = 'pending';`,
+				`CREATE TABLE IF NOT EXISTS settings_kv (
+					key        TEXT PRIMARY KEY,
+					value      TEXT NOT NULL,
+					updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				);`,
+			}
+			for _, q := range queries {
+				if _, err := conn.Exec(q); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
 }
 
 func copyFile(src, dst string) error {
