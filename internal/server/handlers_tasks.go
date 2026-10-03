@@ -794,6 +794,73 @@ func (h *TasksHandler) GetTaskDiff(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GetTaskFileDiff handles GET /api/tasks/{id}/diff/file?path={path}&checkpoint={id}
+// Returns the full unified diff for a single file.
+func (h *TasksHandler) GetTaskFileDiff(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "task id is required")
+		return
+	}
+	task, err := context.GetTask(h.db, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	filePath := r.URL.Query().Get("path")
+	if filePath == "" {
+		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	cpID := r.URL.Query().Get("checkpoint")
+	if cpID == "" {
+		if preRunID, _ := checkpoint.FindPreRunCheckpoint(r.Context(), task.RepoPath, task.ID); preRunID != "" {
+			cpID = preRunID
+		}
+	}
+
+	workDir, hasWorktree := taskCheckpointWorkDir(task)
+	var content string
+	if hasWorktree {
+		content, err = checkpoint.DiffFileContent(r.Context(), workDir, cpID, filePath)
+	} else {
+		branch := "staypoint/" + task.ID
+		content, err = checkpoint.DiffFileContentAgainstRef(r.Context(), task.RepoPath, cpID, branch, filePath)
+	}
+	if err != nil {
+		content = ""
+	}
+
+	binary := strings.Contains(content, "Binary files")
+	status := "modified"
+	if strings.Contains(content, "new file mode") {
+		status = "added"
+	} else if strings.Contains(content, "deleted file mode") {
+		status = "deleted"
+	} else if strings.Contains(content, "rename from") {
+		status = "renamed"
+	}
+
+	const maxDiffBytes = 256 * 1024 // 256 KB
+	truncated := len(content) > maxDiffBytes
+	if truncated {
+		// Trim at a safe boundary to avoid multi-byte rune splits.
+		content = content[:maxDiffBytes]
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"path":          filePath,
+		"content":       content,
+		"binary":        binary,
+		"truncated":     truncated,
+		"status":        status,
+		"checkpoint_id": cpID,
+	})
+}
+
 // RestoreFileHandler handles POST /api/tasks/{id}/checkpoint-restore-file
 // Restores a single file from the given checkpoint into the working tree.
 func (h *TasksHandler) RestoreFileHandler(w http.ResponseWriter, r *http.Request) {

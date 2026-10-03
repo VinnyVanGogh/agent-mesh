@@ -233,3 +233,53 @@ func TestRestoreFile_NoWorktreeReturns409(t *testing.T) {
 		t.Errorf("want 409 when no worktree, got %d", resp.StatusCode)
 	}
 }
+
+// TestGetTaskFileDiff_ReturnsFileDiffKeys verifies that the file diff endpoint
+// returns the expected JSON shape.
+func TestGetTaskFileDiff_ReturnsFileDiffKeys(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	base := fmt.Sprintf("http://127.0.0.1:%d", srv.Port())
+
+	_, taskBody := postTask(t, base, token, map[string]any{"name": "file-diff-key-test"})
+	taskID, _ := taskBody["id"].(string)
+	if taskID == "" {
+		t.Skip("task creation failed")
+	}
+
+	// Missing path → 400
+	req, _ := http.NewRequest(http.MethodGet, base+"/api/tasks/"+taskID+"/diff/file", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("want 400 for missing path, got %d", resp.StatusCode)
+	}
+
+	// With path → 200 with expected keys
+	req2, _ := http.NewRequest(http.MethodGet, base+"/api/tasks/"+taskID+"/diff/file?path=README.md", nil)
+	req2.Header.Set("Authorization", "Bearer "+token)
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("request2: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("want 200, got %d", resp2.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp2.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, key := range []string{"path", "content", "binary", "truncated", "status"} {
+		if _, ok := body[key]; !ok {
+			t.Errorf("response missing key %q; got %v", key, body)
+		}
+	}
+	if body["path"] != "README.md" {
+		t.Errorf("path mismatch: want README.md, got %v", body["path"])
+	}
+}
