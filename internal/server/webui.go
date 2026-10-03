@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-//go:embed webui/*
+//go:embed webui/* webui/lib/*
 var webuiFiles embed.FS
 
 // webuiFS strips the leading "webui/" prefix so paths resolve as "/ui/style.css" etc.

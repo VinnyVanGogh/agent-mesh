@@ -1,35 +1,13 @@
-// Unit tests for the stats-bar "STUCK" age check (STA-482).
+// Unit tests for the stats-bar "STUCK" age check (STA-482, STA-517).
 // Run with: node --test tests/unit/stuck-check.test.mjs
 // These tests must not start a daemon or browser.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 
-// Pure helpers mirroring app.js — keep in sync.
-
-function groupStepsByRun(allSteps) {
-  const runs = new Map();
-  const order = [];
-  for (const s of allSteps) {
-    const rid = s.run_id || '';
-    if (!runs.has(rid)) { runs.set(rid, []); order.push(rid); }
-    runs.get(rid).push(s);
-  }
-  return order.map(rid => runs.get(rid));
-}
-
-function latestRunSteps(allSteps) {
-  if (!allSteps || !allSteps.length) return [];
-  const groups = groupStepsByRun(allSteps);
-  return groups[groups.length - 1] || [];
-}
-
-// Mirrors the isStuck expression used in refreshTaskStatsBar / renderTaskPage.
-function isStuck(allSteps, nowMs, taskStatus) {
-  const latest = latestRunSteps(allSteps);
-  const lastStepAt = latest.length ? new Date(latest[latest.length - 1].created_at).getTime() : null;
-  return lastStepAt !== null && (nowMs - lastStepAt) > 5 * 60 * 1000 && taskStatus !== 'done';
-}
+const require = createRequire(import.meta.url);
+const { latestRunSteps, isStuck } = require('../../internal/server/webui/lib/runsteps.js');
 
 // Fixed reference point so tests are deterministic.
 const NOW = 1_700_000_000_000; // arbitrary epoch ms
@@ -83,4 +61,15 @@ test('current run with recent step after an old run → not stuck', () => {
     { run_id: 'r-cur', kind: 'checkpoint', created_at: ago(THIRTY_S) },
   ];
   assert.equal(isStuck([...oldRun, ...curRun], NOW, 'in_progress'), false);
+});
+
+test('latestRunSteps returns only the last run group', () => {
+  const steps = [
+    { run_id: 'r1', kind: 'wake',  created_at: ago(SIX_MIN) },
+    { run_id: 'r2', kind: 'wake',  created_at: ago(THIRTY_S) },
+    { run_id: 'r2', kind: 'state', created_at: ago(THIRTY_S) },
+  ];
+  const latest = latestRunSteps(steps);
+  assert.equal(latest.length, 2);
+  assert.ok(latest.every(s => s.run_id === 'r2'));
 });

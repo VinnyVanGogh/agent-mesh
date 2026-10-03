@@ -11,6 +11,37 @@ permissions:
   contents: write
 
 jobs:
+  js-test:
+    name: JS Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Guard – no copy-tests allowed
+        run: |
+          bad=$(grep -rl --include='*.mjs' 'Pure helpers mirroring app.js' tests/unit/ 2>/dev/null || true)
+          if [ -n "$bad" ]; then
+            echo "ERROR: copy-test detected (contains 'Pure helpers mirroring app.js'):"
+            echo "$bad"
+            exit 1
+          fi
+          # Every test file must import from internal/server/webui/
+          missing=$(grep -rL 'internal/server/webui/' tests/unit/*.mjs 2>/dev/null || true)
+          if [ -n "$missing" ]; then
+            echo "ERROR: test file(s) do not import from internal/server/webui/:"
+            echo "$missing"
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run JS unit tests
+        run: node --test tests/unit/*.mjs
+
   test:
     name: Build & Test
     runs-on: ${{ matrix.os }}
