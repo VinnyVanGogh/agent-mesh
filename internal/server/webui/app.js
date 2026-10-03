@@ -7205,6 +7205,32 @@ async function openTaskPage(target, pushHistory = true) {
 // Board-facing review panel with: dev URL, test checklist, SHA pin, diff
 // summary, and Approve / Send back / Reject buttons.
 
+// Renders a collapsed read-only final-state card (approved or rejected).
+function renderFinalShipReviewCard(taskId, headSHA, status, mainSHA, rejectComment) {
+  const section = el('div', 'ship-review-card ship-review-card--final task-page-section');
+  section.id = `ship-review-${taskId}`;
+  const hdr = el('div', 'ship-review-header');
+  hdr.appendChild(el('span', 'ship-review-badge', 'Ship Review'));
+  const label = status === 'approved' ? 'Approved' : 'Rejected';
+  hdr.appendChild(el('span', `ship-review-status-badge status-${status}`, label));
+  section.appendChild(hdr);
+  const shaRow = el('div', 'ship-review-row');
+  shaRow.appendChild(el('span', 'ship-review-row-label', 'Reviewed SHA'));
+  shaRow.appendChild(el('code', 'ship-review-sha', headSHA ? headSHA.slice(0, 12) : '—'));
+  if (status === 'approved' && mainSHA) {
+    shaRow.appendChild(el('span', 'ship-review-arrow', ' → main '));
+    shaRow.appendChild(el('code', 'ship-review-sha ship-review-sha--main', mainSHA.slice(0, 12)));
+  }
+  section.appendChild(shaRow);
+  if (status === 'rejected' && rejectComment) {
+    const fb = el('div', 'ship-review-feedback-box');
+    fb.appendChild(el('div', 'ship-review-feedback-label', 'Rejection reason:'));
+    fb.appendChild(el('div', 'ship-review-feedback-body', rejectComment));
+    section.appendChild(fb);
+  }
+  return section;
+}
+
 async function renderShipReviewCard(container, taskId) {
   if (!taskId) return;
   let card;
@@ -7215,7 +7241,18 @@ async function renderShipReviewCard(container, taskId) {
     return; // no card or fetch error — silently skip
   }
 
-  if (!card || !['pending', 'sent_back'].includes(card.status)) return;
+  if (!card) return;
+
+  // Render collapsed final state for terminal statuses.
+  if (card.status === 'approved' || card.status === 'rejected') {
+    const existing = document.getElementById(`ship-review-${taskId}`);
+    const finalCard = renderFinalShipReviewCard(taskId, card.head_sha, card.status, card.main_sha, card.reject_comment);
+    if (existing) existing.replaceWith(finalCard);
+    else container.appendChild(finalCard);
+    return;
+  }
+
+  if (!['pending', 'sent_back'].includes(card.status)) return;
 
   const section = el('div', 'ship-review-card task-page-section');
   section.id = `ship-review-${taskId}`;
@@ -7295,13 +7332,27 @@ async function renderShipReviewCard(container, taskId) {
     if (!confirm('Approve and merge this branch? Only the pinned SHA will be merged.')) return;
     approveBtn.disabled = true;
     try {
-      const result = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/approve`, { method: 'POST', headers: authHeader() });
-      if (result.error === 'head_moved') {
-        alert(`Branch HEAD moved since the card was rendered.\nNew HEAD: ${result.new_head_sha}\nThe card will reload.`);
-        renderShipReviewCard(container.closest('.task-page-main') || container, taskId);
-        return;
+      // Use raw fetch so we can inspect the 409 body before throwing.
+      const r = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/approve`, {
+        method: 'POST',
+        headers: authHeader(),
+      });
+      if (r.status === 409) {
+        const body = await r.json().catch(() => ({}));
+        if (body.error === 'head_moved') {
+          alert(`Branch HEAD moved since the card was rendered.\nNew HEAD: ${body.new_head_sha || '?'}\nThe agent must re-submit the review card; re-pin the new HEAD to proceed.`);
+          const parent = container.closest('.task-page-main') || container;
+          const existing = document.getElementById(`ship-review-${taskId}`);
+          if (existing) existing.remove();
+          renderShipReviewCard(parent, taskId);
+          return;
+        }
+        throw new Error(`${r.status} ${r.statusText}`);
       }
-      section.remove();
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      const result = await r.json();
+      const mainSHA = result.main_sha || (result.card && result.card.main_sha) || '';
+      section.replaceWith(renderFinalShipReviewCard(taskId, card.head_sha, 'approved', mainSHA, ''));
     } catch (e) {
       alert('Approve failed: ' + (e.message || e));
       approveBtn.disabled = false;
@@ -7339,7 +7390,7 @@ async function renderShipReviewCard(container, taskId) {
         headers: { ...authHeader(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ comment: comment || '', delete_branch: delBranch }),
       });
-      section.remove();
+      section.replaceWith(renderFinalShipReviewCard(taskId, card.head_sha, 'rejected', '', comment || ''));
     } catch (e) {
       alert('Reject failed: ' + (e.message || e));
       rejectBtn.disabled = false;

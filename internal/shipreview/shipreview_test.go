@@ -446,3 +446,67 @@ func TestStartDevServerCreatesWorktreeAtPinnedSHA(t *testing.T) {
 		t.Errorf("expected dev worktree %s to be removed after StopDevServer, stat err: %v", wtPath, err)
 	}
 }
+
+// TestSetDevURL_Persists covers Bug 1 (STA-535): SetDevURL must survive a
+// round-trip so GET /api/tasks/{id}/ship-review always returns the dev_url
+// that was auto-detected during UpsertCard, not the empty string stored by
+// CreateCard when the agent omits dev_url.
+func TestSetDevURL_Persists(t *testing.T) {
+	db := openTestDB(t)
+	_, _ = db.Exec(`INSERT INTO tasks (id, name) VALUES ('t8', 'DevURL persist')`)
+
+	card, err := shipreview.CreateCard(db, "t8", "feature/test", "abc123", []string{"1. check"}, "")
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+	if card.DevURL != "" {
+		t.Fatalf("expected empty dev_url after create, got %q", card.DevURL)
+	}
+
+	const want = "http://127.0.0.1:8799"
+	if err := shipreview.SetDevURL(db, card.ID, want); err != nil {
+		t.Fatalf("SetDevURL: %v", err)
+	}
+
+	got, err := shipreview.GetCard(db, "t8")
+	if err != nil {
+		t.Fatalf("GetCard after SetDevURL: %v", err)
+	}
+	if got.DevURL != want {
+		t.Errorf("want dev_url %q, got %q", want, got.DevURL)
+	}
+}
+
+// TestApproveAndMerge_MainSHAStored covers Bug 3 (STA-535): after ApproveAndMerge
+// the card must persist both approved_sha and main_sha so the UI can show the
+// reviewed SHA → main SHA relationship.
+func TestApproveAndMerge_MainSHAStored(t *testing.T) {
+	db := openTestDB(t)
+	_, _ = db.Exec(`INSERT INTO tasks (id, name) VALUES ('t9', 'MainSHA test')`)
+
+	repoDir, branch, featureSHA := setupGitRepo(t)
+
+	card, err := shipreview.CreateCard(db, "t9", branch, featureSHA, []string{"1. Verify"}, "")
+	if err != nil {
+		t.Fatalf("CreateCard: %v", err)
+	}
+
+	mainSHA, err := shipreview.ApproveAndMerge(context.Background(), db, card, repoDir, "main")
+	if err != nil {
+		t.Fatalf("ApproveAndMerge: %v", err)
+	}
+
+	got, err := shipreview.GetCard(db, "t9")
+	if err != nil {
+		t.Fatalf("GetCard after approve: %v", err)
+	}
+	if got.Status != "approved" {
+		t.Errorf("want approved, got %q", got.Status)
+	}
+	if got.ApprovedSHA != featureSHA {
+		t.Errorf("want approved_sha %q, got %q", featureSHA, got.ApprovedSHA)
+	}
+	if got.MainSHA != mainSHA || mainSHA == "" {
+		t.Errorf("want main_sha %q, got %q", mainSHA, got.MainSHA)
+	}
+}
