@@ -170,7 +170,7 @@ func TestStepRecorder_ErrorToolResult(t *testing.T) {
 }
 
 func TestExtractToolTitle_Command(t *testing.T) {
-	got := extractToolTitle("Bash", `{"command":"go test ./internal/server/...","description":"run tests"}`)
+	got := extractToolTitle("Bash", `{"command":"go test ./internal/server/...","description":"run tests"}`, "")
 	want := "go test ./internal/server/..."
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -178,15 +178,26 @@ func TestExtractToolTitle_Command(t *testing.T) {
 }
 
 func TestExtractToolTitle_FilePath(t *testing.T) {
-	got := extractToolTitle("Edit", `{"file_path":"internal/server/events.go","old_string":"x","new_string":"y"}`)
-	want := "internal/server/events.go"
+	// No worktree root: path is returned as-is with verb prefix.
+	got := extractToolTitle("Edit", `{"file_path":"internal/server/events.go","old_string":"x","new_string":"y"}`, "")
+	want := "Edit internal/server/events.go"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestExtractToolTitle_FilePathRelative(t *testing.T) {
+	// With worktree root: absolute path is stripped to repo-relative.
+	root := "/home/agent/.worktrees/task-abc"
+	got := extractToolTitle("Read", `{"file_path":"/home/agent/.worktrees/task-abc/internal/server/events.go"}`, root)
+	want := "Read internal/server/events.go"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
 func TestExtractToolTitle_Fallback(t *testing.T) {
-	got := extractToolTitle("Bash", "")
+	got := extractToolTitle("Bash", "", "")
 	want := "Run command"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -194,7 +205,7 @@ func TestExtractToolTitle_Fallback(t *testing.T) {
 }
 
 func TestExtractToolTitle_FallbackBadJSON(t *testing.T) {
-	got := extractToolTitle("Read", "{not json}")
+	got := extractToolTitle("Read", "{not json}", "")
 	want := "Read file"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
@@ -231,8 +242,89 @@ func TestStepRecorder_ToolInputInTitle(t *testing.T) {
 	if s.Title != "go test ./internal/server/..." {
 		t.Errorf("expected command as title, got %q", s.Title)
 	}
-	if s.Body == "" {
-		t.Error("expected non-empty body with tool input JSON")
+	// Body is set from tool result text; empty result → empty body.
+	if s.Body != "" {
+		t.Errorf("expected empty body for result with no text, got %q", s.Body)
+	}
+}
+
+func TestStepRecorder_ToolResultSetsBody(t *testing.T) {
+	var published []RunStep
+	var mu sync.Mutex
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				published = append(published, s)
+				mu.Unlock()
+			}
+		}
+	}
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+	r.Feed(StepDelta{
+		Kind:      StepDeltaToolUse,
+		ToolName:  "Bash",
+		ToolID:    "t2",
+		ToolInput: `{"command":"cat /etc/hosts"}`,
+	})
+	r.Feed(StepDelta{
+		Kind:    StepDeltaToolResult,
+		ToolID:  "t2",
+		Text:    "127.0.0.1 localhost\n",
+		IsError: false,
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(published) != 1 {
+		t.Fatalf("expected 1 run.step, got %d", len(published))
+	}
+	s := published[0]
+	if s.Status != "done" {
+		t.Errorf("expected status done, got %q", s.Status)
+	}
+	if s.Body != "127.0.0.1 localhost\n" {
+		t.Errorf("expected output in body, got %q", s.Body)
+	}
+}
+
+func TestStepRecorder_ToolResultError(t *testing.T) {
+	var published []RunStep
+	var mu sync.Mutex
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				published = append(published, s)
+				mu.Unlock()
+			}
+		}
+	}
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+	r.Feed(StepDelta{
+		Kind:      StepDeltaToolUse,
+		ToolName:  "Bash",
+		ToolID:    "t3",
+		ToolInput: `{"command":"cat does-not-exist.txt"}`,
+	})
+	r.Feed(StepDelta{
+		Kind:    StepDeltaToolResult,
+		ToolID:  "t3",
+		Text:    "cat: does-not-exist.txt: No such file or directory\n",
+		IsError: true,
+	})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(published) != 1 {
+		t.Fatalf("expected 1 run.step, got %d", len(published))
+	}
+	s := published[0]
+	if s.Status != "error" {
+		t.Errorf("expected status error, got %q", s.Status)
+	}
+	if s.Body != "cat: does-not-exist.txt: No such file or directory\n" {
+		t.Errorf("unexpected body: %q", s.Body)
 	}
 }
 

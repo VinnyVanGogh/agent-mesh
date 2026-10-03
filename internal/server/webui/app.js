@@ -6817,7 +6817,8 @@ function buildTimelineStats(task, steps, elapsedMs, isStuck) {
 }
 
 function buildRunStepRow(s) {
-  const row = el('div', `timeline-row timeline-row-${s.kind || 'unknown'}`);
+  const isError = s.status === 'error';
+  const row = el('div', `timeline-row timeline-row-${s.kind || 'unknown'}${isError ? ' timeline-row-error' : ''}`);
   row.setAttribute('data-step-id', s.id);
 
   // Route rows render as a compact banner: icon + plain text, no kind badge.
@@ -6852,6 +6853,10 @@ function buildRunStepRow(s) {
   summary.appendChild(kindBadge);
   summary.appendChild(title);
   if (durEl) summary.appendChild(durEl);
+  // Exit-status badge for run/read/edit steps.
+  if (s.status === 'error') {
+    summary.appendChild(el('span', 'timeline-exit timeline-exit-error', 'error'));
+  }
   summary.appendChild(ts);
   row.appendChild(summary);
 

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -98,9 +99,10 @@ type StepRecorder struct {
 	taskID    string
 	startedAt time.Time
 
-	mu      sync.Mutex
-	seq     int
-	pending *openStep // step being assembled
+	mu           sync.Mutex
+	seq          int
+	pending      *openStep // step being assembled
+	worktreeRoot string    // set by harness after worktree creation; relativizes file paths
 }
 
 // openStep is a step that has been started but not yet closed.
@@ -122,6 +124,15 @@ func NewStepRecorder(db *sql.DB, publish PublishFunc, runID, taskID string) *Ste
 		taskID:    taskID,
 		startedAt: time.Now().UTC(),
 	}
+}
+
+// SetWorktreeRoot sets the absolute path of the task's git worktree.
+// Called by the harness after the worktree is created so that file paths
+// in tool titles are emitted repo-relative instead of absolute.
+func (r *StepRecorder) SetWorktreeRoot(path string) {
+	r.mu.Lock()
+	r.worktreeRoot = path
+	r.mu.Unlock()
 }
 
 // EmitWake emits a wake step describing why the run started.
@@ -249,7 +260,7 @@ func (r *StepRecorder) Feed(d StepDelta) {
 		r.pending = &openStep{
 			seq:       r.seq,
 			kind:      toolUseKind(d.ToolName),
-			title:     extractToolTitle(d.ToolName, d.ToolInput),
+			title:     extractToolTitle(d.ToolName, d.ToolInput, r.worktreeRoot),
 			startedAt: time.Now().UTC(),
 			toolID:    d.ToolID,
 		}
@@ -259,9 +270,18 @@ func (r *StepRecorder) Feed(d StepDelta) {
 
 	case StepDeltaToolResult:
 		if r.pending != nil && (r.pending.toolID == d.ToolID || d.ToolID == "") {
+			// Replace tool-input JSON body with the actual tool output.
+			r.pending.body.Reset()
+			if d.Text != "" {
+				out := d.Text
+				const maxBody = 2000
+				if len(out) > maxBody {
+					out = out[:maxBody] + "\n…(truncated)"
+				}
+				r.pending.body.WriteString(out)
+			}
 			status := "done"
 			if d.IsError {
-				r.pending.body.WriteString("[error]")
 				status = "error"
 			}
 			r.closePendingWithStatusLocked(r.pending, status)
@@ -423,9 +443,10 @@ func toolUseKind(name string) StepKind {
 }
 
 // extractToolTitle extracts a human-readable title from tool input JSON.
-// For Bash: uses "command"; for Read/Edit/Write: uses "file_path".
+// For Bash: uses "command"; for Read/Edit/Write: uses a verb + repo-relative path.
 // Falls back to toolUseTitle(name) if input is absent or unparseable.
-func extractToolTitle(name, inputJSON string) string {
+// root is the absolute task worktree path used to relativize file paths.
+func extractToolTitle(name, inputJSON, root string) string {
 	if inputJSON != "" {
 		var m map[string]json.RawMessage
 		if json.Unmarshal([]byte(inputJSON), &m) == nil {
@@ -438,12 +459,41 @@ func extractToolTitle(name, inputJSON string) string {
 			if v, ok := m["file_path"]; ok {
 				var s string
 				if json.Unmarshal(v, &s) == nil && s != "" {
-					return s
+					rel := relativizePath(s, root)
+					verb := fileToolVerb(name)
+					return verb + " " + rel
 				}
 			}
 		}
 	}
 	return toolUseTitle(name)
+}
+
+// relativizePath strips root from an absolute path, returning a repo-relative path.
+// If root is empty or path is not under root, the path is returned unchanged.
+func relativizePath(path, root string) string {
+	if root == "" || path == "" {
+		return path
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return path
+	}
+	return rel
+}
+
+// fileToolVerb returns the capitalized action word for a file tool name.
+func fileToolVerb(name string) string {
+	switch strings.ToLower(name) {
+	case "read", "readfile", "view":
+		return "Read"
+	case "edit", "multiedit":
+		return "Edit"
+	case "write", "writefile", "create":
+		return "Write"
+	default:
+		return "Access"
+	}
 }
 
 // toolUseTitle returns a human-readable title for a tool_use delta.

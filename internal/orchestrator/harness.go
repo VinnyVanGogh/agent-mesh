@@ -244,6 +244,7 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	// Emit wake step if recording is enabled.
 	sr := cfg.StepRecorder
 	if sr != nil {
+		sr.SetWorktreeRoot(wtPath)
 		wakeReason := cfg.WakeReason
 		if wakeReason == "" {
 			wakeReason = "run started"
