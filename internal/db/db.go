@@ -276,6 +276,34 @@ CREATE TABLE IF NOT EXISTS run_pending_messages (
 );
 
 CREATE INDEX IF NOT EXISTS idx_run_pending_messages_task ON run_pending_messages (task_id, id);
+
+CREATE TABLE IF NOT EXISTS ship_review_cards (
+    id                TEXT PRIMARY KEY,
+    task_id           TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    branch            TEXT NOT NULL,
+    head_sha          TEXT NOT NULL,
+    test_steps_json   TEXT NOT NULL DEFAULT '[]',
+    dev_url           TEXT NOT NULL DEFAULT '',
+    dev_pid           INTEGER NOT NULL DEFAULT 0,
+    status            TEXT NOT NULL DEFAULT 'pending'
+                      CHECK (status IN ('pending','approved','sent_back','rejected')),
+    approved_sha      TEXT,
+    main_sha          TEXT,
+    send_back_comment TEXT,
+    reject_comment    TEXT,
+    created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ship_review_task ON ship_review_cards (task_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS project_dev_configs (
+    repo_path        TEXT PRIMARY KEY,
+    dev_command      TEXT NOT NULL DEFAULT '',
+    dev_url          TEXT NOT NULL DEFAULT '',
+    setup_steps_json TEXT NOT NULL DEFAULT '[]',
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 ` + ChatSchema
 
 const ChatSchema = `
@@ -762,6 +790,45 @@ var Migrations = []Migration{
 					created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 				);`,
 				`CREATE INDEX IF NOT EXISTS idx_run_pending_messages_task ON run_pending_messages (task_id, id);`,
+			}
+			for _, q := range queries {
+				if _, err := conn.Exec(q); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	},
+	{
+		Version: 17,
+		Name:    "ship_review",
+		Up: func(conn *sql.DB) error {
+			queries := []string{
+				`CREATE TABLE IF NOT EXISTS ship_review_cards (
+					id                TEXT PRIMARY KEY,
+					task_id           TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+					branch            TEXT NOT NULL,
+					head_sha          TEXT NOT NULL,
+					test_steps_json   TEXT NOT NULL DEFAULT '[]',
+					dev_url           TEXT NOT NULL DEFAULT '',
+					dev_pid           INTEGER NOT NULL DEFAULT 0,
+					status            TEXT NOT NULL DEFAULT 'pending'
+					                  CHECK (status IN ('pending','approved','sent_back','rejected')),
+					approved_sha      TEXT,
+					main_sha          TEXT,
+					send_back_comment TEXT,
+					reject_comment    TEXT,
+					created_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+					updated_at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				);`,
+				`CREATE INDEX IF NOT EXISTS idx_ship_review_task ON ship_review_cards (task_id, created_at DESC);`,
+				`CREATE TABLE IF NOT EXISTS project_dev_configs (
+					repo_path        TEXT PRIMARY KEY,
+					dev_command      TEXT NOT NULL DEFAULT '',
+					dev_url          TEXT NOT NULL DEFAULT '',
+					setup_steps_json TEXT NOT NULL DEFAULT '[]',
+					updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+				);`,
 			}
 			for _, q := range queries {
 				if _, err := conn.Exec(q); err != nil {

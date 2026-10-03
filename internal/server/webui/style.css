@@ -3583,3 +3583,148 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
 .run-ctrl-textarea.hidden { display: none; }
 .run-ctrl-send { background: var(--accent, #4f8ef7); border-color: var(--accent, #4f8ef7); color: #fff; }
 .run-ctrl-send.hidden { display: none; }
+
+/* ── Ship Review Card ─────────────────────────────────────── */
+.ship-review-card {
+  border: 2px solid var(--accent, #4f8ef7);
+  border-radius: 8px;
+  padding: 16px 18px;
+  background: rgba(79,142,247,.07);
+  margin-bottom: 12px;
+}
+.ship-review-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.ship-review-badge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--accent, #4f8ef7);
+  color: #fff;
+}
+.ship-review-status-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+.ship-review-status-badge.status-pending { background: rgba(79,142,247,.2); color: var(--accent, #4f8ef7); }
+.ship-review-status-badge.status-sent_back { background: rgba(248,196,54,.15); color: #f8c436; }
+.ship-review-feedback-box {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: rgba(248,196,54,.08);
+  border-left: 3px solid #f8c436;
+  border-radius: 4px;
+  font-size: 13px;
+}
+.ship-review-feedback-label { font-weight: 600; margin-bottom: 4px; color: #f8c436; font-size: 11px; }
+.ship-review-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.ship-review-row-label {
+  min-width: 80px;
+  font-weight: 600;
+  color: var(--text-muted, #7f849c);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+.ship-review-dev-link {
+  color: var(--accent, #4f8ef7);
+  text-decoration: none;
+  font-family: monospace;
+  font-size: 13px;
+}
+.ship-review-dev-link:hover { text-decoration: underline; }
+.ship-review-restart-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--surface2, #28283e);
+  border: 1px solid var(--border, #30304a);
+  color: var(--text-muted, #7f849c);
+  cursor: pointer;
+}
+.ship-review-restart-btn:hover { color: var(--text, #cdd6f4); }
+.ship-review-sha {
+  font-family: monospace;
+  font-size: 12px;
+  background: var(--surface2, #28283e);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.ship-review-branch {
+  font-size: 11px;
+  color: var(--text-muted, #7f849c);
+  font-family: monospace;
+}
+.ship-review-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-muted, #7f849c);
+  margin-bottom: 6px;
+}
+.ship-review-test-section { margin-bottom: 14px; }
+.ship-review-test-list {
+  margin: 0 0 0 18px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.ship-review-test-step { margin-bottom: 2px; }
+.ship-review-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.ship-review-approve-btn {
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(40,167,69,.15);
+  border: 1.5px solid rgba(40,167,69,.5);
+  color: #28a745;
+  transition: background .15s;
+}
+.ship-review-approve-btn:hover { background: rgba(40,167,69,.25); }
+.ship-review-approve-btn:disabled { opacity: .5; cursor: default; }
+.ship-review-sendback-btn {
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(248,196,54,.1);
+  border: 1.5px solid rgba(248,196,54,.4);
+  color: #f8c436;
+  transition: background .15s;
+}
+.ship-review-sendback-btn:hover { background: rgba(248,196,54,.2); }
+.ship-review-sendback-btn:disabled { opacity: .5; cursor: default; }
+.ship-review-reject-btn {
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(248,81,73,.1);
+  border: 1.5px solid rgba(248,81,73,.4);
+  color: var(--red, #f85149);
+  transition: background .15s;
+}
+.ship-review-reject-btn:hover { background: rgba(248,81,73,.2); }
+.ship-review-reject-btn:disabled { opacity: .5; cursor: default; }

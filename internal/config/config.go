@@ -64,6 +64,11 @@ type GatesConfig struct {
 	// lands code on main/master. Default true. Set to false to fall back to
 	// Yellow (unattended) for those commands.
 	MainMergeApproval *bool `json:"main_merge_approval,omitempty" toml:"main_merge_approval"`
+
+	// ShipReview requires Board sign-off on a Ship Review card before an agent
+	// branch is merged. Default true. When off, tasks finish the way they do
+	// today — no card, no dev server.
+	ShipReview *bool `json:"ship_review,omitempty" toml:"ship_review"`
 }
 
 // MainMergeApprovalEnabled returns true unless explicitly disabled.
@@ -72,6 +77,14 @@ func (g GatesConfig) MainMergeApprovalEnabled() bool {
 		return true // default on
 	}
 	return *g.MainMergeApproval
+}
+
+// ShipReviewEnabled returns true unless explicitly disabled.
+func (g GatesConfig) ShipReviewEnabled() bool {
+	if g.ShipReview == nil {
+		return true // default on
+	}
+	return *g.ShipReview
 }
 
 // DefaultConfig returns the default configuration.
