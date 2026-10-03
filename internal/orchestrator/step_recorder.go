@@ -109,12 +109,19 @@ type StepRecorder struct {
 	pendingTools map[string]*openStep // parallel tool steps keyed by tool_use_id
 	worktreeRoot string               // set by harness after worktree creation; relativizes file paths
 
-	// cumulative token accounting for live stats bar
+	// Two-tier token accounting: pending (MAX within current API call) +
+	// committed (SUM across completed API calls). Published SpentUSD always
+	// reflects committed+pending, so values are monotonically non-decreasing
+	// even when cache_read tokens jump between turns.
 	model            string
-	cumulInput       int64
-	cumulOutput      int64
-	cumulCacheRead   int64
-	cumulCacheCreate int64
+	pendingInput     int64
+	pendingOutput    int64
+	pendingCacheRead int64
+	pendingCacheCreate int64
+	committedInput     int64
+	committedOutput    int64
+	committedCacheRead int64
+	committedCacheCreate int64
 }
 
 // openStep is a step that has been started but not yet closed.
@@ -355,29 +362,34 @@ func (r *StepRecorder) Feed(d StepDelta) {
 
 	case StepDeltaUsage:
 		if d.Usage != nil {
-			// Accumulate; each usage event from Claude carries totals for the turn.
-			if d.Usage.InputTokens > r.cumulInput {
-				r.cumulInput = d.Usage.InputTokens
+			// MAX into pending: multiple events per API call carry identical values;
+			// taking max deduplicates without double-counting.
+			if d.Usage.InputTokens > r.pendingInput {
+				r.pendingInput = d.Usage.InputTokens
 			}
-			if d.Usage.OutputTokens > r.cumulOutput {
-				r.cumulOutput = d.Usage.OutputTokens
+			if d.Usage.OutputTokens > r.pendingOutput {
+				r.pendingOutput = d.Usage.OutputTokens
 			}
-			if d.Usage.CacheReadTokens > r.cumulCacheRead {
-				r.cumulCacheRead = d.Usage.CacheReadTokens
+			if d.Usage.CacheReadTokens > r.pendingCacheRead {
+				r.pendingCacheRead = d.Usage.CacheReadTokens
 			}
-			if d.Usage.CacheCreationTokens > r.cumulCacheCreate {
-				r.cumulCacheCreate = d.Usage.CacheCreationTokens
+			if d.Usage.CacheCreationTokens > r.pendingCacheCreate {
+				r.pendingCacheCreate = d.Usage.CacheCreationTokens
 			}
 			if d.Usage.Model != "" {
 				r.model = d.Usage.Model
 			}
-			spentTokens := r.cumulInput + r.cumulOutput + r.cumulCacheRead + r.cumulCacheCreate
-			spentUSD := estimateRunCost(r.model, r.cumulInput, r.cumulOutput, r.cumulCacheRead, r.cumulCacheCreate)
+			totalInput := r.committedInput + r.pendingInput
+			totalOutput := r.committedOutput + r.pendingOutput
+			totalCacheRead := r.committedCacheRead + r.pendingCacheRead
+			totalCacheCreate := r.committedCacheCreate + r.pendingCacheCreate
+			spentTokens := totalInput + totalOutput + totalCacheRead + totalCacheCreate
+			spentUSD := estimateRunCost(r.model, totalInput, totalOutput, totalCacheRead, totalCacheCreate)
 			r.publish("run.stats", RunStats{
 				RunID:        r.runID,
 				TaskID:       r.taskID,
-				InputTokens:  r.cumulInput,
-				OutputTokens: r.cumulOutput,
+				InputTokens:  totalInput,
+				OutputTokens: totalOutput,
 				SpentTokens:  spentTokens,
 				SpentUSD:     spentUSD,
 				ElapsedSec:   time.Since(r.startedAt).Seconds(),
@@ -385,6 +397,15 @@ func (r *StepRecorder) Feed(d StepDelta) {
 		}
 
 	case StepDeltaResult:
+		// Commit pending into accumulated-across-turns totals, then reset pending.
+		r.committedInput += r.pendingInput
+		r.committedOutput += r.pendingOutput
+		r.committedCacheRead += r.pendingCacheRead
+		r.committedCacheCreate += r.pendingCacheCreate
+		r.pendingInput = 0
+		r.pendingOutput = 0
+		r.pendingCacheRead = 0
+		r.pendingCacheCreate = 0
 		r.drainAllLocked()
 	}
 }

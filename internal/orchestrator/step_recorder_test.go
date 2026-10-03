@@ -853,3 +853,79 @@ func titlesOf(steps []RunStep) []string {
 	return out
 }
 
+// TestStepRecorder_UsageMonotonicAcrossTurns verifies two bugs fixed in STA-526:
+//  1. Multiple intermediate DeltaUsage events per turn update SpentUSD (not just the result event).
+//  2. SpentUSD never decreases across turns, even when turn 2 has large cheap cache reads that
+//     would produce a lower cost than turn 1 when computed standalone.
+func TestStepRecorder_UsageMonotonicAcrossTurns(t *testing.T) {
+	var mu sync.Mutex
+	var stats []RunStats
+	pub := func(eventType string, data any) {
+		if eventType == "run.stats" {
+			if rs, ok := data.(RunStats); ok {
+				mu.Lock()
+				stats = append(stats, rs)
+				mu.Unlock()
+			}
+		}
+	}
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+
+	// Turn 1: two intermediate events with the same values (same API call, deduplicated by MAX).
+	// Then result event has authoritative totals (higher output due to thinking tokens).
+	turn1Intermediate := &StepUsage{Model: "claude-sonnet-5-5", InputTokens: 10, OutputTokens: 4, CacheCreationTokens: 21093, CacheReadTokens: 17820}
+	turn1Result := &StepUsage{Model: "claude-sonnet-5-5", InputTokens: 18, OutputTokens: 355, CacheCreationTokens: 23169, CacheReadTokens: 56733}
+
+	r.Feed(StepDelta{Kind: StepDeltaUsage, Usage: turn1Intermediate})
+	r.Feed(StepDelta{Kind: StepDeltaUsage, Usage: turn1Intermediate}) // duplicate, same API call
+	r.Feed(StepDelta{Kind: StepDeltaUsage, Usage: turn1Result})        // result event, authoritative
+
+	mu.Lock()
+	if len(stats) == 0 {
+		t.Fatal("expected at least one run.stats from intermediate usage events (Bug 1: stats bar never updated)")
+	}
+	afterTurn1 := stats[len(stats)-1]
+	mu.Unlock()
+
+	if afterTurn1.SpentUSD <= 0 {
+		t.Fatalf("turn1 SpentUSD = %v, want > 0", afterTurn1.SpentUSD)
+	}
+
+	// Commit turn 1 via DeltaResult.
+	r.Feed(StepDelta{Kind: StepDeltaResult})
+
+	// Turn 2: large cache_read (cheap) for the prompt context; this would produce a
+	// *lower* standalone cost than turn 1 if the old MAX logic were used cross-turn.
+	turn2Intermediate := &StepUsage{Model: "claude-sonnet-5-5", InputTokens: 8, OutputTokens: 2, CacheCreationTokens: 2076, CacheReadTokens: 38913}
+	turn2Result := &StepUsage{Model: "claude-sonnet-5-5", InputTokens: 8, OutputTokens: 39, CacheCreationTokens: 2076, CacheReadTokens: 38913}
+
+	mu.Lock()
+	statsBeforeTurn2 := len(stats)
+	mu.Unlock()
+
+	r.Feed(StepDelta{Kind: StepDeltaUsage, Usage: turn2Intermediate})
+	r.Feed(StepDelta{Kind: StepDeltaUsage, Usage: turn2Result})
+	r.Feed(StepDelta{Kind: StepDeltaResult})
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(stats) <= statsBeforeTurn2 {
+		t.Fatal("no run.stats published during turn 2")
+	}
+
+	// Verify monotonically non-decreasing SpentUSD across all events.
+	for i := 1; i < len(stats); i++ {
+		if stats[i].SpentUSD < stats[i-1].SpentUSD {
+			t.Errorf("SpentUSD decreased: stats[%d]=%.6f > stats[%d]=%.6f (Bug 2: cost dropped across turns)",
+				i-1, stats[i-1].SpentUSD, i, stats[i].SpentUSD)
+		}
+	}
+
+	// Final value must exceed turn-1-only cost (accumulated, not replaced).
+	finalSpent := stats[len(stats)-1].SpentUSD
+	if finalSpent <= afterTurn1.SpentUSD {
+		t.Errorf("final SpentUSD %v <= turn1 SpentUSD %v; turn 2 tokens not accumulated", finalSpent, afterTurn1.SpentUSD)
+	}
+}
+
