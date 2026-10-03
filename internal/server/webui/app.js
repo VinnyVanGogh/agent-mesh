@@ -7439,18 +7439,22 @@ async function renderShipReviewCard(container, taskId) {
     section.appendChild(filesSection);
   }
 
-  // Check runs
+  // Check runs (agent-reported; not independently verified by the server)
   if (card.check_runs && card.check_runs.length > 0) {
     const checksSection = el('div', 'ship-review-checks-section');
-    checksSection.appendChild(el('div', 'ship-review-section-title', 'Check runs'));
+    const checksTitle = el('div', 'ship-review-section-title', 'Check runs');
+    const unverifiedBadge = el('span', 'ship-review-unverified-badge', 'agent-reported');
+    checksTitle.appendChild(unverifiedBadge);
+    checksSection.appendChild(checksTitle);
     for (const run of card.check_runs) {
-      const row = el('div', `ship-review-check-row ${run.exit_code === 0 ? 'check-pass' : 'check-fail'}`);
-      const statusIcon = el('span', 'ship-review-check-icon', run.exit_code === 0 ? '✓' : '✕');
+      const exitCode = typeof run.exit_code === 'number' ? run.exit_code : -1;
+      const row = el('div', 'ship-review-check-row');
+      const exitLabel = el('code', 'ship-review-check-exit', `exit ${exitCode}`);
       const cmdEl = el('code', 'ship-review-check-cmd', run.command || '');
-      row.appendChild(statusIcon);
+      row.appendChild(exitLabel);
       row.appendChild(cmdEl);
       if (run.output_tail) {
-        const out = el('pre', 'ship-review-check-output', run.output_tail);
+        const out = el('pre', 'ship-review-check-output', run.output_tail.slice(0, 2000));
         row.appendChild(out);
       }
       checksSection.appendChild(row);

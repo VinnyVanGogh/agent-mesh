@@ -693,18 +693,17 @@ func (s *Server) handleShipReview(ctx context.Context, rawArgs json.RawMessage) 
 		branch = task.GitBranch
 	}
 
-	workDir := s.getWorkDir()
-	if workDir == "" {
-		workDir = task.RepoPath
+	// Resolve workDir from the task's own worktree/RepoPath, not from MCP server cwd,
+	// so we always diff and resolve HEAD against the correct repository.
+	workDir := task.RepoPath
+	wt := task.RepoPath + "/.worktrees/" + task.ID
+	if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
+		workDir = wt
 	}
 
 	headSHA, err := shipreview.CurrentBranchHEAD(ctx, workDir, branch)
 	if err != nil {
-		headSHA, err = shipreview.CurrentBranchHEAD(ctx, task.RepoPath, branch)
-		if err != nil {
-			return toolError(fmt.Sprintf("cannot resolve branch HEAD for %q: %v", branch, err))
-		}
-		workDir = task.RepoPath
+		return toolError(fmt.Sprintf("cannot resolve branch HEAD for %q: %v", branch, err))
 	}
 
 	card, err := shipreview.CreateCard(dbConn, taskID, branch, headSHA, testSteps, args.DevURL, workDir, checkRuns)

@@ -226,7 +226,25 @@ func (ic *Interceptor) checkShipReviewCard(_ context.Context, taskID, wtPath, _ 
 		return "No Ship Review card found. Use the `staypoint_ship_review` MCP tool (or `staypoint ship-review create`) to create one with a numbered test list before marking done.", nil
 	}
 	if card.Status != shipreview.StatusPending && card.Status != shipreview.StatusSentBack {
-		return fmt.Sprintf("Ship Review card is in status %q (not pending). Create a new card with `staypoint_ship_review` after addressing any Board feedback.", card.Status), nil
+		return fmt.Sprintf("Ship Review card is in status %q. Create a fresh card with `staypoint_ship_review` after addressing any Board feedback.", card.Status), nil
+	}
+
+	// Verify the pinned SHA still matches the current branch HEAD to prevent
+	// a stale card from silently satisfying the gate after further commits.
+	if wtPath != "" {
+		if _, err := os.Stat(wtPath); err == nil {
+			ctx2, cancel2 := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel2()
+			cmd := exec.CommandContext(ctx2, "git", "rev-parse", "HEAD")
+			cmd.Dir = wtPath
+			cmd.Env = security.ChildEnv()
+			if out, err := cmd.Output(); err == nil {
+				currentHEAD := strings.TrimSpace(string(out))
+				if currentHEAD != "" && currentHEAD != card.HeadSHA {
+					return "Ship Review card SHA does not match current branch HEAD. Re-create the card with `staypoint_ship_review` to pin the latest commit.", nil
+				}
+			}
+		}
 	}
 	return "", nil
 }
