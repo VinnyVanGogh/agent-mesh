@@ -46,6 +46,10 @@ func TestClassifyTiers(t *testing.T) {
 		{"gh api repos/owner/repo/pulls/1/merge", Red}, {"gh api repos/owner/repo/merges", Red},
 		{"gh api -X POST repos/owner/repo/pulls/1/merge", Red},
 		{"gh api --method POST repos/owner/repo/statuses", Red},
+		{"gh api -XPOST repos/owner/repo/statuses", Red},
+		{"gh api --method=POST repos/owner/repo/statuses", Red},
+		{"gh api -f title=x repos/owner/repo/issues", Red},
+		{"gh api --field title=x repos/owner/repo/issues", Red},
 		{"sh -c 'git push origin main'", Red}, {"bash -c 'gh pr merge --squash'", Red},
 		{"sudo make install", Red}, {"dd if=/dev/zero of=/dev/disk2", Red}, {"mkfs.ext4 /dev/sda1", Red},
 		// red: sensitive paths

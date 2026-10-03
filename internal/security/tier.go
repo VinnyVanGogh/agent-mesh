@@ -451,29 +451,45 @@ func (c *Classifier) classifyGh(args []string, v *Verdict) {
 	rest := args[i+1:]
 	switch sub {
 	case "pr":
-		// skip flags before the pr sub-subcommand
+		// Fail closed: any positional "merge" token under gh pr is a merge action.
 		for _, a := range rest {
-			if !strings.HasPrefix(a, "-") {
-				if a == "merge" {
-					v.raise(Red, "gh pr merge lands on the default branch; Board approval required")
-					return
-				}
-				break
+			if !strings.HasPrefix(a, "-") && a == "merge" {
+				v.raise(Red, "gh pr merge lands on the default branch; Board approval required")
+				return
 			}
 		}
 		v.raise(Yellow, "")
 	case "api":
 		for j, a := range rest {
-			// Mutating method flag: -X POST / --method POST
-			if (a == "-X" || a == "--method") && j+1 < len(rest) {
+			lower := strings.ToLower(a)
+			// -XPOST / --method=POST / -X POST / --method POST (mutating methods)
+			switch {
+			case (a == "-X" || a == "--method") && j+1 < len(rest):
 				switch strings.ToUpper(rest[j+1]) {
 				case "POST", "PUT", "PATCH", "DELETE":
 					v.raise(Red, "gh api mutating method; Board approval required")
 					return
 				}
+			case strings.HasPrefix(lower, "-x") && len(a) > 2:
+				switch strings.ToUpper(a[2:]) {
+				case "POST", "PUT", "PATCH", "DELETE":
+					v.raise(Red, "gh api mutating method; Board approval required")
+					return
+				}
+			case strings.HasPrefix(lower, "--method="):
+				switch strings.ToUpper(a[9:]) {
+				case "POST", "PUT", "PATCH", "DELETE":
+					v.raise(Red, "gh api mutating method; Board approval required")
+					return
+				}
+			// -f/-F/--field/--raw-field/--input imply a POST body
+			case a == "-f" || a == "-F" || strings.HasPrefix(lower, "--field") ||
+				strings.HasPrefix(lower, "--raw-field") || lower == "--input":
+				v.raise(Red, "gh api submits data; Board approval required")
+				return
 			}
 			// Merge endpoint by URL
-			if !strings.HasPrefix(a, "-") && strings.Contains(strings.ToLower(a), "/merge") {
+			if !strings.HasPrefix(a, "-") && strings.Contains(lower, "/merge") {
 				v.raise(Red, "gh api targets a merge endpoint; Board approval required")
 				return
 			}
