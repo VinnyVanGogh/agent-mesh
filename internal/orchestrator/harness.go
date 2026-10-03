@@ -407,6 +407,10 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	var consecutiveAdapterErrors int
 	var lastTurnWasAdapterError bool
 
+	// lastTurnOutput preserves the raw stream-json bytes from the final adapter
+	// turn so extractFinalResponse can find the agent's last assistant message.
+	var lastTurnOutput []byte
+
 	for turn := 0; turn < maxTurns; turn++ {
 		if ctx.Err() != nil {
 			result.Disposition = "capped"
@@ -508,6 +512,12 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		// One harness turn = one adapter invocation. spent_turns counts these,
 		// not provider-internal tool-use rounds (STA-466).
 		result.Turns++
+
+		// Preserve this turn's raw output for the run-summary comment posted at end of run.
+		if n := outBuf.Len(); n > 0 {
+			lastTurnOutput = make([]byte, n)
+			copy(lastTurnOutput, outBuf.Bytes())
+		}
 
 		// Prefer text-only detection when the stream parser is active; fall back
 		// to raw-byte scan only when no parser is wired (dry-run/test mode).
@@ -655,6 +665,27 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		}
 	}
 
+	// Post the agent's final response + run-summary footer so it appears in the
+	// task chat thread — visible to the board without digging into think rows.
+	// Author 'agent-summary' is excluded from fetchUserComments so this comment
+	// is never re-injected into the agent's prompt as user input.
+	{
+		agentText := extractFinalResponse(lastTurnOutput)
+		footer := buildRunFooter(result, wtPath)
+		var summaryBody string
+		if agentText != "" {
+			summaryBody = agentText + "\n\n" + footer
+		} else {
+			summaryBody = footer
+		}
+		if _, err := h.DB.ExecContext(cleanCtx,
+			`INSERT INTO task_comments (task_id, author, message) VALUES (?, 'agent-summary', ?)`,
+			taskID, summaryBody,
+		); err != nil {
+			runLog.Warn("post run summary comment failed", slog.Any("error", err))
+		}
+	}
+
 	if _, err := h.DB.ExecContext(cleanCtx,
 		`UPDATE tasks SET spent_turns=spent_turns+?, spent_usd=spent_usd+?, updated_at=? WHERE id=?`,
 		result.Turns, result.SpentUSD, now, taskID,
@@ -708,11 +739,13 @@ func fetchTaskBrief(ctx context.Context, db *sql.DB, taskID string) taskBrief {
 	return b
 }
 
-// fetchUserComments returns non-harness comments for taskID with id > afterID, ordered ascending.
+// fetchUserComments returns board/user comments for taskID with id > afterID, ordered ascending.
+// Comments authored by 'harness' or 'agent-summary' are excluded: they are harness-internal
+// messages that must not be re-injected into the agent's prompt as user input.
 func fetchUserComments(ctx context.Context, db *sql.DB, taskID string, afterID int64) []harnessComment {
 	rows, err := db.QueryContext(ctx,
 		`SELECT id, author, message FROM task_comments
-		 WHERE task_id = ? AND author != 'harness' AND id > ?
+		 WHERE task_id = ? AND author NOT IN ('harness', 'agent-summary') AND id > ?
 		 ORDER BY id ASC`, taskID, afterID,
 	)
 	if err != nil {
