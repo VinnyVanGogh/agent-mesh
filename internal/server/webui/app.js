@@ -6871,55 +6871,9 @@ async function runControlAction(taskId, action, text) {
 }
 
 // ── Timeline stats helpers ─────────────────────────────────
-
-// Group all steps by run_id, returning arrays in order of first appearance.
-function groupStepsByRun(allSteps) {
-  const runs = new Map();
-  const order = [];
-  for (const s of allSteps) {
-    const rid = s.run_id || '';
-    if (!runs.has(rid)) { runs.set(rid, []); order.push(rid); }
-    runs.get(rid).push(s);
-  }
-  return order.map(rid => runs.get(rid));
-}
-
-// A run is "real" when it has at least one step beyond the overhead trio
-// (wake / route / state). Refused runs (lock held) only ever write those three.
-function isRealRunGroup(steps) {
-  return steps.some(s => s.kind !== 'wake' && s.kind !== 'route' && s.kind !== 'state');
-}
-
-// Return the steps of the most recently started run (the last run_id group),
-// regardless of whether it qualifies as a "real" run. Used for the stuck-age
-// check so a fresh run whose only steps are wake/route does not inherit the
-// previous run's stale last-step timestamp.
-function latestRunSteps(allSteps) {
-  if (!allSteps || !allSteps.length) return [];
-  const groups = groupStepsByRun(allSteps);
-  return groups[groups.length - 1] || [];
-}
-
-// Return the steps of the current or most-recent real run.
-// Falls back to the last run group when no real run exists.
-function currentRunSteps(allSteps) {
-  if (!allSteps || !allSteps.length) return [];
-  const groups = groupStepsByRun(allSteps);
-  for (let i = groups.length - 1; i >= 0; i--) {
-    if (isRealRunGroup(groups[i])) return groups[i];
-  }
-  return groups[groups.length - 1] || [];
-}
-
-// Elapsed for a run's own steps: from the first step to the last state step
-// (if the run ended) or to nowMs (if still running).
-function runElapsedMs(runSteps, nowMs) {
-  if (!runSteps.length) return null;
-  const startMs = new Date(runSteps[0].created_at).getTime();
-  const stateStep = [...runSteps].reverse().find(s => s.kind === 'state');
-  if (stateStep) return new Date(stateStep.created_at).getTime() - startMs;
-  return nowMs - startMs;
-}
+// groupStepsByRun, isRealRunGroup, latestRunSteps, currentRunSteps,
+// runElapsedMs, and isStuck live in lib/runsteps.js (loaded before this
+// script) so unit tests can import them without a DOM or a build step.
 
 // Refresh the stats bar for the given task, using only current-run steps.
 function refreshTaskStatsBar(taskId) {
@@ -6929,11 +6883,9 @@ function refreshTaskStatsBar(taskId) {
   const allSteps = task.runSteps || [];
   const runSteps = currentRunSteps(allSteps);
   const elapsedMs = runElapsedMs(runSteps, Date.now());
-  const latestSteps = latestRunSteps(allSteps);
-  const lastStepAt = latestSteps.length ? new Date(latestSteps[latestSteps.length - 1].created_at).getTime() : null;
-  const isStuck = lastStepAt !== null && (Date.now() - lastStepAt) > 5 * 60 * 1000 && task.status !== 'done';
+  const stuck = isStuck(allSteps, Date.now(), task.status);
   statsBar.innerHTML = '';
-  statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, isStuck));
+  statsBar.appendChild(buildTimelineStats(task, runSteps, elapsedMs, stuck));
 }
 
 // Start a 1-second ticker that updates the open task's Elapsed stat while running.
@@ -7514,10 +7466,8 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
   {
     const curSteps = currentRunSteps(runSteps);
     const elapsedMs = runElapsedMs(curSteps, Date.now());
-    const latestSteps = latestRunSteps(runSteps);
-    const lastAt = latestSteps.length ? new Date(latestSteps[latestSteps.length - 1].created_at).getTime() : null;
-    const isStuck = lastAt !== null && (Date.now() - lastAt) > 5 * 60 * 1000 && task.status !== 'done';
-    statsBar.appendChild(buildTimelineStats(task, curSteps, elapsedMs, isStuck));
+    const stuck = isStuck(runSteps, Date.now(), task.status);
+    statsBar.appendChild(buildTimelineStats(task, curSteps, elapsedMs, stuck));
   }
   timelineSection.appendChild(statsBar);
 

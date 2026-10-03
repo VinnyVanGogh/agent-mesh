@@ -1,4 +1,4 @@
-import { test, expect, knownBug } from '../fixtures';
+import { test, expect } from '../fixtures';
 
 test.describe('task list', () => {
   test('loads and shows a task seeded over the API', async ({ page, api }) => {
@@ -10,7 +10,6 @@ test.describe('task list', () => {
   });
 
   test('task created over the API appears without a reload (live SSE)', async ({ page, api }) => {
-    knownBug('STA-377');
     await page.goto('/task-status');
     await expect(page.locator('#conn-badge')).toHaveText('live');
     const task = await api.createTask('List live');
