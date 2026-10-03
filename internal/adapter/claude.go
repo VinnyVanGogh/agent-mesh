@@ -41,6 +41,8 @@ type claudeContent struct {
 	Input     json.RawMessage `json:"input"`
 	ToolUseID string          `json:"tool_use_id"`
 	IsError   bool            `json:"is_error"`
+	// Content holds tool_result output: either a JSON string or array of text blocks.
+	Content json.RawMessage `json:"content"`
 }
 
 type claudeEvent struct {
@@ -96,6 +98,7 @@ func (ClaudeAdapter) ParseStreamDelta(line []byte) ([]StreamDelta, error) {
 				}
 			case "tool_result":
 				d.Kind, d.ToolID, d.IsError = DeltaToolResult, b.ToolUseID, b.IsError
+				d.Text = extractToolResultText(b.Content)
 			default:
 				d.Kind, d.Raw = DeltaOther, ev.Type+":"+b.Type
 			}
@@ -124,6 +127,37 @@ func (ClaudeAdapter) ParseStreamDelta(line []byte) ([]StreamDelta, error) {
 	}
 
 	return []StreamDelta{{Kind: DeltaOther, SessionID: ev.SessionID, Raw: ev.Type}}, nil
+}
+
+// extractToolResultText extracts the plain text from a tool_result content field,
+// which may be a JSON string or an array of {"type":"text","text":"..."} blocks.
+func extractToolResultText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	// Try string first.
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	// Try array of content blocks.
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			if sb.Len() > 0 {
+				sb.WriteByte('\n')
+			}
+			sb.WriteString(b.Text)
+		}
+	}
+	return sb.String()
 }
 
 func buildClaudeArgs(opts ParsedOptions) []string {

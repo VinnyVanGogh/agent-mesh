@@ -250,6 +250,7 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	// (ErrConcurrencyCap before this point) never write any timeline steps.
 	sr := cfg.StepRecorder
 	if sr != nil {
+		sr.SetWorktreeRoot(wtPath)
 		wakeReason := cfg.WakeReason
 		if wakeReason == "" {
 			wakeReason = "run started"
