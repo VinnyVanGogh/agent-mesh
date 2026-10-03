@@ -129,9 +129,7 @@ export function simulateRunSteps(taskId: string): number {
  * cue to delete the entry. STAYPOINT_UI_STRICT=1 ignores this list.
  */
 export const KNOWN_BUGS = {
-  'STA-377': 'Daemon sends named SSE events (event: task_created / run.step) but app.js only listens on onmessage, so the UI never live-updates',
   'STA-378': 'StepRecorder inserts run_steps.status and expects an integer id, but the run_steps table has no status column and a TEXT id: every step insert fails',
-  'STA-379': 'With the daemon down, opening a task renders the copy cached at page load with no error or staleness notice (openTaskPage falls back to state.tasks)',
 } as const;
 
 export type KnownBug = keyof typeof KNOWN_BUGS;

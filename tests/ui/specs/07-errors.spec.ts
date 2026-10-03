@@ -1,4 +1,4 @@
-import { test, expect, knownBug } from '../fixtures';
+import { test, expect } from '../fixtures';
 
 test('an unknown task id shows an error, not a blank page', async ({ page }) => {
   await page.goto('/tasks/STA/ui-e2e/task-doesnotexist');
@@ -35,9 +35,6 @@ test('the UI shows an error when the daemon goes down', async ({ page, request }
   await expect(page.locator('#conn-badge')).toHaveText(/reconnecting|offline|error/i, { timeout: 15_000 });
   await expect(page.locator('#conn-badge')).toHaveClass(/badge-error/);
 
-  // Opening a task needs the API, which is gone. Showing the copy cached at
-  // page load, with no sign it may be stale, is the bug this half covers.
-  knownBug('STA-379');
   // Navigating inside the already-loaded app needs the API, which is gone.
   await page.evaluate(path => {
     history.pushState({}, '', path);
