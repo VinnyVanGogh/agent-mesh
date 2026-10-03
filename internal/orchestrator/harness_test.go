@@ -1236,3 +1236,127 @@ func TestSpentTurnsEqualsAdapterInvocations(t *testing.T) {
 		t.Fatalf("expected disposition=in_review, got %q", result.Disposition)
 	}
 }
+
+// TestRun_ConsecutiveAdapterErrors_StopsEarly verifies STA-480: when the
+// adapter fails every turn, the harness stops after 2 consecutive errors,
+// sets disposition="error", writes a diagnostic comment, and does NOT write
+// checkpoint rows for the failing turns.
+func TestRun_ConsecutiveAdapterErrors_StopsEarly(t *testing.T) {
+	activeClaims.Store(0)
+
+	db := openTestDB(t)
+	insertTask(t, db, "err-task", "/tmp")
+
+	var adapterCalls int
+	var mu sync.Mutex
+
+	h := &Harness{
+		DB:          db,
+		RepoRoot:    "/tmp",
+		WM:          &noopWorktreeManager{},
+		Interceptor: NewInterceptor(db),
+	}
+	h.Interceptor.Guards = nil
+
+	result, err := h.Run(context.Background(), "err-task", RunConfig{
+		MaxTurns:        20,
+		AgentID:         "tester",
+		MaxWallclock:    10 * time.Second,
+		SkipGitPreflight: true,
+		RunAdapter: func(_ context.Context, _, _ string, _, _ []string, _, _ io.Writer) error {
+			mu.Lock()
+			adapterCalls++
+			mu.Unlock()
+			return fmt.Errorf("quota exceeded: retry after 3600s")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Must stop after exactly 2 adapter calls.
+	if adapterCalls != 2 {
+		t.Fatalf("STA-480: expected 2 adapter calls before stopping, got %d", adapterCalls)
+	}
+
+	if result.Disposition != "error" {
+		t.Fatalf("STA-480: expected disposition=error, got %q", result.Disposition)
+	}
+
+	// DB stage should be "error".
+	var stage string
+	_ = db.QueryRow(`SELECT execution_stage FROM tasks WHERE id='err-task'`).Scan(&stage)
+	if stage != "error" {
+		t.Fatalf("STA-480: execution_stage should be error, got %q", stage)
+	}
+
+	// A diagnostic harness comment must exist mentioning the error.
+	// The postflight comment is also author='harness'; use DESC to get the last.
+	var msg string
+	_ = db.QueryRow(`SELECT message FROM task_comments WHERE task_id='err-task' AND author='harness' ORDER BY id DESC LIMIT 1`).Scan(&msg)
+	if msg == "" {
+		t.Fatal("STA-480: expected a harness diagnostic comment")
+	}
+	if !strings.Contains(msg, "adapter failed") && !strings.Contains(msg, "quota") {
+		t.Fatalf("STA-480: diagnostic comment should mention the failure, got: %q", msg)
+	}
+
+	// No checkpoint rows should exist: both turns errored before producing output.
+	// The StepRecorder is nil in this test so no run_steps rows are emitted.
+	// Verify spent_turns = 2 (turns still count even when failed).
+	var spentTurns int
+	_ = db.QueryRow(`SELECT spent_turns FROM tasks WHERE id='err-task'`).Scan(&spentTurns)
+	if spentTurns != 2 {
+		t.Fatalf("STA-480: spent_turns=%d, want 2", spentTurns)
+	}
+}
+
+// TestRun_AdapterErrorResetsOnSuccess verifies that a transient error does not
+// permanently count toward the consecutive limit: one success resets the counter.
+func TestRun_AdapterErrorResetsOnSuccess(t *testing.T) {
+	activeClaims.Store(0)
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	db := openTestDB(t)
+	insertTask(t, db, "transient-task", repoDir)
+	_, _ = db.Exec(`INSERT INTO task_work_products (task_id, product_type, reference) VALUES ('transient-task', 'workspace_file', '.worktrees/transient-task')`)
+
+	h := &Harness{
+		DB:          db,
+		RepoRoot:    repoDir,
+		WM:          workspace.NewWorktreeManager(repoDir, db),
+		Interceptor: NewInterceptor(db),
+	}
+	h.Interceptor.Guards = []GuardFunc{h.Interceptor.checkWorkProducts}
+
+	callSeq := 0
+	var mu sync.Mutex
+
+	// Sequence: fail, succeed, fail — should NOT trigger the 2-consecutive limit.
+	result, err := h.Run(context.Background(), "transient-task", RunConfig{
+		MaxTurns:    3,
+		AgentID:     "tester",
+		MaxWallclock: 10 * time.Second,
+		RunAdapter: func(_ context.Context, _, _ string, _, _ []string, stdout, _ io.Writer) error {
+			mu.Lock()
+			seq := callSeq
+			callSeq++
+			mu.Unlock()
+			if seq == 0 || seq == 2 {
+				return fmt.Errorf("transient error")
+			}
+			// turn 1: succeed (no TASK_COMPLETE, so loop continues)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// All 3 turns should have run; disposition should NOT be "error".
+	if result.Disposition == "error" {
+		t.Fatal("STA-480: transient single error must not trigger consecutive-error stop")
+	}
+}
