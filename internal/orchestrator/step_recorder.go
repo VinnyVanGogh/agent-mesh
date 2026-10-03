@@ -105,14 +105,15 @@ type StepRecorder struct {
 
 	mu           sync.Mutex
 	seq          int
-	pending      *openStep // step being assembled
-	worktreeRoot string    // set by harness after worktree creation; relativizes file paths
+	pending      *openStep            // non-tool step being assembled (think, text)
+	pendingTools map[string]*openStep // parallel tool steps keyed by tool_use_id
+	worktreeRoot string               // set by harness after worktree creation; relativizes file paths
 
 	// cumulative token accounting for live stats bar
-	model           string
-	cumulInput      int64
-	cumulOutput     int64
-	cumulCacheRead  int64
+	model            string
+	cumulInput       int64
+	cumulOutput      int64
+	cumulCacheRead   int64
 	cumulCacheCreate int64
 }
 
@@ -150,7 +151,7 @@ func (r *StepRecorder) SetWorktreeRoot(path string) {
 func (r *StepRecorder) EmitWake(reason string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.closeCurrentLocked()
+	r.drainAllLocked()
 	r.seq++
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	step := RunStep{
@@ -174,7 +175,7 @@ func (r *StepRecorder) EmitWake(reason string) {
 func (r *StepRecorder) EmitRoute(title, body string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.closeCurrentLocked()
+	r.drainAllLocked()
 	r.seq++
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	step := RunStep{
@@ -196,7 +197,7 @@ func (r *StepRecorder) EmitRoute(title, body string) {
 func (r *StepRecorder) EmitCheckpoint(sha, msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.closeCurrentLocked()
+	r.drainAllLocked()
 	r.seq++
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	step := RunStep{
@@ -232,7 +233,7 @@ func (r *StepRecorder) EmitRunState(disposition string) {
 func (r *StepRecorder) EmitState(disposition string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.closeCurrentLocked()
+	r.drainAllLocked()
 	r.seq++
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	elapsed := time.Since(r.startedAt).Seconds()
@@ -266,9 +267,11 @@ func (r *StepRecorder) Feed(d StepDelta) {
 		r.openOrReuseThinkLocked(d)
 
 	case StepDeltaToolUse:
+		// Close only the non-tool pending (e.g. a think step); do not disturb
+		// other in-flight tool steps so parallel tool_use blocks each get their own row.
 		r.closeCurrentLocked()
 		r.seq++
-		r.pending = &openStep{
+		p := &openStep{
 			seq:       r.seq,
 			kind:      toolUseKind(d.ToolName),
 			title:     extractToolTitle(d.ToolName, d.ToolInput, r.worktreeRoot),
@@ -276,12 +279,42 @@ func (r *StepRecorder) Feed(d StepDelta) {
 			toolID:    d.ToolID,
 		}
 		if d.ToolInput != "" {
-			r.pending.body.WriteString(d.ToolInput)
+			p.body.WriteString(d.ToolInput)
+		}
+		if d.ToolID != "" {
+			if r.pendingTools == nil {
+				r.pendingTools = make(map[string]*openStep)
+			}
+			r.pendingTools[d.ToolID] = p
+		} else {
+			// No ID: fall back to single-pending slot (legacy / non-parallel path).
+			r.pending = p
 		}
 
 	case StepDeltaToolResult:
+		// Fast path: match by tool_use_id in the parallel map.
+		if d.ToolID != "" {
+			if p, ok := r.pendingTools[d.ToolID]; ok {
+				p.body.Reset()
+				if d.Text != "" {
+					out := d.Text
+					const maxBody = 2000
+					if len(out) > maxBody {
+						out = out[:maxBody] + "\n…(truncated)"
+					}
+					p.body.WriteString(out)
+				}
+				status := "done"
+				if d.IsError {
+					status = "error"
+				}
+				r.closeToolStepLocked(p, status)
+				delete(r.pendingTools, d.ToolID)
+				return
+			}
+		}
+		// Fallback: legacy single-pending slot (empty tool ID or pre-map code path).
 		if r.pending != nil && (r.pending.toolID == d.ToolID || d.ToolID == "") {
-			// Replace tool-input JSON body with the actual tool output.
 			r.pending.body.Reset()
 			if d.Text != "" {
 				out := d.Text
@@ -335,7 +368,7 @@ func (r *StepRecorder) Feed(d StepDelta) {
 		}
 
 	case StepDeltaResult:
-		r.closeCurrentLocked()
+		r.drainAllLocked()
 	}
 }
 
@@ -356,11 +389,11 @@ func (r *StepRecorder) FeedRawLine(line []byte, parse func([]byte) ([]StepDelta,
 	}
 }
 
-// Close flushes any pending open step as "done".
+// Close flushes all pending open steps as "done".
 func (r *StepRecorder) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.closeCurrentLocked()
+	r.drainAllLocked()
 }
 
 // --- locked helpers (must be called with r.mu held) ---
@@ -422,6 +455,43 @@ func (r *StepRecorder) closePendingWithStatusLocked(p *openStep, status string) 
 
 func (r *StepRecorder) closeCurrentLocked() {
 	r.closePendingWithStatusLocked(r.pending, "done")
+}
+
+// closeToolStepLocked closes a single parallel tool step without touching r.pending or the map.
+// The caller must remove the entry from r.pendingTools after calling this.
+func (r *StepRecorder) closeToolStepLocked(p *openStep, status string) {
+	if p == nil {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	step := RunStep{
+		RunID:     r.runID,
+		TaskID:    r.taskID,
+		Seq:       p.seq,
+		Kind:      p.kind,
+		Title:     p.title,
+		Body:      p.body.String(),
+		Status:    status,
+		StartedAt: p.startedAt.Format(time.RFC3339Nano),
+		EndedAt:   &now,
+	}
+	r.persist(step)
+	r.publish("run.step", step)
+}
+
+// closeAllPendingToolsLocked drains every in-flight parallel tool step as "done".
+func (r *StepRecorder) closeAllPendingToolsLocked() {
+	for id, p := range r.pendingTools {
+		r.closeToolStepLocked(p, "done")
+		delete(r.pendingTools, id)
+	}
+}
+
+// drainAllLocked closes r.pending and all parallel tool steps.
+// Use at run boundaries (EmitWake, EmitState, Close, StepDeltaResult).
+func (r *StepRecorder) drainAllLocked() {
+	r.closeCurrentLocked()
+	r.closeAllPendingToolsLocked()
 }
 
 func (r *StepRecorder) persist(step RunStep) {

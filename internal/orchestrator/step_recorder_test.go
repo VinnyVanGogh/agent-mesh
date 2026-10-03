@@ -584,3 +584,200 @@ func TestStepRecorder_RouteStartedAtIsOwnTime(t *testing.T) {
 	}
 }
 
+// collectSteps returns a PublishFunc and a pointer to the slice of RunStep events.
+func collectSteps(t *testing.T) (PublishFunc, *[]RunStep) {
+	t.Helper()
+	var mu sync.Mutex
+	var steps []RunStep
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				steps = append(steps, s)
+				mu.Unlock()
+			}
+		}
+	}
+	return pub, &steps
+}
+
+// TestStepRecorder_ParallelToolCallsInOrder sends two tool_use blocks followed by
+// their tool_results in the same order and verifies each step gets its own real output.
+func TestStepRecorder_ParallelToolCallsInOrder(t *testing.T) {
+	pub, steps := collectSteps(t)
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+
+	// Two parallel tool_use blocks (as Claude sends them in one assistant message).
+	r.Feed(StepDelta{Kind: StepDeltaToolUse, ToolName: "Bash", ToolID: "t1",
+		ToolInput: `{"command":"echo hello","description":"print hello"}`})
+	r.Feed(StepDelta{Kind: StepDeltaToolUse, ToolName: "Bash", ToolID: "t2",
+		ToolInput: `{"command":"sleep 20","description":"long sleep"}`})
+
+	// Results arrive in the same order.
+	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "t1", Text: "hello\n"})
+	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "t2", Text: "slept-again\n"})
+	r.Close()
+
+	mu := sync.Mutex{}
+	_ = mu
+	got := *steps
+	if len(got) != 2 {
+		t.Fatalf("expected 2 run.step events, got %d: %+v", len(got), got)
+	}
+
+	byID := map[string]RunStep{}
+	for _, s := range got {
+		byID[s.Title] = s
+	}
+
+	s1 := got[0]
+	if s1.Body != "hello\n" {
+		t.Errorf("step 1 body = %q, want %q", s1.Body, "hello\n")
+	}
+	if s1.Status != "done" {
+		t.Errorf("step 1 status = %q, want done", s1.Status)
+	}
+
+	s2 := got[1]
+	if s2.Body != "slept-again\n" {
+		t.Errorf("step 2 body = %q, want %q", s2.Body, "slept-again\n")
+	}
+	if s2.Status != "done" {
+		t.Errorf("step 2 status = %q, want done", s2.Status)
+	}
+}
+
+// TestStepRecorder_ParallelToolCallsReverseOrder sends results in reverse order
+// (second result arrives before first) and verifies correct matching by ID.
+func TestStepRecorder_ParallelToolCallsReverseOrder(t *testing.T) {
+	pub, steps := collectSteps(t)
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+
+	r.Feed(StepDelta{Kind: StepDeltaToolUse, ToolName: "Read", ToolID: "ta",
+		ToolInput: `{"file_path":"a.txt"}`})
+	r.Feed(StepDelta{Kind: StepDeltaToolUse, ToolName: "Read", ToolID: "tb",
+		ToolInput: `{"file_path":"b.txt"}`})
+
+	// Results arrive in reverse order.
+	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "tb", Text: "content-b"})
+	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "ta", Text: "content-a"})
+	r.Close()
+
+	got := *steps
+	if len(got) != 2 {
+		t.Fatalf("expected 2 run.step events, got %d: %+v", len(got), got)
+	}
+
+	byTitle := map[string]RunStep{}
+	for _, s := range got {
+		byTitle[s.Title] = s
+	}
+
+	if sa, ok := byTitle["Read a.txt"]; ok {
+		if sa.Body != "content-a" {
+			t.Errorf("step a body = %q, want content-a", sa.Body)
+		}
+	} else {
+		t.Errorf("no step with title %q; titles: %v", "Read a.txt", titlesOf(got))
+	}
+
+	if sb, ok := byTitle["Read b.txt"]; ok {
+		if sb.Body != "content-b" {
+			t.Errorf("step b body = %q, want content-b", sb.Body)
+		}
+	} else {
+		t.Errorf("no step with title %q; titles: %v", "Read b.txt", titlesOf(got))
+	}
+}
+
+// TestStepRecorder_ParallelToolCallDuration verifies that each parallel step's
+// duration is measured from its own tool_use, not from the other tool's result.
+// Specifically: a step whose result arrives after a real delay should show that delay,
+// not a near-zero 294ms (the bug reported in STA-501).
+func TestStepRecorder_ParallelToolCallDuration(t *testing.T) {
+	var mu sync.Mutex
+	type entry struct {
+		step RunStep
+		seen time.Time
+	}
+	var entries []entry
+	pub := func(eventType string, data any) {
+		if eventType == "run.step" {
+			if s, ok := data.(RunStep); ok {
+				mu.Lock()
+				entries = append(entries, entry{step: s, seen: time.Now().UTC()})
+				mu.Unlock()
+			}
+		}
+	}
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+
+	r.Feed(StepDelta{Kind: StepDeltaToolUse, ToolName: "Bash", ToolID: "fast",
+		ToolInput: `{"command":"echo quick","description":"quick"}`})
+	r.Feed(StepDelta{Kind: StepDeltaToolUse, ToolName: "Bash", ToolID: "slow",
+		ToolInput: `{"command":"sleep 0.05","description":"slow"}`})
+
+	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "fast", Text: "quick\n"})
+	time.Sleep(50 * time.Millisecond)
+	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "slow", Text: "slept\n"})
+	r.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(entries))
+	}
+
+	for _, e := range entries {
+		startedAt, err := time.Parse(time.RFC3339Nano, e.step.StartedAt)
+		if err != nil {
+			t.Fatalf("StartedAt parse: %v", err)
+		}
+		endedAt, err := time.Parse(time.RFC3339Nano, *e.step.EndedAt)
+		if err != nil {
+			t.Fatalf("EndedAt parse: %v", err)
+		}
+		dur := endedAt.Sub(startedAt)
+		if e.step.Body == "slept\n" && dur < 40*time.Millisecond {
+			t.Errorf("slow step duration = %v, want ≥ 40ms; was started prematurely", dur)
+		}
+	}
+}
+
+// TestStepRecorder_ParallelToolCallErrorStatus verifies is_error propagates correctly
+// when one of two parallel tool results is an error.
+func TestStepRecorder_ParallelToolCallErrorStatus(t *testing.T) {
+	pub, steps := collectSteps(t)
+	r := NewStepRecorder(nil, pub, "run1", "task1")
+
+	r.Feed(StepDelta{Kind: StepDeltaToolUse, ToolName: "Bash", ToolID: "ok", ToolInput: `{"command":"echo ok"}`})
+	r.Feed(StepDelta{Kind: StepDeltaToolUse, ToolName: "Bash", ToolID: "fail", ToolInput: `{"command":"false"}`})
+
+	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "ok", Text: "ok\n", IsError: false})
+	r.Feed(StepDelta{Kind: StepDeltaToolResult, ToolID: "fail", Text: "exit 1\n", IsError: true})
+	r.Close()
+
+	got := *steps
+	if len(got) != 2 {
+		t.Fatalf("expected 2 steps, got %d", len(got))
+	}
+	statusByBody := map[string]string{}
+	for _, s := range got {
+		statusByBody[s.Body] = s.Status
+	}
+	if statusByBody["ok\n"] != "done" {
+		t.Errorf("ok step status = %q, want done", statusByBody["ok\n"])
+	}
+	if statusByBody["exit 1\n"] != "error" {
+		t.Errorf("fail step status = %q, want error", statusByBody["exit 1\n"])
+	}
+}
+
+func titlesOf(steps []RunStep) []string {
+	out := make([]string, len(steps))
+	for i, s := range steps {
+		out[i] = s.Title
+	}
+	return out
+}
+
