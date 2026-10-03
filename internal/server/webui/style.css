@@ -3147,6 +3147,158 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
   margin-left: auto;
 }
 .diff-pane-refresh-btn:hover { color: var(--text); }
+.diff-file-row { cursor: pointer; }
+.diff-file-row:hover .diff-file-name { color: var(--accent, #38bdf8); }
+.diff-file-row.expanded { background: var(--surface2); border-radius: 4px; }
+
+/* ── File-diff modal ────────────────────────────────────── */
+.file-diff-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: rgba(0,0,0,.55);
+  padding: 24px 16px;
+  overflow-y: auto;
+}
+.file-diff-modal-inner {
+  background: var(--surface, #1e2430);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 100%;
+  max-width: 1080px;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.file-diff-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+  flex-shrink: 0;
+}
+.file-diff-header-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-diff-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.file-diff-badge-added    { background: rgba(34,197,94,.2);  color: #22c55e; }
+.file-diff-badge-deleted  { background: rgba(239,68,68,.2);  color: #ef4444; }
+.file-diff-badge-renamed  { background: rgba(251,191,36,.2); color: #fbbf24; }
+.file-diff-badge-modified { background: rgba(96,165,250,.2); color: #60a5fa; }
+.file-diff-badge-binary   { background: rgba(148,163,184,.2);color: #94a3b8; }
+.file-diff-close {
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+.file-diff-close:hover { background: var(--red, #e74c3c); color: #fff; border-color: transparent; }
+.file-diff-truncated {
+  padding: 6px 14px;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(251,191,36,.08);
+  border-bottom: 1px solid var(--border);
+}
+.file-diff-body {
+  overflow: auto;
+  flex: 1;
+}
+/* ── Syntax highlighter colors ─────────────────────────── */
+.sh-c { color: #7c8fa8; font-style: italic; }  /* comment */
+.sh-s { color: #a5d6ff; }                       /* string  */
+.sh-k { color: #c792ea; font-weight: 600; }     /* keyword */
+.sh-t { color: #82aaff; }                       /* type    */
+.sh-b { color: #89ddff; }                       /* builtin */
+.sh-n { color: #f78c6c; }                       /* number  */
+.sh-p { color: #ffcb6b; }                       /* key/prop */
+/* ── Diff viewer lines ─────────────────────────────────── */
+.ds-line {
+  display: flex;
+  align-items: stretch;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+}
+.ds-add  { background: rgba(34,197,94,.10); }
+.ds-del  { background: rgba(239,68,68,.10); }
+.ds-ctx  {}
+.ds-ln {
+  display: inline-block;
+  min-width: 38px;
+  text-align: right;
+  padding: 0 6px;
+  color: var(--muted);
+  user-select: none;
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ds-sign {
+  padding: 0 6px;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.ds-add .ds-sign { color: #22c55e; }
+.ds-del .ds-sign { color: #ef4444; }
+.ds-code { flex: 1; padding: 0 8px; overflow-x: auto; }
+.ds-add .ds-code { color: #bbf7d0; }
+.ds-del .ds-code { color: #fecaca; }
+.ds-hunk-header {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  padding: 3px 12px;
+  background: rgba(96,165,250,.08);
+  color: #60a5fa;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  white-space: pre;
+}
+.ds-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 0;
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+}
+.ds-expand-btn {
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 12px;
+}
+.ds-expand-btn:hover { color: var(--accent, #38bdf8); }
+.ds-empty, .ds-binary {
+  padding: 24px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+}
 
 /* ── Timeline ──────────────────────────────────────────── */
 .timeline-stats-bar { margin-bottom: 10px; }

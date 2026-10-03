@@ -565,6 +565,51 @@ func MigrateLegacyRefs(ctx context.Context, workDir string) (int, error) {
 	return migrated, nil
 }
 
+// DiffFileContent returns the unified diff for a single file between the working
+// tree and the specified checkpoint. Returns an error on unsafe paths.
+func DiffFileContent(ctx context.Context, workDir, checkpointID, filePath string) (string, error) {
+	if strings.Contains(filePath, "..") || filePath == "" {
+		return "", fmt.Errorf("invalid file path")
+	}
+	rootDir, _, err := getGitPaths(ctx, workDir)
+	if err != nil {
+		return "", err
+	}
+	targetRef, err := resolveCheckpointRef(checkpointID)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(targetRef, "refs/") && len(targetRef) != 40 {
+		if refs, _ := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname)", fmt.Sprintf("refs/staypoint/checkpoints/*/%s", targetRef)); strings.TrimSpace(refs) != "" {
+			targetRef = strings.TrimSpace(refs)
+		}
+	}
+	return runGit(ctx, rootDir, nil, "diff", targetRef, "--", filePath)
+}
+
+// DiffFileContentAgainstRef returns the unified diff for a single file between
+// two explicit git refs (checkpoint vs task branch tip). Use when the worktree
+// has been pruned.
+func DiffFileContentAgainstRef(ctx context.Context, repoPath, checkpointID, ref, filePath string) (string, error) {
+	if strings.Contains(filePath, "..") || filePath == "" {
+		return "", fmt.Errorf("invalid file path")
+	}
+	rootDir, _, err := getGitPaths(ctx, repoPath)
+	if err != nil {
+		return "", err
+	}
+	targetRef, err := resolveCheckpointRef(checkpointID)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(targetRef, "refs/") && len(targetRef) != 40 {
+		if refs, _ := runGit(ctx, rootDir, nil, "for-each-ref", "--format=%(refname)", fmt.Sprintf("refs/staypoint/checkpoints/*/%s", targetRef)); strings.TrimSpace(refs) != "" {
+			targetRef = strings.TrimSpace(refs)
+		}
+	}
+	return runGit(ctx, rootDir, nil, "diff", targetRef, ref, "--", filePath)
+}
+
 // DiffCheckpointFull returns a full diff between working directory and the specified checkpoint commit.
 func DiffCheckpointFull(ctx context.Context, workDir, checkpointID string) (string, error) {
 	rootDir, _, err := getGitPaths(ctx, workDir)

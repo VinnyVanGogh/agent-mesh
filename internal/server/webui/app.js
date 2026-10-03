@@ -6692,6 +6692,95 @@ async function fetchTaskCheckpoints(taskId) {
   }
 }
 
+async function fetchFileDiff(taskId, filePath, checkpointId) {
+  const qs = new URLSearchParams({ path: filePath });
+  if (checkpointId) qs.set('checkpoint', checkpointId);
+  try {
+    return await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/diff/file?${qs}`);
+  } catch {
+    return { path: filePath, content: '', binary: false, truncated: false, status: 'modified' };
+  }
+}
+
+// ── File diff modal ──────────────────────────────────────────
+function openFileDiffModal(task, filePath, checkpointId) {
+  // Remove any existing modal
+  document.querySelector('.file-diff-modal')?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.className = 'file-diff-modal';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', 'File diff: ' + filePath);
+
+  const inner = document.createElement('div');
+  inner.className = 'file-diff-modal-inner';
+  overlay.appendChild(inner);
+
+  // Header
+  const header = document.createElement('div');
+  header.className = 'file-diff-header';
+  const pathEl = document.createElement('span');
+  pathEl.className = 'file-diff-header-path';
+  pathEl.textContent = filePath;
+  header.appendChild(pathEl);
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'file-diff-close';
+  closeBtn.textContent = '✕';
+  closeBtn.setAttribute('aria-label', 'Close diff');
+  closeBtn.addEventListener('click', () => overlay.remove());
+  header.appendChild(closeBtn);
+  inner.appendChild(header);
+
+  // Body (loading state)
+  const body = document.createElement('div');
+  body.className = 'file-diff-body';
+  const loading = document.createElement('div');
+  loading.className = 'ds-empty';
+  loading.textContent = 'Loading diff…';
+  body.appendChild(loading);
+  inner.appendChild(body);
+
+  document.body.appendChild(overlay);
+
+  // Dismiss on backdrop click
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+  // Dismiss on Escape
+  const escHandler = e => { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); } };
+  document.addEventListener('keydown', escHandler);
+  overlay.addEventListener('remove', () => document.removeEventListener('keydown', escHandler));
+
+  // Fetch and render
+  fetchFileDiff(task.id, filePath, checkpointId).then(data => {
+    body.innerHTML = '';
+    // Status badge
+    const status = data.binary ? 'binary' : (data.status || 'modified');
+    const badge = document.createElement('span');
+    badge.className = `file-diff-badge file-diff-badge-${status}`;
+    badge.textContent = status;
+    header.insertBefore(badge, closeBtn);
+
+    // Truncated warning
+    if (data.truncated) {
+      const warn = document.createElement('div');
+      warn.className = 'file-diff-truncated';
+      warn.textContent = 'File diff truncated at 256 KB. Only partial content shown.';
+      inner.insertBefore(warn, body);
+    }
+
+    // Render diff using vendored DiffSyntax
+    if (typeof DiffSyntax !== 'undefined') {
+      DiffSyntax.renderUnifiedDiff(body, data.content || '', filePath, { maxCtxLines: 3 });
+    } else {
+      const pre = document.createElement('pre');
+      pre.className = 'ds-line ds-ctx ds-code';
+      pre.style.cssText = 'padding:16px;font-size:12px;overflow:auto;';
+      pre.textContent = data.content || '(no content)';
+      body.appendChild(pre);
+    }
+  });
+}
+
 function renderDiffPane(container, task, checkpoints, diffData) {
   container.innerHTML = '';
 
@@ -6723,7 +6812,20 @@ function renderDiffPane(container, task, checkpoints, diffData) {
     for (const stat of statsArr) {
       const fname = stat.path || stat;
       const row = el('li', 'diff-file-row');
-      row.appendChild(el('span', 'diff-file-name', fname));
+
+      // File name — clicking opens the file diff modal
+      const nameBtn = el('span', 'diff-file-name', fname);
+      nameBtn.title = `View diff for ${fname}`;
+      nameBtn.setAttribute('role', 'button');
+      nameBtn.setAttribute('tabindex', '0');
+      nameBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openFileDiffModal(task, fname, cpId);
+      });
+      nameBtn.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFileDiffModal(task, fname, cpId); }
+      });
+      row.appendChild(nameBtn);
 
       // Per-file line stats
       const statsWrap = el('span', 'diff-file-stats');
@@ -6739,7 +6841,8 @@ function renderDiffPane(container, task, checkpoints, diffData) {
 
       const undoBtn = el('button', 'diff-file-undo-btn', '↺ Undo');
       undoBtn.title = `Restore ${fname} to checkpoint${cpId ? ' ' + cpId.slice(0, 8) : ''}`;
-      undoBtn.addEventListener('click', async () => {
+      undoBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
         undoBtn.disabled = true;
         undoBtn.textContent = '…';
         try {
