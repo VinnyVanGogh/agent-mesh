@@ -33,6 +33,28 @@ var activeClaims atomic.Int32
 // taskCompleteMarker is the canonical signal an adapter emits on completion.
 const taskCompleteMarker = "[[TASK_COMPLETE]]"
 
+// markerOnOwnLine returns true if text contains the task-complete marker standing
+// alone on a line (after trimming), outside any fenced code block. This prevents
+// an agent mentioning the marker in prose (e.g. "I omitted `[[TASK_COMPLETE]]`")
+// from being mistaken for a genuine completion signal.
+func markerOnOwnLine(text string) bool {
+	inFence := false
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		if trimmed == taskCompleteMarker {
+			return true
+		}
+	}
+	return false
+}
+
 // defaultProviderEnvKeys are provider credential variables that must pass through
 // the sanitized env.
 var defaultProviderEnvKeys = []string{
@@ -707,7 +729,7 @@ func (w *stepTeeWriter) checkTextMarker(line []byte) {
 		return
 	}
 	for _, d := range deltas {
-		if d.Kind == StepDeltaText && strings.Contains(d.Text, taskCompleteMarker) {
+		if d.Kind == StepDeltaText && markerOnOwnLine(d.Text) {
 			w.textDetected = true
 			return
 		}
