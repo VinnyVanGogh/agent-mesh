@@ -394,6 +394,12 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		cfg.RunControl.ClearForRun(taskID)
 	}
 
+	// Fetch the task brief once; pass it to each turn.
+	brief := fetchTaskBrief(ctx, h.DB, taskID)
+
+	// Track the highest comment id seen so far so each turn only injects new comments.
+	var lastSeenCommentID int64
+
 	// consecutiveAdapterErrors counts back-to-back adapter failures with no
 	// successful output between them. lastTurnWasAdapterError suppresses the
 	// checkpoint that would otherwise be written at the start of the next turn
@@ -422,7 +428,11 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		// Drive one adapter turn. Tee stdout through StepRecorder line scanner if enabled.
 		var outBuf bytes.Buffer
 		tw := &completionWriter{dst: &outBuf}
-		rawArgs := buildRawArgs(taskID, turn, cfg)
+		newComments := fetchUserComments(ctx, h.DB, taskID, lastSeenCommentID)
+		if len(newComments) > 0 {
+			lastSeenCommentID = newComments[len(newComments)-1].ID
+		}
+		rawArgs := buildRawArgs(taskID, turn, cfg, brief, newComments)
 
 		var stdout io.Writer = tw
 		if sr != nil && cfg.ParseDelta != nil {
@@ -662,10 +672,120 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	return result, nil
 }
 
+// briefMaxBytes is the size cap for the injected task brief block.
+// Content beyond this limit is truncated with a note so the agent knows it was cut.
+const briefMaxBytes = 8 * 1024 // 8 KB
+
+// taskBrief holds the immutable task metadata fetched once before the run loop.
+type taskBrief struct {
+	Name        string
+	Org         string
+	Project     string
+	RepoPath    string
+	GitBranch   string
+	Description string
+}
+
+// harnessComment is a non-harness comment visible to the agent.
+type harnessComment struct {
+	ID      int64
+	Author  string
+	Message string
+}
+
+// fetchTaskBrief reads the task brief (name, org, project, repo, branch, description) from db.
+// Returns a zero-value brief on any error so the run continues without brief injection.
+func fetchTaskBrief(ctx context.Context, db *sql.DB, taskID string) taskBrief {
+	var b taskBrief
+	_ = db.QueryRowContext(ctx,
+		`SELECT name, COALESCE(organization,''), COALESCE(project,''), repo_path, COALESCE(git_branch,'')
+		 FROM tasks WHERE id = ?`, taskID,
+	).Scan(&b.Name, &b.Org, &b.Project, &b.RepoPath, &b.GitBranch)
+	_ = db.QueryRowContext(ctx,
+		`SELECT content FROM task_documents WHERE task_id = ? AND doc_key = 'description' ORDER BY version DESC LIMIT 1`,
+		taskID,
+	).Scan(&b.Description)
+	return b
+}
+
+// fetchUserComments returns non-harness comments for taskID with id > afterID, ordered ascending.
+func fetchUserComments(ctx context.Context, db *sql.DB, taskID string, afterID int64) []harnessComment {
+	rows, err := db.QueryContext(ctx,
+		`SELECT id, author, message FROM task_comments
+		 WHERE task_id = ? AND author != 'harness' AND id > ?
+		 ORDER BY id ASC`, taskID, afterID,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []harnessComment
+	for rows.Next() {
+		var c harnessComment
+		if err := rows.Scan(&c.ID, &c.Author, &c.Message); err == nil {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// buildBriefBlock constructs the task brief block for the agent prompt.
+// It is treated as user-provided data: wrapped in clear delimiters.
+// Content is truncated at briefMaxBytes with a note.
+func buildBriefBlock(brief taskBrief, comments []harnessComment, isFirstTurn bool) string {
+	var b strings.Builder
+	if isFirstTurn {
+		b.WriteString("<<<TASK_BRIEF_BEGIN>>>\n")
+		b.WriteString("Name: " + safeField(brief.Name) + "\n")
+		if brief.Org != "" || brief.Project != "" {
+			b.WriteString("Project: " + safeField(brief.Org+"/"+brief.Project) + "\n")
+		}
+		b.WriteString("Repo: " + safeField(brief.RepoPath) + "\n")
+		if brief.GitBranch != "" {
+			b.WriteString("Branch: " + safeField(brief.GitBranch) + "\n")
+		}
+		if brief.Description != "" {
+			b.WriteString("---\nDescription:\n" + brief.Description + "\n")
+		}
+	}
+	if len(comments) > 0 {
+		if isFirstTurn {
+			b.WriteString("---\nComments:\n")
+		} else {
+			b.WriteString("<<<NEW_COMMENTS_BEGIN>>>\n")
+		}
+		for _, c := range comments {
+			b.WriteString("[" + safeField(c.Author) + "]: " + c.Message + "\n")
+		}
+	}
+	if isFirstTurn {
+		b.WriteString("<<<TASK_BRIEF_END>>>\n")
+	} else if len(comments) > 0 {
+		b.WriteString("<<<NEW_COMMENTS_END>>>\n")
+	}
+
+	result := b.String()
+	if len(result) > briefMaxBytes {
+		result = result[:briefMaxBytes] + "\n[...task brief truncated at 8 KB...]\n"
+	}
+	return result
+}
+
+// safeField strips the [[TASK_COMPLETE]] marker so user data cannot forge completion.
+func safeField(s string) string {
+	return strings.ReplaceAll(s, taskCompleteMarker, "[TASK_COMPLETE]")
+}
+
 // buildRawArgs constructs CLI arguments for the adapter on the given turn.
 // These are parsed by adapter.parseRawArgs into ParsedOptions.
-func buildRawArgs(taskID string, turn int, cfg RunConfig) []string {
-	prompt := fmt.Sprintf(
+func buildRawArgs(taskID string, turn int, cfg RunConfig, brief taskBrief, newComments []harnessComment) []string {
+	var prompt string
+	briefBlock := buildBriefBlock(brief, newComments, turn == 0)
+
+	if briefBlock != "" {
+		prompt = briefBlock + "\n"
+	}
+	prompt += fmt.Sprintf(
 		"Continue work on task %s (turn %d). When you are finished, emit %s on its own line.",
 		taskID, turn+1, taskCompleteMarker,
 	)

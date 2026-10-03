@@ -74,6 +74,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/tasks", tasksH.ListTasks)
 		mux.HandleFunc("POST /api/tasks", tasksH.CreateTask)
 		mux.HandleFunc("GET /api/tasks/{id}", tasksH.GetTask)
+		mux.HandleFunc("PUT /api/tasks/{id}/description", tasksH.UpdateTaskDescription)
 		mux.HandleFunc("GET /api/tasks/{id}/comments", tasksH.GetComments)
 		mux.HandleFunc("POST /api/tasks/{id}/comments", tasksH.AddComment)
 		mux.HandleFunc("POST /api/tasks/{id}/done", tasksH.MarkDone)
