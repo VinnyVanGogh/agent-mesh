@@ -49,6 +49,12 @@ var destructivePatterns = []*regexp.Regexp{
 }
 
 // stripComments removes -- line comments and /* */ block comments from sql.
+// Limitation: it does not skip inside string literals ('…', "…", $tag$…$tag$),
+// so a literal that contains -- or /* is partially stripped. This is a
+// parser-differential that may produce false negatives (a destructive statement
+// missed inside a literal). That is acceptable here because this function is
+// used only for informational warnings; it never executes SQL and a missed
+// warning is not exploitable.
 func stripComments(sql string) string {
 	var b strings.Builder
 	i := 0
