@@ -1,3 +1,7 @@
+import { execFileSync } from 'child_process';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { test, expect, gotoTaskPage } from '../fixtures';
 import type { APIRequestContext } from '@playwright/test';
 
@@ -7,6 +11,57 @@ import type { APIRequestContext } from '@playwright/test';
 //   Bug 3 — approved / rejected final state was never rendered
 
 const TOKEN = process.env.STAYPOINT_API_TOKEN || '';
+
+type ShipTask = { id: string; organization: string; project: string; [k: string]: unknown };
+
+// createShipReviewTask creates a task with a real git repo.
+// UpsertCard post-STA-533 always resolves "staypoint/<taskId>", so we:
+//   1. Create the task via API (with repo_path pointing to the temp repo)
+//   2. Create the staypoint/<taskId> branch after we have the task ID
+async function createShipReviewTask(
+  request: APIRequestContext,
+  label: string,
+): Promise<{ task: ShipTask; repoDir: string; cleanup: () => void }> {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'sta535-e2e-'));
+  const work = path.join(base, 'work');
+  const bare = path.join(base, 'bare.git');
+  const env = {
+    ...process.env,
+    GIT_AUTHOR_NAME: 'test', GIT_AUTHOR_EMAIL: 't@t.com',
+    GIT_COMMITTER_NAME: 'test', GIT_COMMITTER_EMAIL: 't@t.com',
+  };
+  const run = (args: string[]) => execFileSync('git', args, { cwd: work, env, stdio: 'pipe' });
+
+  fs.mkdirSync(work, { recursive: true });
+  execFileSync('git', ['init', '-b', 'main', work], { env, stdio: 'pipe' });
+  run(['config', 'user.email', 't@t.com']);
+  run(['config', 'user.name', 'test']);
+  fs.writeFileSync(path.join(work, 'README.md'), 'init\n');
+  run(['add', '.']);
+  run(['commit', '-m', 'init']);
+  execFileSync('git', ['init', '--bare', '-b', 'main', bare], { env, stdio: 'pipe' });
+  run(['remote', 'add', 'origin', bare]);
+  run(['push', 'origin', 'main']);
+
+  const name = `${label} ${Date.now().toString(36)}`;
+  const res = await request.post('/api/tasks', {
+    headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
+    data: { name, organization: 'STA', project: 'ui-e2e', repo_path: work, git_branch: 'main' },
+  });
+  const task = (await res.json()) as ShipTask;
+  const taskId = task.id;
+
+  const branch = `staypoint/${taskId}`;
+  run(['checkout', '-b', branch]);
+  fs.writeFileSync(path.join(work, 'task.txt'), 'task work\n');
+  run(['add', '.']);
+  run(['commit', '-m', 'task: add work file']);
+  run(['push', 'origin', branch]);
+  run(['checkout', 'main']);
+
+  const cleanup = () => { try { fs.rmSync(base, { recursive: true, force: true }); } catch {} };
+  return { task: { ...task, organization: 'STA', project: 'ui-e2e' }, repoDir: work, cleanup };
+}
 
 async function upsertShipReview(
   request: APIRequestContext,
@@ -26,8 +81,9 @@ async function upsertShipReview(
 test.describe('ship review card', () => {
 
   // ── Bug 1: Preview row visible when dev_url is present ────────────────────
-  test('Preview row shows dev_url from card', async ({ page, api, request }) => {
-    const task = await api.createTask('Ship review dev_url');
+  test('Preview row shows dev_url from card', async ({ page, api: _api, request }) => {
+    const { task, cleanup } = await createShipReviewTask(request, 'Ship review dev_url');
+    test.info().annotations.push({ type: 'cleanup', description: task.id });
     const res = await upsertShipReview(request, task.id, { devUrl: 'http://127.0.0.1:8799' });
     expect(res.ok(), `upsert failed: ${await res.text()}`).toBeTruthy();
 
@@ -42,11 +98,12 @@ test.describe('ship review card', () => {
     await expect(previewRow).toBeVisible();
     const link = previewRow.locator('.ship-review-dev-link');
     await expect(link).toContainText('127.0.0.1:8799');
+    cleanup();
   });
 
   // ── Bug 2: head_moved alert includes new SHA ──────────────────────────────
-  test('Approve shows head_moved alert with new SHA when 409 head_moved', async ({ page, api, request }) => {
-    const task = await api.createTask('Ship review head_moved');
+  test('Approve shows head_moved alert with new SHA when 409 head_moved', async ({ page, api: _api, request }) => {
+    const { task, cleanup } = await createShipReviewTask(request, 'Ship review head_moved');
     const res = await upsertShipReview(request, task.id);
     expect(res.ok(), `upsert failed: ${await res.text()}`).toBeTruthy();
 
@@ -88,11 +145,12 @@ test.describe('ship review card', () => {
 
     // The approve button must still be present (card reload, not removed).
     await expect(card).toBeVisible({ timeout: 5_000 });
+    cleanup();
   });
 
   // ── Bug 3: approved final state shows reviewed SHA → main SHA ─────────────
-  test('Approve renders approved final state card with main SHA', async ({ page, api, request }) => {
-    const task = await api.createTask('Ship review approve final');
+  test('Approve renders approved final state card with main SHA', async ({ page, api: _api, request }) => {
+    const { task, cleanup } = await createShipReviewTask(request, 'Ship review approve final');
     const upsert = await upsertShipReview(request, task.id);
     expect(upsert.ok(), `upsert failed: ${await upsert.text()}`).toBeTruthy();
 
@@ -137,11 +195,12 @@ test.describe('ship review card', () => {
 
     // It must show main SHA.
     await expect(finalCard).toContainText(fakeMainSHA.slice(0, 12));
+    cleanup();
   });
 
   // ── Bug 3b: rejected final state shows reject comment ────────────────────
-  test('Reject renders rejected final state card with comment', async ({ page, api, request }) => {
-    const task = await api.createTask('Ship review reject final');
+  test('Reject renders rejected final state card with comment', async ({ page, api: _api, request }) => {
+    const { task, cleanup } = await createShipReviewTask(request, 'Ship review reject final');
     const upsert = await upsertShipReview(request, task.id);
     expect(upsert.ok(), `upsert failed: ${await upsert.text()}`).toBeTruthy();
 
@@ -181,6 +240,7 @@ test.describe('ship review card', () => {
 
     // The reject comment must appear in the final card.
     await expect(finalCard).toContainText(rejectComment);
+    cleanup();
   });
 
 });
