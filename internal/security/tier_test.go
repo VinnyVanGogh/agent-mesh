@@ -25,12 +25,22 @@ func TestClassifyTiers(t *testing.T) {
 		{"echo hi 2>/dev/null", Green}, {"git diff HEAD~1", Green}, {"sed -n '1,5p' file", Green},
 		// yellow
 		{"go build ./...", Yellow}, {"rm file.txt", Yellow}, {"echo hi > out.txt", Yellow}, {"sed -i s/a/b/ f", Yellow},
-		{"git commit -m x", Yellow}, {"git push origin main", Yellow}, {"npm install", Yellow}, {"mkdir -p a/b", Yellow},
+		{"git commit -m x", Yellow}, {"npm install", Yellow}, {"mkdir -p a/b", Yellow},
 		{"curl https://example.com/x.tgz", Yellow}, {"FOO=bar make test", Yellow}, {"git reset HEAD file", Yellow},
+		{"git push origin feature-branch", Yellow}, {"git push origin HEAD:refs/heads/feature-xyz", Yellow},
+		{"gh pr view 123", Yellow}, {"gh api repos/owner/repo/pulls", Yellow},
 		// red: destructive
 		{"rm -rf build", Red}, {"rm -fr build", Red}, {"rm -R x", Red}, {"rm --recursive x", Red}, {"git reset --hard", Red},
 		{"git reset --hard HEAD~3", Red}, {"git clean -fdx", Red}, {"git clean -f", Red}, {"git -C sub clean -fd", Red},
 		{"git push --force", Red}, {"git push -f origin main", Red}, {"git push origin +main", Red},
+		// red: push/merge to main (Board gate)
+		{"git push origin main", Red}, {"git push origin master", Red},
+		{"git push origin HEAD:main", Red}, {"git push origin HEAD:master", Red},
+		{"git push origin HEAD:refs/heads/main", Red}, {"git push origin HEAD:refs/heads/master", Red},
+		{"git push origin mybranch:main", Red},
+		{"gh pr merge", Red}, {"gh pr merge --squash", Red}, {"gh pr merge 123 --merge", Red},
+		{"gh api repos/owner/repo/pulls/1/merge", Red}, {"gh api repos/owner/repo/merges", Red},
+		{"sh -c 'git push origin main'", Red}, {"bash -c 'gh pr merge --squash'", Red},
 		{"sudo make install", Red}, {"dd if=/dev/zero of=/dev/disk2", Red}, {"mkfs.ext4 /dev/sda1", Red},
 		// red: sensitive paths
 		{"cat ~/.ssh/id_rsa", Red}, {"ls $HOME/.aws", Red}, {"cat ${HOME}/.gnupg/pubring.kbx", Red},

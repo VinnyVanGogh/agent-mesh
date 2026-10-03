@@ -225,6 +225,8 @@ func (c *Classifier) classifySegment(s segment, v *Verdict, depth int) {
 		}
 	case name == "git":
 		c.classifyGit(args, v)
+	case name == "gh":
+		c.classifyGh(args, v)
 	case name == "curl" || name == "wget":
 		c.classifyFetch(name, args, v)
 	case name == "go":
@@ -365,6 +367,9 @@ func (c *Classifier) classifyGit(args []string, v *Verdict) {
 				v.raise(Red, "git push rewrites or deletes remote history")
 			}
 		}
+		if pushTargetsMain(rest) {
+			v.raise(Red, "git push targets main/master; Board approval required")
+		}
 		v.raise(Yellow, "")
 	case "config":
 		// git config --get is read-only; writes are local edits, global writes touch dotfiles
@@ -389,6 +394,61 @@ func (c *Classifier) classifyGit(args []string, v *Verdict) {
 		if !greenGit[sub] {
 			v.raise(Yellow, "")
 		}
+	}
+}
+
+// isMainRef reports whether a git ref name is a protected default branch.
+func isMainRef(ref string) bool {
+	ref = strings.TrimPrefix(ref, "refs/heads/")
+	return ref == "main" || ref == "master"
+}
+
+// pushTargetsMain reports whether any refspec in the push arg list targets main/master.
+// The first non-flag positional is the remote; subsequent ones are refspecs.
+func pushTargetsMain(args []string) bool {
+	var positionals []string
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			positionals = append(positionals, a)
+		}
+	}
+	// index 0 is the remote (if present); refspecs start at index 1.
+	for _, ref := range positionals[min(1, len(positionals)):] {
+		if i := strings.LastIndex(ref, ":"); i >= 0 {
+			if isMainRef(ref[i+1:]) {
+				return true
+			}
+		} else if isMainRef(ref) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Classifier) classifyGh(args []string, v *Verdict) {
+	if len(args) == 0 {
+		v.raise(Yellow, "")
+		return
+	}
+	sub := args[0]
+	rest := args[1:]
+	switch sub {
+	case "pr":
+		if len(rest) > 0 && rest[0] == "merge" {
+			v.raise(Red, "gh pr merge lands on the default branch; Board approval required")
+			return
+		}
+		v.raise(Yellow, "")
+	case "api":
+		for _, a := range rest {
+			if !strings.HasPrefix(a, "-") && strings.Contains(strings.ToLower(a), "/merge") {
+				v.raise(Red, "gh api targets a merge endpoint; Board approval required")
+				return
+			}
+		}
+		v.raise(Yellow, "")
+	default:
+		v.raise(Yellow, "")
 	}
 }
 
