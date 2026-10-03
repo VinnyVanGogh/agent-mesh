@@ -482,6 +482,89 @@ func candidateDisplayName(name string) string {
 	}
 }
 
+// KindChainResolution is the result of kind-based provider resolution.
+// Computed once per wake; used by both the adapter launch and emitRouteStep so
+// the route row always names the exact provider and model that actually ran.
+type KindChainResolution struct {
+	// Slot is the chosen KindSlot. Nil when AllLocked is true.
+	Slot *router.KindSlot
+	// PrimarySlot is the first viable slot ignoring quota locks (used to build
+	// fallback labels). Nil only when the chain itself is empty.
+	PrimarySlot *router.KindSlot
+	// Provider is the adapter entry point: "claude" or "gemini".
+	Provider string
+	// ModelArgs is ["--model", "<model>"] to prepend to rawArgs.
+	ModelArgs []string
+	// RouteDisplay is the human-readable status line for the route step.
+	RouteDisplay string
+	// AllLocked is true when every slot in the chain is unavailable.
+	AllLocked bool
+}
+
+// kindSlotAdapterProvider maps a KindSlot.Provider to the adapter provider
+// string understood by BuildProviderChain / runWithFailover.
+func kindSlotAdapterProvider(slot *router.KindSlot) string {
+	if strings.Contains(slot.Provider, "gemini") {
+		return "gemini"
+	}
+	return "claude"
+}
+
+// kindSlotDisplayName returns the human-readable model label for route rows.
+func kindSlotDisplayName(slot *router.KindSlot) string {
+	switch slot.Model {
+	case "opus":
+		return "Claude Opus"
+	case "sonnet":
+		return "Claude Sonnet"
+	case "gemini-3.1-pro-high", "gemini-3.1-pro":
+		return "Gemini 3.1 Pro"
+	case "gemini-3.8-flash-high", "gemini-3.8-flash":
+		return "Gemini 3.8 Flash"
+	}
+	return slot.Provider
+}
+
+// ResolveKindProviderChain resolves the work-kind routing chain against live
+// pacer quota state and returns a KindChainResolution that drives both the
+// adapter invocation and the route-row label.  This is the single source of
+// truth: emitRouteStep must use its RouteDisplay, and RunAdapter must use its
+// Provider + ModelArgs, so the two always agree.
+func ResolveKindProviderChain(kind router.WorkKind, pacer *router.PacerState) KindChainResolution {
+	chains := router.DefaultKindChains()
+
+	// Resolve primary slot ignoring locks (for fallback label only).
+	openPacer := &router.PacerState{Pools: make(map[router.PoolID]*router.QuotaPool)}
+	primarySlot := router.ResolveKindChain(kind, chains, openPacer)
+
+	// Resolve with actual quota state.
+	chosen := router.ResolveKindChain(kind, chains, pacer)
+	if chosen == nil {
+		return KindChainResolution{AllLocked: true, RouteDisplay: "All providers locked"}
+	}
+
+	provider := kindSlotAdapterProvider(chosen)
+	modelArgs := []string{"--model", chosen.Model}
+
+	var routeDisplay string
+	isFallback := primarySlot != nil &&
+		(primarySlot.Provider != chosen.Provider || primarySlot.Model != chosen.Model)
+	if isFallback {
+		routeDisplay = "Fell back to " + kindSlotDisplayName(chosen) + ": " +
+			kindSlotDisplayName(primarySlot) + " quota locked"
+	} else {
+		routeDisplay = "Ran on " + kindSlotDisplayName(chosen)
+	}
+
+	return KindChainResolution{
+		Slot:         chosen,
+		PrimarySlot:  primarySlot,
+		Provider:     provider,
+		ModelArgs:    modelArgs,
+		RouteDisplay: routeDisplay,
+	}
+}
+
 // ResolveProviderChain builds the failover chain for isWork+provider, walks it
 // using the supplied pacer quota state (nil = no locks), and returns which
 // candidate would actually run. This is the single source of truth for the
