@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -171,27 +172,14 @@ func TestNew_TogetherWhenKeySet(t *testing.T) {
 func TestBuildPrompt(t *testing.T) {
 	prompt := buildPrompt(testReq)
 	for _, opt := range testOptions {
-		if !containsStr(prompt, opt.Letter) {
+		if !strings.Contains(prompt, opt.Letter) {
 			t.Errorf("prompt missing option letter %q", opt.Letter)
 		}
-		if !containsStr(prompt, opt.Label) {
+		if !strings.Contains(prompt, opt.Label) {
 			t.Errorf("prompt missing option label %q", opt.Label)
 		}
 	}
-	if !containsStr(prompt, testReq.Question) {
+	if !strings.Contains(prompt, testReq.Question) {
 		t.Errorf("prompt missing question")
 	}
-}
-
-func containsStr(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsRune(s, sub))
-}
-
-func containsRune(s, sub string) bool {
-	for i := range s {
-		if i+len(sub) <= len(s) && s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
 }
