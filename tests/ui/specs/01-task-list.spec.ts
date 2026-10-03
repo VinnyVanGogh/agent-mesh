@@ -25,6 +25,6 @@ test.describe('task list', () => {
     await page.locator('#ct-project').fill('ui-e2e');
     await page.locator('#create-task-submit').click();
     await expect(page.locator('#create-task-modal')).toBeHidden();
-    await expect(page.locator('#ts-task-table').getByText(name)).toBeVisible();
+    await expect(page.locator('#task-page-content .task-page-title')).toHaveText(name, { timeout: 20_000 });
   });
 });
