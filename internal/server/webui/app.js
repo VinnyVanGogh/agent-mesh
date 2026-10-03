@@ -389,6 +389,20 @@ function handleEvent(evt) {
     }
     return;
   }
+  if (type.startsWith('ship_review_') && evt.data) {
+    const d = evt.data;
+    const tid = d.task_id;
+    if (tid && state.openDetailTaskId === tid) {
+      // Reload the task page so the ship review card updates.
+      const main = document.querySelector('.task-page-main');
+      if (main) {
+        const existing = document.getElementById(`ship-review-${tid}`);
+        if (existing) existing.remove();
+        renderShipReviewCard(main, tid);
+      }
+    }
+    return;
+  }
   if ((type.startsWith('task_') || type.startsWith('task.')) && evt.data) {
     const t = evt.data;
     if (t.id) state.tasks[t.id] = Object.assign(state.tasks[t.id] || {}, t);
@@ -4354,6 +4368,44 @@ function renderSettings() {
       if (data) gateToggle.checked = data.main_merge_approval !== false;
     }).catch(() => { gateToggle.disabled = false; });
   });
+
+  // Ship Review toggle row (inside Security Gates section)
+  const srRow = el('div', 'settings-row');
+  const srLbl = el('div', 'settings-row-label-wrap');
+  srLbl.appendChild(el('div', 'settings-row-label', 'Ship review before merge'));
+  srLbl.appendChild(el('div', 'settings-row-sub', 'When on, agents present a review card (dev URL + test steps + SHA pin) for your sign-off before any branch is merged.'));
+  srRow.appendChild(srLbl);
+
+  const srToggleWrap = el('div', 'settings-toggle-wrap');
+  const srToggle = el('input');
+  srToggle.type = 'checkbox';
+  srToggle.className = 'settings-toggle';
+  srToggle.id = 'gate-ship-review';
+  srToggle.checked = true;
+  srToggle.disabled = true;
+  srToggleWrap.appendChild(srToggle);
+  srRow.appendChild(srToggleWrap);
+  gateSec.appendChild(srRow);
+
+  fetch('/api/settings/ship-review', {
+    headers: TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {},
+  }).then(r => r.ok ? r.json() : null).then(data => {
+    if (!data) return;
+    srToggle.checked = data.ship_review !== false;
+    srToggle.disabled = false;
+  }).catch(() => { srToggle.disabled = false; });
+
+  srToggle.addEventListener('change', () => {
+    srToggle.disabled = true;
+    fetch('/api/settings/ship-review', {
+      method: 'POST',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {}),
+      body: JSON.stringify({ ship_review: srToggle.checked }),
+    }).then(r => r.ok ? r.json() : null).then(data => {
+      srToggle.disabled = false;
+      if (data) srToggle.checked = data.ship_review !== false;
+    }).catch(() => { srToggle.disabled = false; });
+  });
 }
 
 // ── Fleet Info Modal Drill-Down ────────────────────────────
@@ -7102,6 +7154,157 @@ async function openTaskPage(target, pushHistory = true) {
   }
 }
 
+// ── Ship Review Card ──────────────────────────────────────────────────────────
+// Fetches the pending ship_review card for a task (if any) and renders a
+// Board-facing review panel with: dev URL, test checklist, SHA pin, diff
+// summary, and Approve / Send back / Reject buttons.
+
+async function renderShipReviewCard(container, taskId) {
+  if (!taskId) return;
+  let card;
+  try {
+    const resp = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review`);
+    card = resp;
+  } catch {
+    return; // no card or fetch error — silently skip
+  }
+
+  if (!card || !['pending', 'sent_back'].includes(card.status)) return;
+
+  const section = el('div', 'ship-review-card task-page-section');
+  section.id = `ship-review-${taskId}`;
+
+  // Header
+  const hdr = el('div', 'ship-review-header');
+  const badge = el('span', 'ship-review-badge', 'Ship Review');
+  const statusBadge = el('span', `ship-review-status-badge status-${card.status}`,
+    card.status === 'sent_back' ? 'Sent Back' : 'Pending Approval');
+  hdr.appendChild(badge);
+  hdr.appendChild(statusBadge);
+  section.appendChild(hdr);
+
+  if (card.status === 'sent_back' && card.send_back_comment) {
+    const fbBox = el('div', 'ship-review-feedback-box');
+    fbBox.appendChild(el('div', 'ship-review-feedback-label', 'Board feedback:'));
+    fbBox.appendChild(el('div', 'ship-review-feedback-body', card.send_back_comment));
+    section.appendChild(fbBox);
+  }
+
+  // Dev URL — only render http/https loopback URLs to prevent XSS via javascript: etc.
+  if (card.dev_url) {
+    let safeDevURL = null;
+    try {
+      const u = new URL(card.dev_url);
+      if ((u.protocol === 'http:' || u.protocol === 'https:') &&
+          (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '::1' || u.hostname.startsWith('127.'))) {
+        safeDevURL = u.toString();
+      }
+    } catch { /* invalid URL — skip */ }
+    const devRow = el('div', 'ship-review-row');
+    devRow.appendChild(el('span', 'ship-review-row-label', 'Preview'));
+    if (safeDevURL) {
+      const devLink = el('a', 'ship-review-dev-link', safeDevURL);
+      devLink.href = safeDevURL;
+      devLink.target = '_blank';
+      devLink.rel = 'noopener noreferrer';
+      devRow.appendChild(devLink);
+    } else {
+      devRow.appendChild(el('span', 'ship-review-dev-link', card.dev_url + ' (invalid URL)'));
+    }
+    const restartBtn = el('button', 'ship-review-restart-btn', '↺ Restart');
+    restartBtn.title = 'Restart dev server';
+    restartBtn.addEventListener('click', async () => {
+      restartBtn.disabled = true;
+      await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/start-dev`, { method: 'POST' }).catch(() => {});
+      restartBtn.disabled = false;
+    });
+    devRow.appendChild(restartBtn);
+    section.appendChild(devRow);
+  }
+
+  // SHA pin
+  const shaRow = el('div', 'ship-review-row');
+  shaRow.appendChild(el('span', 'ship-review-row-label', 'Branch SHA'));
+  shaRow.appendChild(el('code', 'ship-review-sha', card.head_sha ? card.head_sha.slice(0, 12) : '—'));
+  shaRow.appendChild(el('span', 'ship-review-branch', card.branch || ''));
+  section.appendChild(shaRow);
+
+  // What to test
+  if (card.test_steps && card.test_steps.length > 0) {
+    const testSection = el('div', 'ship-review-test-section');
+    testSection.appendChild(el('div', 'ship-review-section-title', 'What to test'));
+    const list = el('ol', 'ship-review-test-list');
+    for (const step of card.test_steps) {
+      list.appendChild(el('li', 'ship-review-test-step', step));
+    }
+    testSection.appendChild(list);
+    section.appendChild(testSection);
+  }
+
+  // Approve / Send back / Reject buttons
+  const actions = el('div', 'ship-review-actions');
+
+  const approveBtn = el('button', 'ship-review-approve-btn', '✓ Approve & Merge');
+  approveBtn.addEventListener('click', async () => {
+    if (!confirm('Approve and merge this branch? Only the pinned SHA will be merged.')) return;
+    approveBtn.disabled = true;
+    try {
+      const result = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/approve`, { method: 'POST' });
+      if (result.error === 'head_moved') {
+        alert(`Branch HEAD moved since the card was rendered.\nNew HEAD: ${result.new_head_sha}\nThe card will reload.`);
+        renderShipReviewCard(container.closest('.task-page-main') || container, taskId);
+        return;
+      }
+      section.remove();
+    } catch (e) {
+      alert('Approve failed: ' + (e.message || e));
+      approveBtn.disabled = false;
+    }
+  });
+  actions.appendChild(approveBtn);
+
+  const sendBackBtn = el('button', 'ship-review-sendback-btn', '↩ Send Back');
+  sendBackBtn.addEventListener('click', async () => {
+    const comment = prompt('Feedback for the agent (required):');
+    if (!comment || !comment.trim()) return;
+    sendBackBtn.disabled = true;
+    try {
+      await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/send-back`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment: comment.trim() }),
+      });
+      section.remove();
+    } catch (e) {
+      alert('Send back failed: ' + (e.message || e));
+      sendBackBtn.disabled = false;
+    }
+  });
+  actions.appendChild(sendBackBtn);
+
+  const rejectBtn = el('button', 'ship-review-reject-btn', '✕ Reject');
+  rejectBtn.addEventListener('click', async () => {
+    const comment = prompt('Reason for rejection (optional):');
+    const delBranch = confirm('Also delete the remote branch?');
+    rejectBtn.disabled = true;
+    try {
+      await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ comment: comment || '', delete_branch: delBranch }),
+      });
+      section.remove();
+    } catch (e) {
+      alert('Reject failed: ' + (e.message || e));
+      rejectBtn.disabled = false;
+    }
+  });
+  actions.appendChild(rejectBtn);
+
+  section.appendChild(actions);
+  container.appendChild(section);
+}
+
 function renderInteractionCards(container, taskId, interactions) {
   const pending = (interactions || []).filter(i => i.status === 'pending');
   if (!pending.length) return;
@@ -7330,6 +7533,9 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
     errSection.appendChild(logsLink);
     main.appendChild(errSection);
   }
+
+  // Ship Review card (when agent has created one for Board approval)
+  renderShipReviewCard(main, task.id || '');
 
   // Interaction cards (pending ask_user_questions / request_confirmation / suggest_tasks)
   renderInteractionCards(main, task.id || '', interactions || []);

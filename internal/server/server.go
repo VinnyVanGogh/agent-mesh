@@ -152,6 +152,20 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("POST /api/security/gate-requests/{id}/decide", gateH.DecideGateRequest)
 		mux.HandleFunc("GET /api/settings/security-gate", gateH.GetSecurityGateSettings)
 		mux.HandleFunc("POST /api/settings/security-gate", gateH.UpdateSecurityGateSettings)
+
+		// Ship Review REST API (Board-approval gate for agent branch merges)
+		shipH := NewShipReviewHandler(s.opts.DB, s.hub)
+		mux.HandleFunc("GET /api/tasks/{id}/ship-review", shipH.GetCard)
+		mux.HandleFunc("PUT /api/tasks/{id}/ship-review", shipH.UpsertCard)
+		mux.HandleFunc("POST /api/tasks/{id}/ship-review/start-dev", shipH.StartDev)
+		mux.HandleFunc("POST /api/tasks/{id}/ship-review/stop-dev", shipH.StopDev)
+		mux.HandleFunc("POST /api/tasks/{id}/ship-review/approve", shipH.Approve)
+		mux.HandleFunc("POST /api/tasks/{id}/ship-review/send-back", shipH.SendBack)
+		mux.HandleFunc("POST /api/tasks/{id}/ship-review/reject", shipH.Reject)
+		mux.HandleFunc("GET /api/settings/ship-review", shipH.GetSettings)
+		mux.HandleFunc("POST /api/settings/ship-review", shipH.SetSettings)
+		mux.HandleFunc("GET /api/project-dev-configs", shipH.ListProjectDevConfigs)
+		mux.HandleFunc("PUT /api/project-dev-configs", shipH.UpsertProjectDevConfig)
 	}
 
 	// Embedded web UI (must be registered last so /api/* patterns take precedence)
