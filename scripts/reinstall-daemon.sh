@@ -77,6 +77,19 @@ else
 fi
 echo "  Built: $BINARY ($(staypointd -version 2>/dev/null || echo 'ok'))"
 
+# Build the staypoint CLI alongside the daemon so the PreToolUse hook binary
+# (STAYPOINT_HOOK_BIN) is always at the same commit as the daemon (STA-525).
+CLI_BINARY="$HOME/.local/bin/staypoint"
+mkdir -p "$(dirname "$CLI_BINARY")"
+echo "→ Building staypoint CLI from $REPO (commit: $BUILD_LABEL) ..."
+go build -ldflags "-X main.GitCommit=$BUILD_LABEL -X main.commit=$BUILD_LABEL" -o "$CLI_BINARY" "$REPO/cmd/staypoint"
+if [ -n "$SIGN_IDENTITY" ] && [ "$SIGN_IDENTITY" != "-" ]; then
+    codesign -s "$SIGN_IDENTITY" -f --timestamp=none -i com.staypoint.cli "$CLI_BINARY"
+else
+    codesign -s - -f -i com.staypoint.cli "$CLI_BINARY"
+fi
+echo "  Built: $CLI_BINARY"
+
 # Record which commits this binary contains. The checklist commit gate reads
 # this instead of running git: under launchd, macOS blocks the daemon from the
 # repo in ~/Documents until it has Documents access, and git hangs rather than
