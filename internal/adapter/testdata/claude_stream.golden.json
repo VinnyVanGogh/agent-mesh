@@ -75,6 +75,17 @@
     "text": "done"
   },
   {
+    "kind": "usage",
+    "session_id": "00000000-0000-4000-8000-00000000c1a0",
+    "usage": {
+      "input_tokens": 18,
+      "output_tokens": 355,
+      "cache_read_tokens": 56733,
+      "cache_creation_tokens": 23169,
+      "thinking_tokens": 272
+    }
+  },
+  {
     "kind": "result",
     "session_id": "00000000-0000-4000-8000-00000000c1a0",
     "text": "done",

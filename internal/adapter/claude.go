@@ -104,6 +104,25 @@ func (ClaudeAdapter) ParseStreamDelta(line []byte) ([]StreamDelta, error) {
 			}
 			out = append(out, d)
 		}
+		// Emit usage delta from assistant events so stats bar updates during the turn.
+		if ev.Type == "assistant" && ev.Usage != nil {
+			model := ev.Message.Model
+			if model == "" {
+				model = ev.Model
+			}
+			out = append(out, StreamDelta{
+				Kind:      DeltaUsage,
+				SessionID: ev.SessionID,
+				Model:     model,
+				Usage: &Usage{
+					InputTokens:         ev.Usage.InputTokens,
+					OutputTokens:        ev.Usage.OutputTokens,
+					CacheReadTokens:     ev.Usage.CacheReadInputTokens,
+					CacheCreationTokens: ev.Usage.CacheCreationInputTokens,
+					ThinkingTokens:      ev.Usage.OutputTokensDetails.ThinkingTokens,
+				},
+			})
+		}
 		return out, nil
 
 	case "result":
@@ -114,16 +133,26 @@ func (ClaudeAdapter) ParseStreamDelta(line []byte) ([]StreamDelta, error) {
 			Text:      ev.Result,
 			IsError:   ev.IsError,
 		}
+		var out []StreamDelta
 		if ev.Usage != nil {
-			d.Usage = &Usage{
+			u := &Usage{
 				InputTokens:         ev.Usage.InputTokens,
 				OutputTokens:        ev.Usage.OutputTokens,
 				CacheReadTokens:     ev.Usage.CacheReadInputTokens,
 				CacheCreationTokens: ev.Usage.CacheCreationInputTokens,
 				ThinkingTokens:      ev.Usage.OutputTokensDetails.ThinkingTokens,
 			}
+			d.Usage = u
+			// Emit a separate DeltaUsage so the stats bar gets final token counts.
+			out = append(out, StreamDelta{
+				Kind:      DeltaUsage,
+				SessionID: ev.SessionID,
+				Model:     ev.Model,
+				Usage:     u,
+			})
 		}
-		return []StreamDelta{d}, nil
+		out = append(out, d)
+		return out, nil
 	}
 
 	return []StreamDelta{{Kind: DeltaOther, SessionID: ev.SessionID, Raw: ev.Type}}, nil
