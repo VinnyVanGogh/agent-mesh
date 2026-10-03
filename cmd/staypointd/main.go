@@ -382,6 +382,7 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 			ParseDelta:       parseDelta,
 			RunControl:       orchestrator.GlobalRunControl,
 			SkipGitPreflight: adapterOverride != nil,
+			HookBin:          resolveStaypointCLIBin(),
 		})
 		if runErr != nil {
 			if errors.Is(runErr, orchestrator.ErrConcurrencyCap) {
@@ -444,4 +445,31 @@ func emitRouteStep(sr *orchestrator.StepRecorder, dbConn *sql.DB, taskID string)
 	} else {
 		sr.EmitRoute("Ran on "+res.SelectedDisplay, "Kind of work: "+workKind)
 	}
+}
+
+// resolveStaypointCLIBin returns the absolute path of the staypoint CLI binary
+// for injection as STAYPOINT_HOOK_BIN into adapter runs (STA-525).
+// Precedence: STAYPOINT_CLI_BIN env → ~/.local/bin/staypoint.
+// PATH lookup is deliberately omitted: a controlled install path prevents an
+// adversarial PATH entry from substituting a different binary as the hook gate.
+// Returns "" (fail-open) with a warning log if none can be found; runs still
+// proceed but pause will not hold at step boundaries until the CLI is installed.
+func resolveStaypointCLIBin() string {
+	if v := os.Getenv("STAYPOINT_CLI_BIN"); v != "" {
+		if _, err := os.Stat(v); err == nil {
+			return v
+		}
+		slog.Warn("STAYPOINT_CLI_BIN set but binary not found; PreToolUse pause gate will not fire",
+			slog.String("path", v))
+		return ""
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidate := filepath.Join(home, ".local", "bin", "staypoint")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	slog.Warn("staypoint CLI binary not found at ~/.local/bin/staypoint; " +
+		"run reinstall-daemon.sh to build it. PreToolUse pause gate will not fire until installed.")
+	return ""
 }

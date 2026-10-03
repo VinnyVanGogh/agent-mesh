@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -18,8 +19,75 @@ func (ClaudeAdapter) KnownMajorVersions() []int { return []int{2} }
 
 func (ClaudeAdapter) BuildArgs(opts ParsedOptions) []string { return buildClaudeArgs(opts) }
 
+// Execute overrides the generic helper to inject a per-run --settings file that
+// registers staypoint hook pre-tool as a PreToolUse hook (STA-525).
+// The hook path comes from STAYPOINT_HOOK_BIN in extraEnv (injected by the harness)
+// or from the OS environment as a fallback. If no binary is found the invocation
+// proceeds without the extra settings file (fail-open).
+// Gemini/agy adapter parity is intentionally deferred — that adapter does not
+// support a --settings equivalent; a separate issue tracks it (STA-525 out-of-scope).
 func (a ClaudeAdapter) Execute(ctx context.Context, req ExecRequest) error {
-	return execute(ctx, a, req)
+	args := a.BuildArgs(req.Opts)
+	if settingsPath := writePreToolHookSettings(req.ExtraEnv); settingsPath != "" {
+		defer os.Remove(settingsPath)
+		args = append([]string{"--settings", settingsPath}, args...)
+	}
+	return runCommandWithEnv(ctx, req.Dir, req.Bin, args, req.ExtraEnv, req.Stdin, req.Stdout, req.Stderr)
+}
+
+// writePreToolHookSettings writes a per-run temp settings JSON that registers
+// staypoint hook pre-tool as a Claude Code PreToolUse hook, then returns its
+// path.  Returns "" (fail-open) if no hook binary can be found or the file
+// cannot be written.
+func writePreToolHookSettings(extraEnv []string) string {
+	hookBin := extraEnvValue(extraEnv, "STAYPOINT_HOOK_BIN")
+	if hookBin == "" {
+		hookBin = os.Getenv("STAYPOINT_HOOK_BIN")
+	}
+	if hookBin == "" {
+		return ""
+	}
+
+	type hookEntry struct {
+		Type    string `json:"type"`
+		Command string `json:"command"`
+	}
+	type hookGroup struct {
+		Hooks []hookEntry `json:"hooks"`
+	}
+	settings := map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse": []hookGroup{
+				{Hooks: []hookEntry{{Type: "command", Command: hookBin + " hook pre-tool"}}},
+			},
+		},
+	}
+	data, err := json.Marshal(settings)
+	if err != nil {
+		return ""
+	}
+	f, err := os.CreateTemp("", "staypoint-claude-settings-*.json")
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
+		os.Remove(f.Name())
+		return ""
+	}
+	return f.Name()
+}
+
+// extraEnvValue returns the value for key in an env slice ("KEY=val" format).
+// Returns "" if not found.
+func extraEnvValue(env []string, key string) string {
+	prefix := key + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return e[len(prefix):]
+		}
+	}
+	return ""
 }
 
 type claudeUsage struct {

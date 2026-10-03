@@ -105,6 +105,11 @@ type RunConfig struct {
 	EmitRoute func(sr *StepRecorder)
 	// RunControl, when set, enables pause/stop/message-inject controls for this run.
 	RunControl *RunControl
+	// HookBin, when set, is forwarded to the adapter as STAYPOINT_HOOK_BIN so the
+	// Claude adapter can register staypoint hook pre-tool as a PreToolUse hook in a
+	// per-run --settings file (STA-525).  Should point to the staypoint CLI binary
+	// built from the same commit as the daemon.
+	HookBin string
 }
 
 // RunResult summarises a completed autonomous run.
@@ -269,6 +274,11 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	// Expose task ID so the PreToolUse hook can check the pause flag before
 	// each tool call, enabling step-boundary pause rather than turn-boundary.
 	providerEnv = append(providerEnv, "STAYPOINT_TASK_ID="+taskID)
+	// Expose the staypoint CLI path so the Claude adapter can register it as a
+	// PreToolUse hook in a per-run --settings file (STA-525).
+	if cfg.HookBin != "" {
+		providerEnv = append(providerEnv, "STAYPOINT_HOOK_BIN="+cfg.HookBin)
+	}
 
 	// Emit wake + route steps now that the claim succeeded.
 	// These are intentionally emitted after Claim so that refused runs
