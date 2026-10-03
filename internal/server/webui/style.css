@@ -3729,3 +3729,93 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
 }
 .ship-review-reject-btn:hover { background: rgba(248,81,73,.2); }
 .ship-review-reject-btn:disabled { opacity: .5; cursor: default; }
+
+/* ── Migrations panel ─────────────────────────────────────────────────────── */
+.migrations-section { margin-top: 16px; }
+.migration-file-card {
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  margin-bottom: 14px;
+  overflow: hidden;
+  background: var(--bg-secondary, #161b22);
+}
+.migration-file-card.migration-applied {
+  opacity: 0.65;
+  border-color: rgba(56,189,248,.4);
+}
+.migration-file-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-family: monospace;
+  font-size: 0.82rem;
+  background: var(--bg-tertiary, #0d1117);
+  color: var(--fg-muted, #8b949e);
+  border-bottom: 1px solid var(--border, #30363d);
+  flex-wrap: wrap;
+}
+.migration-badge-safe {
+  font-size: 0.72rem;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(56,189,248,.1);
+  border: 1px solid rgba(56,189,248,.4);
+  color: #38bdf8;
+  white-space: nowrap;
+  margin-left: auto;
+}
+.migration-badge-risk {
+  font-size: 0.72rem;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(248,81,73,.12);
+  border: 1px solid rgba(248,81,73,.4);
+  color: var(--red, #f85149);
+  white-space: nowrap;
+  margin-left: auto;
+}
+.migration-risk-list {
+  margin: 0;
+  padding: 8px 12px 8px 28px;
+  background: rgba(248,81,73,.06);
+  border-bottom: 1px solid rgba(248,81,73,.2);
+  list-style: disc;
+}
+.migration-risk-item {
+  font-family: monospace;
+  font-size: 0.79rem;
+  color: var(--red, #f85149);
+  line-height: 1.5;
+}
+.migration-sql-block {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  background: var(--bg-secondary, #161b22);
+  color: var(--fg, #e6edf3);
+  max-height: 340px;
+  overflow-y: auto;
+}
+.migration-sql-block code { background: none; padding: 0; }
+.sql-kw { color: #ff7b72; font-weight: 600; }
+.sql-comment { color: #8b949e; font-style: italic; }
+.sql-str { color: #a5d6ff; }
+.migration-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border, #30363d);
+  background: var(--bg-tertiary, #0d1117);
+}
+.migration-copy-btn, .migration-apply-btn {
+  font-size: 0.79rem;
+  padding: 4px 11px;
+}
+.migrations-editor-link {
+  text-decoration: none;
+}
+.migrations-editor-link:hover { text-decoration: underline; }

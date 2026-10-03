@@ -869,6 +869,27 @@ var Migrations = []Migration{
 			return nil
 		},
 	},
+	{
+		Version: 18,
+		Name:    "project_migration_config",
+		Up: func(conn *sql.DB) error {
+			// Add migration_globs_json and sql_editor_url to project_dev_configs.
+			// ALTER TABLE … ADD COLUMN is idempotent-guarded by the duplicate-column-name check.
+			cols := []struct{ name, def string }{
+				{"migration_globs_json", "TEXT NOT NULL DEFAULT '[]'"},
+				{"sql_editor_url", "TEXT NOT NULL DEFAULT ''"},
+			}
+			for _, c := range cols {
+				_, err := conn.Exec(fmt.Sprintf(
+					"ALTER TABLE project_dev_configs ADD COLUMN %s %s;", c.name, c.def,
+				))
+				if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+					return err
+				}
+			}
+			return nil
+		},
+	},
 }
 
 func copyFile(src, dst string) error {

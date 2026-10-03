@@ -7351,6 +7351,147 @@ async function renderShipReviewCard(container, taskId) {
   container.appendChild(section);
 }
 
+// ── Migrations panel ──────────────────────────────────────────────────────────
+
+// highlightSQL applies minimal keyword-based syntax colouring to a SQL string.
+function highlightSQL(raw) {
+  const keywords = [
+    'SELECT','INSERT','UPDATE','DELETE','CREATE','DROP','ALTER','TRUNCATE',
+    'TABLE','VIEW','INDEX','SEQUENCE','FUNCTION','PROCEDURE','TRIGGER',
+    'FROM','WHERE','JOIN','LEFT','RIGHT','INNER','OUTER','ON','AS',
+    'SET','VALUES','INTO','AND','OR','NOT','NULL','DEFAULT','PRIMARY','KEY',
+    'FOREIGN','REFERENCES','UNIQUE','CHECK','CONSTRAINT','ADD','COLUMN',
+    'TYPE','CASCADE','IF','EXISTS','BEGIN','COMMIT','ROLLBACK','POLICY',
+    'ENABLE','DISABLE','ROW','LEVEL','SECURITY','GRANT','REVOKE',
+    'RETURNS','LANGUAGE','PLPGSQL','VOLATILE','STABLE','IMMUTABLE',
+  ];
+  const escaped = escapeHtml(raw);
+  // Wrap keywords (word-boundary, case-insensitive)
+  const kwRe = new RegExp(`\\b(${keywords.join('|')})\\b`, 'gi');
+  const withKw = escaped.replace(kwRe, '<span class="sql-kw">$1</span>');
+  // Comments
+  const withComments = withKw.replace(/(--[^\n]*)/g, '<span class="sql-comment">$1</span>');
+  // String literals
+  const withStrings = withComments.replace(/('(?:[^']|'')*')/g, '<span class="sql-str">$1</span>');
+  return withStrings;
+}
+
+async function renderMigrationsPanel(container, taskId) {
+  let data;
+  try {
+    data = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/migrations`);
+  } catch {
+    return; // no migrations or fetch error
+  }
+  const migrations = data.migrations || [];
+  if (!migrations.length) return;
+
+  const section = el('div', 'task-page-section migrations-section');
+  section.id = `migrations-panel-${taskId}`;
+
+  const titleRow = el('div', 'task-page-section-title-row');
+  titleRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+  titleRow.appendChild(el('div', 'task-page-section-title', `Migrations (${migrations.length})`));
+
+  if (data.sql_editor_url) {
+    const editorLink = document.createElement('a');
+    editorLink.href = data.sql_editor_url;
+    editorLink.target = '_blank';
+    editorLink.rel = 'noopener noreferrer';
+    editorLink.textContent = 'Open SQL editor →';
+    editorLink.className = 'migrations-editor-link';
+    editorLink.style.cssText = 'font-size:0.8rem;color:var(--accent,#38bdf8);margin-left:auto;';
+    titleRow.appendChild(editorLink);
+  }
+  section.appendChild(titleRow);
+
+  for (const mig of migrations) {
+    const card = el('div', 'migration-file-card');
+
+    // Path header row
+    const pathRow = el('div', 'migration-file-path');
+    pathRow.textContent = mig.path;
+
+    // Risk badge
+    const riskBadge = el('span', mig.additive_only ? 'migration-badge-safe' : 'migration-badge-risk',
+      mig.additive_only ? 'Additive only ✓' : '⚠ Destructive');
+    pathRow.appendChild(riskBadge);
+    card.appendChild(pathRow);
+
+    // Risk statement list
+    if (!mig.additive_only && mig.risk_statements && mig.risk_statements.length) {
+      const riskList = el('ul', 'migration-risk-list');
+      for (const stmt of mig.risk_statements) {
+        const li = el('li', 'migration-risk-item', stmt);
+        riskList.appendChild(li);
+      }
+      card.appendChild(riskList);
+    }
+
+    // SQL block with syntax highlighting
+    const pre = document.createElement('pre');
+    pre.className = 'migration-sql-block';
+    const code = document.createElement('code');
+    code.innerHTML = highlightSQL(mig.sql || '');
+    pre.appendChild(code);
+    card.appendChild(pre);
+
+    // Action row: Copy + Mark applied
+    const actions = el('div', 'migration-actions');
+
+    const copyBtn = el('button', 'btn btn-secondary btn-sm migration-copy-btn', 'Copy SQL');
+    copyBtn.title = 'Copy SQL to clipboard';
+    copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(mig.sql || '');
+        copyBtn.textContent = '✓ Copied';
+        setTimeout(() => { copyBtn.textContent = 'Copy SQL'; }, 2000);
+      } catch {
+        // Fallback for non-HTTPS contexts
+        const ta = document.createElement('textarea');
+        ta.value = mig.sql || '';
+        ta.style.cssText = 'position:fixed;opacity:0;';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        copyBtn.textContent = '✓ Copied';
+        setTimeout(() => { copyBtn.textContent = 'Copy SQL'; }, 2000);
+      }
+    });
+    actions.appendChild(copyBtn);
+
+    const applyBtn = el('button', 'btn btn-secondary btn-sm migration-apply-btn', 'Mark applied');
+    applyBtn.title = 'Record that this migration was applied';
+    applyBtn.dataset.path = mig.path;
+    applyBtn.dataset.applied = '';
+    applyBtn.addEventListener('click', async () => {
+      if (applyBtn.dataset.applied) return;
+      applyBtn.disabled = true;
+      applyBtn.textContent = 'Marking…';
+      try {
+        await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/migrations/mark-applied`, {
+          method: 'POST',
+          body: JSON.stringify({ path: mig.path, applied_by: 'board' }),
+        });
+        applyBtn.textContent = '✓ Applied';
+        applyBtn.dataset.applied = '1';
+        card.classList.add('migration-applied');
+      } catch (err) {
+        applyBtn.disabled = false;
+        applyBtn.textContent = 'Mark applied';
+        console.error('mark-applied failed:', err);
+      }
+    });
+    actions.appendChild(applyBtn);
+
+    card.appendChild(actions);
+    section.appendChild(card);
+  }
+
+  container.appendChild(section);
+}
+
 function renderInteractionCards(container, taskId, interactions) {
   const pending = (interactions || []).filter(i => i.status === 'pending');
   if (!pending.length) return;
@@ -7656,6 +7797,11 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
 
   // Ship Review card (when agent has created one for Board approval)
   renderShipReviewCard(main, task.id || '');
+
+  // Migrations panel — lazy-loads migration files from the task's diff
+  if (task.id && !isFleetTaskId(task.id || '')) {
+    renderMigrationsPanel(main, task.id);
+  }
 
   // Interaction cards (pending ask_user_questions / request_confirmation / suggest_tasks)
   renderInteractionCards(main, task.id || '', interactions || []);

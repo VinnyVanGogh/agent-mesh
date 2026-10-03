@@ -406,30 +406,45 @@ func runShellStep(step, workDir string) error {
 	return cmd.Run()
 }
 
-// ProjectDevConfig holds per-project dev-server settings.
+// ProjectDevConfig holds per-project dev-server and migration settings.
 type ProjectDevConfig struct {
-	RepoPath   string   `json:"repo_path"`
-	DevCommand string   `json:"dev_command"`
-	DevURL     string   `json:"dev_url"`
-	SetupSteps []string `json:"setup_steps"`
+	RepoPath        string   `json:"repo_path"`
+	DevCommand      string   `json:"dev_command"`
+	DevURL          string   `json:"dev_url"`
+	SetupSteps      []string `json:"setup_steps"`
+	// MigrationGlobs is the list of glob patterns used to detect migration files
+	// in the task's diff. When empty the package-level defaults are used.
+	MigrationGlobs  []string `json:"migration_globs"`
+	// SQLEditorURL is the project's SQL editor deep-link (e.g. Supabase dashboard).
+	SQLEditorURL    string   `json:"sql_editor_url"`
 }
 
 // GetProjectDevConfig loads the dev config for a repo path, or returns defaults.
 func GetProjectDevConfig(db *sql.DB, repoPath string) (*ProjectDevConfig, error) {
-	var stepsJSON, devCommand, devURL string
+	var stepsJSON, devCommand, devURL, migGlobsJSON, sqlEditorURL string
 	err := db.QueryRow(
-		`SELECT dev_command, dev_url, setup_steps_json FROM project_dev_configs WHERE repo_path = ?`,
+		`SELECT dev_command, dev_url, setup_steps_json,
+		        COALESCE(migration_globs_json,'[]'), COALESCE(sql_editor_url,'')
+		 FROM project_dev_configs WHERE repo_path = ?`,
 		repoPath,
-	).Scan(&devCommand, &devURL, &stepsJSON)
+	).Scan(&devCommand, &devURL, &stepsJSON, &migGlobsJSON, &sqlEditorURL)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return &ProjectDevConfig{RepoPath: repoPath}, nil
 		}
 		return nil, err
 	}
-	cfg := &ProjectDevConfig{RepoPath: repoPath, DevCommand: devCommand, DevURL: devURL}
+	cfg := &ProjectDevConfig{
+		RepoPath:     repoPath,
+		DevCommand:   devCommand,
+		DevURL:       devURL,
+		SQLEditorURL: sqlEditorURL,
+	}
 	if err := json.Unmarshal([]byte(stepsJSON), &cfg.SetupSteps); err != nil {
 		cfg.SetupSteps = []string{}
+	}
+	if err := json.Unmarshal([]byte(migGlobsJSON), &cfg.MigrationGlobs); err != nil {
+		cfg.MigrationGlobs = []string{}
 	}
 	return cfg, nil
 }
@@ -440,22 +455,33 @@ func UpsertProjectDevConfig(db *sql.DB, cfg *ProjectDevConfig) error {
 	if err != nil {
 		return err
 	}
+	migGlobsJSON, err := json.Marshal(cfg.MigrationGlobs)
+	if err != nil {
+		return err
+	}
 	_, err = db.Exec(`
-		INSERT INTO project_dev_configs (repo_path, dev_command, dev_url, setup_steps_json, updated_at)
-		VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+		INSERT INTO project_dev_configs
+			(repo_path, dev_command, dev_url, setup_steps_json, migration_globs_json, sql_editor_url, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 		ON CONFLICT(repo_path) DO UPDATE SET
-			dev_command = excluded.dev_command,
-			dev_url = excluded.dev_url,
-			setup_steps_json = excluded.setup_steps_json,
-			updated_at = excluded.updated_at`,
-		cfg.RepoPath, cfg.DevCommand, cfg.DevURL, string(stepsJSON),
+			dev_command          = excluded.dev_command,
+			dev_url              = excluded.dev_url,
+			setup_steps_json     = excluded.setup_steps_json,
+			migration_globs_json = excluded.migration_globs_json,
+			sql_editor_url       = excluded.sql_editor_url,
+			updated_at           = excluded.updated_at`,
+		cfg.RepoPath, cfg.DevCommand, cfg.DevURL,
+		string(stepsJSON), string(migGlobsJSON), cfg.SQLEditorURL,
 	)
 	return err
 }
 
 // ListProjectDevConfigs returns all project dev configs.
 func ListProjectDevConfigs(db *sql.DB) ([]*ProjectDevConfig, error) {
-	rows, err := db.Query(`SELECT repo_path, dev_command, dev_url, setup_steps_json FROM project_dev_configs ORDER BY repo_path`)
+	rows, err := db.Query(`
+		SELECT repo_path, dev_command, dev_url, setup_steps_json,
+		       COALESCE(migration_globs_json,'[]'), COALESCE(sql_editor_url,'')
+		FROM project_dev_configs ORDER BY repo_path`)
 	if err != nil {
 		return nil, err
 	}
@@ -463,12 +489,15 @@ func ListProjectDevConfigs(db *sql.DB) ([]*ProjectDevConfig, error) {
 	var out []*ProjectDevConfig
 	for rows.Next() {
 		var c ProjectDevConfig
-		var stepsJSON string
-		if err := rows.Scan(&c.RepoPath, &c.DevCommand, &c.DevURL, &stepsJSON); err != nil {
+		var stepsJSON, migGlobsJSON string
+		if err := rows.Scan(&c.RepoPath, &c.DevCommand, &c.DevURL, &stepsJSON, &migGlobsJSON, &c.SQLEditorURL); err != nil {
 			continue
 		}
 		if err := json.Unmarshal([]byte(stepsJSON), &c.SetupSteps); err != nil {
 			c.SetupSteps = []string{}
+		}
+		if err := json.Unmarshal([]byte(migGlobsJSON), &c.MigrationGlobs); err != nil {
+			c.MigrationGlobs = []string{}
 		}
 		out = append(out, &c)
 	}
