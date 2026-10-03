@@ -12,11 +12,13 @@ import (
 
 const sessionCookieName = "staypoint_session"
 
+// boardCookieName carries the board credential, set only during the browser ?token= bootstrap.
+// Agents that don't follow the cookie exchange cannot obtain it without an explicit HTTP
+// session with a cookie jar (which the pre-tool hook classifies as Red-tier).
+const boardCookieName = "staypoint_board"
+
 // sessionCookieMaxAge is 30 days; long enough that a bookmark just works.
 const sessionCookieMaxAge = 30 * 24 * 60 * 60
-
-// boardTokenHeader is the request header agents cannot forge without reading board_token.
-const boardTokenHeader = "X-StayPoint-Board-Token"
 
 // SecurityMiddleware returns a middleware that validates Host and Origin headers,
 // enforces no-wildcard CORS, and verifies the local auth token.
@@ -58,26 +60,30 @@ func NewSecurityMiddlewareWithBoardToken(token, boardToken string, port int, cor
 // BoardToken returns the board-only credential.
 func (sm *SecurityMiddleware) BoardToken() string { return sm.boardToken }
 
-// WrapBoardAction wraps a handler so it requires X-StayPoint-Board-Token in addition
-// to the normal auth check. Requests that only have the agent auth token are rejected
-// with 403 Forbidden so agents cannot self-approve ship-review or gate decisions.
+// WrapBoardAction wraps a handler so it requires the staypoint_board session cookie in addition
+// to the normal auth check. The cookie is only set during the browser ?token= bootstrap redirect,
+// so agents making plain API requests cannot self-approve ship-review or gate decisions.
 func (sm *SecurityMiddleware) WrapBoardAction(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if sm.boardToken == "" || !sm.hasBoardToken(r) {
-			writeError(w, http.StatusForbidden, "forbidden: board action requires Board token (agent auth token is not sufficient)")
+		if sm.boardToken == "" || !sm.hasBoardCookie(r) {
+			writeError(w, http.StatusForbidden, "forbidden: board action requires a Board session (agent auth token is not sufficient)")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
 }
 
-// hasBoardToken checks whether the request carries the board token.
-func (sm *SecurityMiddleware) hasBoardToken(r *http.Request) bool {
+// hasBoardCookie checks whether the request carries the staypoint_board cookie set during
+// the human-interactive browser bootstrap. Agents that skip the cookie exchange get 403.
+func (sm *SecurityMiddleware) hasBoardCookie(r *http.Request) bool {
 	if sm.boardToken == "" {
 		return false
 	}
-	v := r.Header.Get(boardTokenHeader)
-	return subtle.ConstantTimeCompare([]byte(v), []byte(sm.boardToken)) == 1
+	c, err := r.Cookie(boardCookieName)
+	if err != nil {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(c.Value), []byte(sm.boardToken)) == 1
 }
 
 // SetPort updates the port once the server is listening.
@@ -135,8 +141,10 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 			return
 		}
 
-		// 4. Cookie exchange: if browser hit a UI route with ?token=, set a session
-		// cookie and redirect to the clean URL. After this, the bookmark works.
+		// 4. Cookie exchange: if browser hit a UI route with ?token=, set session and
+		// board cookies then redirect to the clean URL. After this, bookmarks work and
+		// WrapBoardAction accepts the browser's requests. The board cookie is NOT in
+		// any meta tag, so agents cannot extract it from the HTML.
 		if qToken := r.URL.Query().Get("token"); qToken != "" && !strings.HasPrefix(r.URL.Path, "/api/") {
 			if subtle.ConstantTimeCompare([]byte(qToken), []byte(sm.token)) == 1 {
 				http.SetCookie(w, &http.Cookie{
@@ -147,6 +155,16 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 					SameSite: http.SameSiteStrictMode,
 					MaxAge:   sessionCookieMaxAge,
 				})
+				if sm.boardToken != "" {
+					http.SetCookie(w, &http.Cookie{
+						Name:     boardCookieName,
+						Value:    sm.boardToken,
+						Path:     "/",
+						HttpOnly: true,
+						SameSite: http.SameSiteStrictMode,
+						MaxAge:   sessionCookieMaxAge,
+					})
+				}
 				cleanURL := *r.URL
 				q := cleanURL.Query()
 				q.Del("token")

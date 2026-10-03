@@ -174,7 +174,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	}
 
 	// Embedded web UI (must be registered last so /api/* patterns take precedence)
-	RegisterUIRoutes(mux, s.opts.AuthToken, s.opts.BoardToken)
+	RegisterUIRoutes(mux, s.opts.AuthToken)
 }
 
 // Start binds to 127.0.0.1 and starts serving requests in the background.

@@ -670,22 +670,11 @@ func (c *Classifier) home() string {
 func (c *Classifier) sensitiveDirs() []string {
 	dirs := []string{"/etc", "/private/etc"}
 	if h := c.home(); h != "" {
-		for _, d := range []string{".ssh", ".aws", ".gnupg"} {
+		for _, d := range []string{".ssh", ".aws", ".gnupg", ".staypoint"} {
 			dirs = append(dirs, filepath.Join(h, d))
 		}
 	}
 	return dirs
-}
-
-// sensitiveTokenFiles returns specific token files that agents must not read.
-func (c *Classifier) sensitiveTokenFiles() []string {
-	if h := c.home(); h != "" {
-		return []string{
-			filepath.Join(h, ".staypoint", "auth_token"),
-			filepath.Join(h, ".staypoint", "board_token"),
-		}
-	}
-	return nil
 }
 
 // classifyInlineScript checks an inline script body (from -c / -e / --eval) for:
@@ -746,11 +735,6 @@ func (c *Classifier) checkPath(tok string, v *Verdict) {
 		for _, d := range c.sensitiveDirs() {
 			if clean == d || strings.HasPrefix(clean, d+string(filepath.Separator)) {
 				v.raise(Red, "touches sensitive path "+d)
-			}
-		}
-		for _, f := range c.sensitiveTokenFiles() {
-			if clean == f {
-				v.raise(Red, "reads staypoint token file")
 			}
 		}
 		if c.Worktree != nil {

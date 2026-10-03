@@ -1333,7 +1333,7 @@ func TestServer_REST_RunControlState(t *testing.T) {
 
 // TestServer_BoardToken_Required verifies that Board-only mutation endpoints
 // reject requests that carry only the agent auth token (403 Forbidden) and
-// accept requests that include the separate board token header.
+// accept requests that include the staypoint_board session cookie.
 func TestServer_BoardToken_Required(t *testing.T) {
 	database := setupTestDB(t)
 	srv, token := startTestServer(t, database)
@@ -1369,7 +1369,7 @@ func TestServer_BoardToken_Required(t *testing.T) {
 		}
 		req, _ := http.NewRequest(method, url, b)
 		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("X-StayPoint-Board-Token", boardToken)
+		req.AddCookie(&http.Cookie{Name: "staypoint_board", Value: boardToken})
 		if body != "" {
 			req.Header.Set("Content-Type", "application/json")
 		}

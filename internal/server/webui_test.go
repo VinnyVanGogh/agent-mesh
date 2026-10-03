@@ -10,7 +10,7 @@ import (
 func TestRegisterUIRoutes_Root(t *testing.T) {
 	mux := http.NewServeMux()
 	const token = "test-tok-abc"
-	RegisterUIRoutes(mux, token, "test-board-token")
+	RegisterUIRoutes(mux, token)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -33,7 +33,7 @@ func TestRegisterUIRoutes_Root(t *testing.T) {
 
 func TestRegisterUIRoutes_StaticAssets(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "tok", "board-tok")
+	RegisterUIRoutes(mux, "tok")
 
 	for _, path := range []string{"/ui/style.css", "/ui/app.js"} {
 		req := httptest.NewRequest("GET", path, nil)
@@ -47,7 +47,7 @@ func TestRegisterUIRoutes_StaticAssets(t *testing.T) {
 
 func TestRegisterUIRoutes_NotFoundForUnknownPath(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "tok", "board-tok")
+	RegisterUIRoutes(mux, "tok")
 
 	req := httptest.NewRequest("GET", "/unknown/path", nil)
 	w := httptest.NewRecorder()
@@ -62,7 +62,7 @@ func TestRegisterUIRoutes_TokenXSSEscape(t *testing.T) {
 	mux := http.NewServeMux()
 	// Token with characters that must be HTML-escaped in attribute context
 	const maliciousToken = `"><script>alert(1)</script>`
-	RegisterUIRoutes(mux, maliciousToken, "test-board")
+	RegisterUIRoutes(mux, maliciousToken)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -76,7 +76,7 @@ func TestRegisterUIRoutes_TokenXSSEscape(t *testing.T) {
 
 func TestRegisterUIRoutes_SPARoutes(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-tok", "board-tok")
+	RegisterUIRoutes(mux, "test-tok")
 
 	routes := []string{
 		"/checklist",
@@ -111,7 +111,7 @@ func TestRegisterUIRoutes_SPARoutes(t *testing.T) {
 
 func TestRegisterUIRoutes_HierarchicalTaskRoutes(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-hierarchical-tok", "board-tok")
+	RegisterUIRoutes(mux, "test-hierarchical-tok")
 
 	// 1. Verify hierarchical SPA URL paths resolve with 200 OK
 	hierarchicalPaths := []string{
@@ -163,7 +163,7 @@ func TestRegisterUIRoutes_HierarchicalTaskRoutes(t *testing.T) {
 
 func TestWebUI_DetailPanelPolishAndDismiss(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-tok", "board-tok")
+	RegisterUIRoutes(mux, "test-tok")
 
 	// Verify app.js serves required detail panel behavior
 	reqJS := httptest.NewRequest("GET", "/ui/app.js", nil)
@@ -213,7 +213,7 @@ func TestWebUI_DetailPanelPolishAndDismiss(t *testing.T) {
 
 func TestWebUI_SettingsQuotaAndFleetModal(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-token", "board-token")
+	RegisterUIRoutes(mux, "test-token")
 
 	// 1. Verify index.html contains the modal markup
 	reqRoot := httptest.NewRequest("GET", "/", nil)
@@ -288,7 +288,7 @@ func TestWebUI_SettingsQuotaAndFleetModal(t *testing.T) {
 
 func TestRegisterUIRoutes_ProjectsViewElements(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-tok", "board-tok")
+	RegisterUIRoutes(mux, "test-tok")
 
 	// 1. Verify index.html contains projects multi-org controls and status filters
 	req := httptest.NewRequest("GET", "/projects", nil)
@@ -361,7 +361,7 @@ func TestRegisterUIRoutes_ProjectsViewElements(t *testing.T) {
 
 func TestRegisterUIRoutes_STA194_ClickableKPIsAndBossCarousel(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-tok", "board-tok")
+	RegisterUIRoutes(mux, "test-tok")
 
 	// 1. Verify index.html contains clickable KPI cards for Running, Active, Blocked, Done, Total, Agents, Spend
 	req := httptest.NewRequest("GET", "/overview", nil)
@@ -436,7 +436,7 @@ func TestRegisterUIRoutes_STA194_ClickableKPIsAndBossCarousel(t *testing.T) {
 
 func TestRegisterUIRoutes_TableSortingAndSearchElements(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-tok", "board-tok")
+	RegisterUIRoutes(mux, "test-tok")
 
 	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
@@ -504,7 +504,7 @@ func TestRegisterUIRoutes_TableSortingAndSearchElements(t *testing.T) {
 
 func TestRegisterUIRoutes_RecentTasksSubtaskTreeAndFilterOrder(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-tok", "board-tok")
+	RegisterUIRoutes(mux, "test-tok")
 
 	// 1. Verify HTML: Recent Tasks dropdown filters order is Organization, Project, Priority
 	req := httptest.NewRequest("GET", "/recent-tasks", nil)
@@ -581,7 +581,7 @@ func TestRegisterUIRoutes_RecentTasksSubtaskTreeAndFilterOrder(t *testing.T) {
 
 func TestRegisterUIRoutes_STA208_TableSortingAndFilterControls(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-tok", "board-tok")
+	RegisterUIRoutes(mux, "test-tok")
 
 	// 1. Verify index.html contains standardized filter order across views
 	reqHTML := httptest.NewRequest("GET", "/", nil)
@@ -666,7 +666,7 @@ func TestRegisterUIRoutes_STA208_TableSortingAndFilterControls(t *testing.T) {
 
 func TestRegisterUIRoutes_AgentsCascadingProjectFilter(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-tok", "board-tok")
+	RegisterUIRoutes(mux, "test-tok")
 
 	// 1. Verify index.html contains the necessary filter elements
 	reqHTML := httptest.NewRequest("GET", "/", nil)
@@ -718,7 +718,7 @@ func TestRegisterUIRoutes_AgentsCascadingProjectFilter(t *testing.T) {
 
 func TestRegisterUIRoutes_STA213_BossCardCachingAndFullPageTaskView(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-tok", "board-tok")
+	RegisterUIRoutes(mux, "test-tok")
 
 	// 1. Verify index.html contains expand button & header actions in detail panel
 	reqHTML := httptest.NewRequest("GET", "/", nil)
@@ -792,7 +792,7 @@ func TestRegisterUIRoutes_STA213_BossCardCachingAndFullPageTaskView(t *testing.T
 
 func TestWebUI_ChecklistCommitHashGate(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-tok", "board-tok")
+	RegisterUIRoutes(mux, "test-tok")
 
 	// 1. Verify style.css includes commit gate banner, table, and blocked button styles
 	reqCSS := httptest.NewRequest("GET", "/ui/style.css", nil)
@@ -842,7 +842,7 @@ func TestWebUI_ChecklistCommitHashGate(t *testing.T) {
 // STA-413: New Task form must have "Kind of work" select instead of Assignee dropdown.
 func TestWebUI_CreateTaskKindOfWork(t *testing.T) {
 	mux := http.NewServeMux()
-	RegisterUIRoutes(mux, "test-tok", "board-tok")
+	RegisterUIRoutes(mux, "test-tok")
 
 	// 1. index.html has ct-work-kind select with all 4 options; no ct-assignee
 	reqRoot := httptest.NewRequest("GET", "/", nil)
