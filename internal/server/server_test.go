@@ -1330,3 +1330,90 @@ func TestServer_REST_RunControlState(t *testing.T) {
 		t.Fatalf("long-poll returned too fast (%v), expected ~100ms", elapsed)
 	}
 }
+
+// TestServer_BoardToken_Required verifies that Board-only mutation endpoints
+// reject requests that carry only the agent auth token (403 Forbidden) and
+// accept requests that include the separate board token header.
+func TestServer_BoardToken_Required(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	boardToken := srv.BoardToken()
+	if boardToken == "" {
+		t.Fatal("BoardToken() returned empty string — board token was not generated")
+	}
+	if boardToken == token {
+		t.Fatal("BoardToken() must differ from the agent AuthToken")
+	}
+
+	authOnly := func(method, url, body string) *http.Response {
+		var b io.Reader
+		if body != "" {
+			b = strings.NewReader(body)
+		}
+		req, _ := http.NewRequest(method, url, b)
+		req.Header.Set("Authorization", "Bearer "+token)
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		return resp
+	}
+
+	withBoard := func(method, url, body string) *http.Response {
+		var b io.Reader
+		if body != "" {
+			b = strings.NewReader(body)
+		}
+		req, _ := http.NewRequest(method, url, b)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-StayPoint-Board-Token", boardToken)
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		return resp
+	}
+
+	base := srv.URL()
+
+	// Create a task so ship-review and gate endpoints have a valid ID to reject.
+	taskID := "test-board-token-task"
+	createBody := `{"id":"` + taskID + `","name":"Board token test task","repo_path":"/tmp"}`
+	createResp := authOnly("POST", base+"/api/tasks", createBody)
+	createResp.Body.Close()
+
+	boardEndpoints := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{"POST", "/api/tasks/" + taskID + "/ship-review/approve", ""},
+		{"POST", "/api/tasks/" + taskID + "/ship-review/send-back", `{"comment":"test"}`},
+		{"POST", "/api/tasks/" + taskID + "/ship-review/reject", `{"comment":"test"}`},
+		{"POST", "/api/security/gate-requests/nonexistent-id/decide", `{"decision":"approved"}`},
+		{"POST", "/api/settings/security-gate", `{"main_merge_approval":true}`},
+		{"POST", "/api/settings/ship-review", `{"ship_review":true}`},
+	}
+
+	for _, ep := range boardEndpoints {
+		// Agent auth token alone → 403
+		resp := authOnly(ep.method, base+ep.path, ep.body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s %s with agent token only: want 403, got %d", ep.method, ep.path, resp.StatusCode)
+		}
+
+		// Board token included → not 403 (may be 404/409/etc depending on state, but not a token rejection)
+		resp = withBoard(ep.method, base+ep.path, ep.body)
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+			t.Errorf("%s %s with board token: want not 401/403, got %d", ep.method, ep.path, resp.StatusCode)
+		}
+	}
+}

@@ -206,3 +206,84 @@ func TestPreToolHookGateRequestPersistence(t *testing.T) {
 		t.Errorf("want 0 pending, got %d", len(pending))
 	}
 }
+
+// TestPreToolHookPythonNodeBoardEndpoints verifies that inline Python/Node scripts
+// that POST to board-only API endpoints are classified Red — blocking agents from
+// self-approving ship-review cards or gate requests without going through the Bash tool.
+func TestPreToolHookPythonNodeBoardEndpoints(t *testing.T) {
+	c := &Classifier{}
+	blocked := []string{
+		// Python urllib targeting ship-review/approve
+		`python3 -c "import urllib.request as u;u.urlopen(u.Request('http://127.0.0.1:41421/api/tasks/X/ship-review/approve',method='POST'))"`,
+		// Python requests.post
+		`python3 -c "import requests; requests.post('http://127.0.0.1:41421/api/tasks/X/ship-review/approve')"`,
+		// Python gate decide
+		`python3 -c "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:41421/api/security/gate-requests/abc/decide',method='POST'))"`,
+		// Node.js http
+		`node -e "const http=require('http');http.request({method:'POST',path:'/api/tasks/X/ship-review/reject'})"`,
+		// Node.js fetch
+		`node -e "fetch('http://127.0.0.1:41421/api/tasks/X/ship-review/send-back',{method:'POST'})"`,
+		// Settings endpoint
+		`python3 -c "import requests; requests.post('http://127.0.0.1:41421/api/settings/security-gate')"`,
+		`python3 -c "import requests; requests.post('http://127.0.0.1:41421/api/settings/ship-review')"`,
+		// ship-review/send-back with POST
+		`python3 -c "import urllib.request as u; u.urlopen(u.Request('http://127.0.0.1:41421/api/tasks/X/ship-review/send-back',method='POST'))"`,
+	}
+	for _, cmd := range blocked {
+		v := c.Classify(cmd)
+		if v.Tier != Red {
+			t.Errorf("pre-tool hook should block %q: got tier %s (reasons: %v)", cmd, v.Tier, v.Reasons)
+		}
+	}
+
+	// Python that doesn't target a board endpoint is not Red (still Yellow).
+	allowed := []string{
+		`python3 -c "print('hello')"`,
+		`python3 -c "import requests; requests.get('http://127.0.0.1:41421/api/tasks/X/ship-review')"`,
+		`node -e "console.log('ok')"`,
+	}
+	for _, cmd := range allowed {
+		v := c.Classify(cmd)
+		if v.Tier == Red {
+			t.Errorf("pre-tool hook should not block %q: got Red (%s)", cmd, strings.Join(v.Reasons, "; "))
+		}
+	}
+}
+
+// TestPreToolHookTokenFileRead verifies that Bash reads of the staypoint auth/board
+// token files are classified Red — preventing agents from extracting the board token.
+func TestPreToolHookTokenFileRead(t *testing.T) {
+	homeDir := t.TempDir()
+	c := &Classifier{Home: homeDir}
+
+	blocked := []string{
+		"cat ~/.staypoint/auth_token",
+		"cat ~/.staypoint/board_token",
+		"cat $HOME/.staypoint/auth_token",
+		"cat ${HOME}/.staypoint/auth_token",
+	}
+	for _, cmd := range blocked {
+		v := c.Classify(cmd)
+		if v.Tier != Red {
+			t.Errorf("token file read %q should be Red, got %s", cmd, v.Tier)
+		}
+	}
+}
+
+// TestPreToolHookPythonTokenFileRead verifies that inline Python scripts that read
+// the staypoint token files are classified Red.
+func TestPreToolHookPythonTokenFileRead(t *testing.T) {
+	c := &Classifier{}
+	blocked := []string{
+		`python3 -c "t=open(os.path.expanduser('~/.staypoint/auth_token')).read()"`,
+		`python3 -c "open('/home/user/.staypoint/auth_token').read()"`,
+		`python3 -c "f=open('auth_token');t=f.read()"`,
+		`node -e "require('fs').readFileSync('/home/user/.staypoint/board_token','utf8')"`,
+	}
+	for _, cmd := range blocked {
+		v := c.Classify(cmd)
+		if v.Tier != Red {
+			t.Errorf("python token read %q should be Red, got %s (reasons: %v)", cmd, v.Tier, v.Reasons)
+		}
+	}
+}

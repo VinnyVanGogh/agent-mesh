@@ -40,6 +40,17 @@ type Options struct {
 	// If empty and AuthToken is empty, a random token is generated in memory.
 	TokenPath string
 
+	// BoardToken is a separate secret required for Board-only mutation endpoints
+	// (ship-review approve/reject/send-back, gate decide, settings POSTs).
+	// Agents that only hold AuthToken cannot call these endpoints; only the Board UI
+	// (which receives BoardToken embedded in the served HTML) can call them.
+	// If empty, Validate() will load from BoardTokenPath or generate one.
+	BoardToken string
+
+	// BoardTokenPath is the filesystem path to store/read the board token.
+	// If empty and BoardToken is empty, a random board token is generated in memory.
+	BoardTokenPath string
+
 	// DB is the SQLite database connection backing the orchestrator.
 	DB *sql.DB
 
@@ -71,6 +82,12 @@ func GenerateAuthToken() (string, error) {
 		return "", fmt.Errorf("failed to generate random token: %w", err)
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// LoadOrCreateBoardToken loads a board token from disk or generates and saves a new one.
+// The board token is a second credential required only for Board-only mutation endpoints.
+func LoadOrCreateBoardToken(tokenPath string) (string, error) {
+	return LoadOrCreateAuthToken(tokenPath)
 }
 
 // LoadOrCreateAuthToken loads an auth token from disk or generates and saves a new one.
@@ -128,6 +145,22 @@ func (o *Options) Validate() error {
 				return fmt.Errorf("generate auth token: %w", err)
 			}
 			o.AuthToken = tok
+		}
+	}
+
+	if o.BoardToken == "" {
+		if o.BoardTokenPath != "" {
+			tok, err := LoadOrCreateBoardToken(o.BoardTokenPath)
+			if err != nil {
+				return fmt.Errorf("board token error: %w", err)
+			}
+			o.BoardToken = tok
+		} else {
+			tok, err := GenerateAuthToken()
+			if err != nil {
+				return fmt.Errorf("generate board token: %w", err)
+			}
+			o.BoardToken = tok
 		}
 	}
 

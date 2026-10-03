@@ -88,6 +88,7 @@ function saveProjectsFilters() {
 
 // ── Token (injected by Go template) ─────────────────────
 const TOKEN = document.querySelector('meta[name="staypoint-token"]')?.content || '';
+const BOARD_TOKEN = document.querySelector('meta[name="staypoint-board-token"]')?.content || '';
 
 // ── Utils ────────────────────────────────────────────────
 
@@ -183,6 +184,11 @@ function formatResetTime(targetTs, isWeekly) {
 
 function authHeader() {
   return TOKEN ? { 'Authorization': `Bearer ${TOKEN}` } : {};
+}
+
+// boardAuthHeader returns auth + board token headers for Board-only mutation endpoints.
+function boardAuthHeader() {
+  return { ...authHeader(), ...(BOARD_TOKEN ? { 'X-StayPoint-Board-Token': BOARD_TOKEN } : {}) };
 }
 
 // Close any open .report-dl-menu when clicking outside its wrapper.
@@ -4399,7 +4405,7 @@ function renderSettings() {
     gateToggle.disabled = true;
     fetch('/api/settings/security-gate', {
       method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' }, TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {}),
+      headers: Object.assign({ 'Content-Type': 'application/json' }, boardAuthHeader()),
       body: JSON.stringify({ main_merge_approval: gateToggle.checked }),
     }).then(r => r.ok ? r.json() : null).then(data => {
       gateToggle.disabled = false;
@@ -4437,7 +4443,7 @@ function renderSettings() {
     srToggle.disabled = true;
     fetch('/api/settings/ship-review', {
       method: 'POST',
-      headers: Object.assign({ 'Content-Type': 'application/json' }, TOKEN ? { 'Authorization': 'Bearer ' + TOKEN } : {}),
+      headers: Object.assign({ 'Content-Type': 'application/json' }, boardAuthHeader()),
       body: JSON.stringify({ ship_review: srToggle.checked }),
     }).then(r => r.ok ? r.json() : null).then(data => {
       srToggle.disabled = false;
@@ -7295,7 +7301,7 @@ async function renderShipReviewCard(container, taskId) {
     if (!confirm('Approve and merge this branch? Only the pinned SHA will be merged.')) return;
     approveBtn.disabled = true;
     try {
-      const result = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/approve`, { method: 'POST' });
+      const result = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/approve`, { method: 'POST', headers: boardAuthHeader() });
       if (result.error === 'head_moved') {
         alert(`Branch HEAD moved since the card was rendered.\nNew HEAD: ${result.new_head_sha}\nThe card will reload.`);
         renderShipReviewCard(container.closest('.task-page-main') || container, taskId);
@@ -7317,7 +7323,7 @@ async function renderShipReviewCard(container, taskId) {
     try {
       await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/send-back`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...boardAuthHeader(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ comment: comment.trim() }),
       });
       section.remove();
@@ -7336,7 +7342,7 @@ async function renderShipReviewCard(container, taskId) {
     try {
       await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review/reject`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...boardAuthHeader(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ comment: comment || '', delete_branch: delBranch }),
       });
       section.remove();

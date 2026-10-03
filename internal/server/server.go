@@ -33,7 +33,7 @@ func New(opts Options) (*Server, error) {
 		hub = NewEventHub(opts.ReplayBufferSize, opts.SubscriberBufferSize)
 	}
 
-	secMid := NewSecurityMiddlewareWithOpts(opts.AuthToken, opts.Port, opts.CORSAllowAll)
+	secMid := NewSecurityMiddlewareWithBoardToken(opts.AuthToken, opts.BoardToken, opts.Port, opts.CORSAllowAll)
 
 	s := &Server{
 		opts:   opts,
@@ -150,9 +150,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /api/security/gate-requests", gateH.ListGateRequests)
 		mux.HandleFunc("POST /api/security/gate-requests", gateH.CreateGateRequest)
 		mux.HandleFunc("GET /api/security/gate-requests/{id}", gateH.GetGateRequest)
-		mux.HandleFunc("POST /api/security/gate-requests/{id}/decide", gateH.DecideGateRequest)
+		// Board-only: deciding a gate request requires the board token so agents cannot self-approve.
+		mux.Handle("POST /api/security/gate-requests/{id}/decide", s.secMid.WrapBoardAction(http.HandlerFunc(gateH.DecideGateRequest)))
 		mux.HandleFunc("GET /api/settings/security-gate", gateH.GetSecurityGateSettings)
-		mux.HandleFunc("POST /api/settings/security-gate", gateH.UpdateSecurityGateSettings)
+		// Board-only: toggling the gate itself requires the board token.
+		mux.Handle("POST /api/settings/security-gate", s.secMid.WrapBoardAction(http.HandlerFunc(gateH.UpdateSecurityGateSettings)))
 
 		// Ship Review REST API (Board-approval gate for agent branch merges)
 		shipH := NewShipReviewHandler(s.opts.DB, s.hub)
@@ -160,17 +162,19 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("PUT /api/tasks/{id}/ship-review", shipH.UpsertCard)
 		mux.HandleFunc("POST /api/tasks/{id}/ship-review/start-dev", shipH.StartDev)
 		mux.HandleFunc("POST /api/tasks/{id}/ship-review/stop-dev", shipH.StopDev)
-		mux.HandleFunc("POST /api/tasks/{id}/ship-review/approve", shipH.Approve)
-		mux.HandleFunc("POST /api/tasks/{id}/ship-review/send-back", shipH.SendBack)
-		mux.HandleFunc("POST /api/tasks/{id}/ship-review/reject", shipH.Reject)
+		// Board-only: these three actions merge / reject / revise the branch — agents cannot call them.
+		mux.Handle("POST /api/tasks/{id}/ship-review/approve", s.secMid.WrapBoardAction(http.HandlerFunc(shipH.Approve)))
+		mux.Handle("POST /api/tasks/{id}/ship-review/send-back", s.secMid.WrapBoardAction(http.HandlerFunc(shipH.SendBack)))
+		mux.Handle("POST /api/tasks/{id}/ship-review/reject", s.secMid.WrapBoardAction(http.HandlerFunc(shipH.Reject)))
 		mux.HandleFunc("GET /api/settings/ship-review", shipH.GetSettings)
-		mux.HandleFunc("POST /api/settings/ship-review", shipH.SetSettings)
+		// Board-only: disabling ship review is a Board action.
+		mux.Handle("POST /api/settings/ship-review", s.secMid.WrapBoardAction(http.HandlerFunc(shipH.SetSettings)))
 		mux.HandleFunc("GET /api/project-dev-configs", shipH.ListProjectDevConfigs)
 		mux.HandleFunc("PUT /api/project-dev-configs", shipH.UpsertProjectDevConfig)
 	}
 
 	// Embedded web UI (must be registered last so /api/* patterns take precedence)
-	RegisterUIRoutes(mux, s.opts.AuthToken)
+	RegisterUIRoutes(mux, s.opts.AuthToken, s.opts.BoardToken)
 }
 
 // Start binds to 127.0.0.1 and starts serving requests in the background.
@@ -248,6 +252,11 @@ func (s *Server) URL() string {
 // Token returns the authentication token required by the server.
 func (s *Server) Token() string {
 	return s.opts.AuthToken
+}
+
+// BoardToken returns the board-only credential required for Board-action endpoints.
+func (s *Server) BoardToken() string {
+	return s.opts.BoardToken
 }
 
 // Hub returns the server's EventHub for publishing events.

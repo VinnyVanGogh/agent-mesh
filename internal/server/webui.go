@@ -55,16 +55,16 @@ func isSPARoute(p string) bool {
 
 // RegisterUIRoutes mounts the embedded web UI onto the given mux.
 //
-// GET /            → index.html (with auth token injected into a meta tag)
+// GET /            → index.html (with auth token and board token injected into meta tags)
 // GET /{spa_route} → index.html for client-side routing
 // GET /ui/         → embedded static assets (CSS, JS)
-func RegisterUIRoutes(mux *http.ServeMux, authToken string) {
+func RegisterUIRoutes(mux *http.ServeMux, authToken, boardToken string) {
 	fileServer := http.FileServer(http.FS(webuiFS))
 
 	// Serve static assets under /ui/
 	mux.Handle("GET /ui/", http.StripPrefix("/ui", fileServer))
 
-	// Root and all SPA client routes → index.html with token injected
+	// Root and all SPA client routes → index.html with tokens injected
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		// Do not intercept API, static assets under /ui/, or SSE events
 		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/ui/") || r.URL.Path == "/events" {
@@ -76,6 +76,9 @@ func RegisterUIRoutes(mux *http.ServeMux, authToken string) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = indexTmpl.Execute(w, map[string]string{"Token": authToken})
+		_ = indexTmpl.Execute(w, map[string]string{
+			"Token":      authToken,
+			"BoardToken": boardToken,
+		})
 	})
 }

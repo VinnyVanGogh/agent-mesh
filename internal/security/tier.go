@@ -4,8 +4,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// boardEndpointRe matches board-only API endpoint path segments that agents must not call.
+var boardEndpointRe = regexp.MustCompile(
+	`/(?:ship-review/(?:approve|send-back|reject)|gate-requests/[^/\s'"]+/decide|settings/(?:security-gate|ship-review))`)
+
+// httpMutationRe detects POST/mutation indicators inside inline scripts.
+var httpMutationRe = regexp.MustCompile(
+	`(?i)\bPOST\b|\.post\s*\(|urlopen\s*\(|method\s*[=:]\s*["']\s*POST`)
+
+// staypointTokenFileRe matches reads of the staypoint auth/board token files in inline scripts.
+var staypointTokenFileRe = regexp.MustCompile(
+	`/\.staypoint/(?:auth_token|board_token)\b|['"](auth_token|board_token)['"]`)
 
 // Tier is a command risk class.
 type Tier int
@@ -234,6 +247,12 @@ func (c *Classifier) classifySegment(s segment, v *Verdict, depth int) {
 		c.classifyGh(args, v)
 	case name == "curl" || name == "wget":
 		c.classifyFetch(name, args, v)
+	case name == "python" || name == "python2" || name == "python3":
+		c.classifyScriptInterp(name, args, []string{"-c"}, v)
+	case name == "node" || name == "nodejs":
+		c.classifyScriptInterp(name, args, []string{"-e", "--eval"}, v)
+	case name == "ruby" || name == "perl" || name == "php":
+		c.classifyScriptInterp(name, args, []string{"-e"}, v)
 	case name == "go":
 		if len(args) > 0 && greenGo[args[0]] {
 			return
@@ -604,6 +623,22 @@ func (c *Classifier) classifyGh(args []string, v *Verdict) {
 	}
 }
 
+// classifyScriptInterp checks scripting-language interpreter calls (python, node, ruby …).
+// inlineFlags lists flags that take an inline script as their next argument (e.g. -c, -e).
+// It inspects the inline script for board API mutations and staypoint token file reads.
+func (c *Classifier) classifyScriptInterp(name string, args []string, inlineFlags []string, v *Verdict) {
+	v.raise(Yellow, "")
+	for i, a := range args {
+		for _, flag := range inlineFlags {
+			if a == flag && i+1 < len(args) {
+				if classifyInlineScript(args[i+1], v) {
+					return
+				}
+			}
+		}
+	}
+}
+
 func (c *Classifier) classifyFetch(name string, args []string, v *Verdict) {
 	v.raise(Yellow, "")
 	for i, a := range args {
@@ -640,6 +675,34 @@ func (c *Classifier) sensitiveDirs() []string {
 		}
 	}
 	return dirs
+}
+
+// sensitiveTokenFiles returns specific token files that agents must not read.
+func (c *Classifier) sensitiveTokenFiles() []string {
+	if h := c.home(); h != "" {
+		return []string{
+			filepath.Join(h, ".staypoint", "auth_token"),
+			filepath.Join(h, ".staypoint", "board_token"),
+		}
+	}
+	return nil
+}
+
+// classifyInlineScript checks an inline script body (from -c / -e / --eval) for:
+//   - reads of staypoint token files
+//   - HTTP POST mutations to board-only API endpoints
+//
+// Returns true if a Red verdict was raised.
+func classifyInlineScript(script string, v *Verdict) bool {
+	if staypointTokenFileRe.MatchString(script) {
+		v.raise(Red, "inline script reads staypoint auth/board token file")
+		return true
+	}
+	if boardEndpointRe.MatchString(script) && httpMutationRe.MatchString(script) {
+		v.raise(Red, "inline script calls board-only API endpoint (agents cannot self-approve)")
+		return true
+	}
+	return false
 }
 
 func (c *Classifier) expandHome(p string) string {
@@ -683,6 +746,11 @@ func (c *Classifier) checkPath(tok string, v *Verdict) {
 		for _, d := range c.sensitiveDirs() {
 			if clean == d || strings.HasPrefix(clean, d+string(filepath.Separator)) {
 				v.raise(Red, "touches sensitive path "+d)
+			}
+		}
+		for _, f := range c.sensitiveTokenFiles() {
+			if clean == f {
+				v.raise(Red, "reads staypoint token file")
 			}
 		}
 		if c.Worktree != nil {

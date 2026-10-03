@@ -15,12 +15,16 @@ const sessionCookieName = "staypoint_session"
 // sessionCookieMaxAge is 30 days; long enough that a bookmark just works.
 const sessionCookieMaxAge = 30 * 24 * 60 * 60
 
+// boardTokenHeader is the request header agents cannot forge without reading board_token.
+const boardTokenHeader = "X-StayPoint-Board-Token"
+
 // SecurityMiddleware returns a middleware that validates Host and Origin headers,
 // enforces no-wildcard CORS, and verifies the local auth token.
 type SecurityMiddleware struct {
 	token        string
-	port         int  // actual bound port, if known (or 0 for any local port)
-	corsAllowAll bool // opt-in: skip origin check and emit wildcard CORS headers
+	boardToken   string // separate credential required for Board-only mutations
+	port         int    // actual bound port, if known (or 0 for any local port)
+	corsAllowAll bool   // opt-in: skip origin check and emit wildcard CORS headers
 }
 
 // NewSecurityMiddleware creates a new SecurityMiddleware.
@@ -38,6 +42,42 @@ func NewSecurityMiddlewareWithOpts(token string, port int, corsAllowAll bool) *S
 		port:         port,
 		corsAllowAll: corsAllowAll,
 	}
+}
+
+// NewSecurityMiddlewareWithBoardToken creates a SecurityMiddleware with a separate
+// board token enforced on Board-only mutation endpoints.
+func NewSecurityMiddlewareWithBoardToken(token, boardToken string, port int, corsAllowAll bool) *SecurityMiddleware {
+	return &SecurityMiddleware{
+		token:        token,
+		boardToken:   boardToken,
+		port:         port,
+		corsAllowAll: corsAllowAll,
+	}
+}
+
+// BoardToken returns the board-only credential.
+func (sm *SecurityMiddleware) BoardToken() string { return sm.boardToken }
+
+// WrapBoardAction wraps a handler so it requires X-StayPoint-Board-Token in addition
+// to the normal auth check. Requests that only have the agent auth token are rejected
+// with 403 Forbidden so agents cannot self-approve ship-review or gate decisions.
+func (sm *SecurityMiddleware) WrapBoardAction(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if sm.boardToken == "" || !sm.hasBoardToken(r) {
+			writeError(w, http.StatusForbidden, "forbidden: board action requires Board token (agent auth token is not sufficient)")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// hasBoardToken checks whether the request carries the board token.
+func (sm *SecurityMiddleware) hasBoardToken(r *http.Request) bool {
+	if sm.boardToken == "" {
+		return false
+	}
+	v := r.Header.Get(boardTokenHeader)
+	return subtle.ConstantTimeCompare([]byte(v), []byte(sm.boardToken)) == 1
 }
 
 // SetPort updates the port once the server is listening.

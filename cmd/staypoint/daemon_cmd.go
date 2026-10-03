@@ -166,12 +166,14 @@ var daemonServeCmd = &cobra.Command{
 		defer dbStore.Close()
 
 		tokenPath := filepath.Join(cfg.DataDir, "auth_token")
+		boardTokenPath := filepath.Join(cfg.DataDir, "board_token")
 		srv, err := server.New(server.Options{
-			BindHost:  "127.0.0.1",
-			Port:      port,
-			AuthToken: token,
-			TokenPath: tokenPath,
-			DB:        dbStore.DB(),
+			BindHost:       "127.0.0.1",
+			Port:           port,
+			AuthToken:      token,
+			TokenPath:      tokenPath,
+			BoardTokenPath: boardTokenPath,
+			DB:             dbStore.DB(),
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error creating server: %v\n", err)
