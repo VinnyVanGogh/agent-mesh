@@ -331,8 +331,8 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 		}
 		runID := fmt.Sprintf("run-%s-%d", idPrefix, time.Now().UnixMilli())
 		sr := orchestrator.NewStepRecorder(dbStore.DB(), publishFn, runID, taskID)
-		sr.EmitWake(reason)
-		emitRouteStep(sr, dbStore.DB(), taskID)
+		// Wake and route steps are now emitted from inside harness.Run() after
+		// Claim() succeeds, so refused runs (ErrConcurrencyCap) never write steps.
 
 		parseDelta := func(line []byte) ([]orchestrator.StepDelta, error) {
 			prov := resolvedProv
@@ -367,16 +367,26 @@ func wireOnWake(dbStore *db.Store, repoRoot string, srv *server.Server, adapterO
 		// Use context.Background() so daemon shutdown does not abruptly kill
 		// in-flight harness work; the dispatcher's Drain() provides the graceful
 		// drain window during shutdown.
+		db := dbStore.DB()
 		result, runErr := h.Run(context.Background(), taskID, orchestrator.RunConfig{
-			AgentID:          agentID,
-			WakeReason:       reason,
-			RunAdapter:       adapterFn,
+			AgentID:    agentID,
+			WakeReason: reason,
+			RunAdapter: adapterFn,
+			EmitRoute: func(sr *orchestrator.StepRecorder) {
+				emitRouteStep(sr, db, taskID)
+			},
 			StepRecorder:     sr,
 			ParseDelta:       parseDelta,
 			RunControl:       orchestrator.GlobalRunControl,
 			SkipGitPreflight: adapterOverride != nil,
 		})
 		if runErr != nil {
+			if errors.Is(runErr, orchestrator.ErrConcurrencyCap) {
+				// Refused: lock held by another run. No steps were emitted (wake/route
+				// are now deferred to after Claim), so nothing to close out.
+				slog.Warn("run refused: concurrency cap", slog.String("task", taskID))
+				return
+			}
 			slog.Error("harness run failed", slog.String("task", taskID), slog.Any("error", runErr))
 			sr.EmitState("error")
 			return
