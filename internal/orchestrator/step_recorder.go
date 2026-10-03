@@ -316,7 +316,13 @@ func (r *StepRecorder) Close() {
 
 func (r *StepRecorder) openOrReuseThinkLocked(d StepDelta) {
 	if r.pending != nil && r.pending.kind == StepThink {
-		r.pending.body.WriteString(d.Text)
+		if d.Text != "" {
+			r.pending.body.WriteString(d.Text)
+		}
+		return
+	}
+	// Skip opening a think step for an empty text block (redacted/empty thinking).
+	if d.Text == "" {
 		return
 	}
 	r.closeCurrentLocked()
@@ -343,6 +349,10 @@ func (r *StepRecorder) closePendingWithStatusLocked(p *openStep, status string) 
 		return
 	}
 	r.pending = nil
+	// Drop think steps with no body — they produce empty Thinking rows in the UI.
+	if p.kind == StepThink && p.body.Len() == 0 {
+		return
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	step := RunStep{
 		RunID:     r.runID,
