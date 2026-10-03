@@ -42,6 +42,43 @@ jobs:
       - name: Run JS unit tests
         run: node --test tests/unit/*.mjs
 
+  playwright:
+    name: Playwright UI Specs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Playwright deps + browser
+        run: |
+          cd tests/ui
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Run Playwright UI specs
+        run: scripts/ui-e2e.sh
+        env:
+          E2E_ARTIFACTS: tests/ui/artifacts
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: tests/ui/artifacts
+          retention-days: 7
+
   test:
     name: Build & Test
     runs-on: ${{ matrix.os }}
