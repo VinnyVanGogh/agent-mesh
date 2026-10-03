@@ -57,6 +57,10 @@ test.describe('diff sidebar — file click opens diff modal', () => {
     const task = await res.json();
     expect(task.id).toBeTruthy();
 
+    // The no-worktree diff path compares checkpoint against "staypoint/{taskId}" branch.
+    // Create that branch at HEAD so GetTaskDiff and GetTaskFileDiff return actual content.
+    execFileSync('git', ['-C', repoPath, 'update-ref', `refs/heads/staypoint/${task.id}`, 'HEAD']);
+
     await page.goto(`/tasks/STA/ui-e2e/${encodeURIComponent(task.id)}`);
     await expect(page.locator('#task-page-content .task-page-title')).toHaveText(name, { timeout: 20_000 });
 
@@ -96,6 +100,10 @@ test.describe('diff sidebar — file click opens diff modal', () => {
     });
     expect(res.ok()).toBeTruthy();
     const task = await res.json();
+    expect(task.id).toBeTruthy();
+
+    // Create staypoint/{taskId} branch so the no-worktree fallback returns actual content.
+    execFileSync('git', ['-C', repoPath, 'update-ref', `refs/heads/staypoint/${task.id}`, 'HEAD']);
 
     // Hit the file diff endpoint directly (no worktree exists — falls back to branch tip)
     const diffRes = await request.get(`/api/tasks/${encodeURIComponent(task.id)}/diff/file?path=main.go`, {
@@ -105,6 +113,7 @@ test.describe('diff sidebar — file click opens diff modal', () => {
     const body = await diffRes.json();
     expect(body.path).toBe('main.go');
     expect(typeof body.content).toBe('string');
+    expect(body.content).toContain('+');  // non-empty diff with additions
     expect(typeof body.binary).toBe('boolean');
     expect(typeof body.truncated).toBe('boolean');
     expect(['added', 'deleted', 'renamed', 'modified']).toContain(body.status);
