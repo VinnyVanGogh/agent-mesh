@@ -35,7 +35,7 @@ func New(opts Options) (*Server, error) {
 
 	secMid := NewSecurityMiddlewareWithBoardToken(opts.AuthToken, opts.BoardToken, opts.Port, opts.CORSAllowAll)
 	// Generate a one-time bootstrap nonce so the board_token never needs to appear in a URL.
-	// The nonce is consumed on first successful ?board_nonce= use; ?board_token= still works as fallback.
+	// The nonce is consumed on first successful ?board_nonce= use; ?board_token= is no longer accepted.
 	if nonce, err := GenerateAuthToken(); err == nil {
 		secMid.SetBoardNonce(nonce)
 		opts.BoardNonce = nonce
@@ -67,6 +67,21 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// SSE endpoint
 	mux.HandleFunc("GET /api/events", s.hub.HandleSSE())
 	mux.HandleFunc("GET /api/sse", s.hub.HandleSSE())
+
+	// Board nonce endpoint: mints a fresh single-use bootstrap nonce.
+	// Requires the session auth token (normal auth) AND the board token as
+	// X-Board-Token header. This keeps the endpoint from being callable by
+	// agents that only hold the session auth token.
+	mux.HandleFunc("POST /api/board/fresh-nonce", func(w http.ResponseWriter, r *http.Request) {
+		bt := r.Header.Get("X-Board-Token")
+		nonce, ok := s.secMid.FreshNonce(bt)
+		if !ok {
+			writeError(w, http.StatusForbidden, "forbidden: X-Board-Token required and must match the board credential")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"nonce":%q}`, nonce)
+	})
 
 	// Health check (within security wrapper)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,10 @@ import (
 var boardEndpointRe = regexp.MustCompile(
 	`/(?:ship-review/(?:approve|send-back|reject)|gate-requests/[^/\s'"]+/decide|settings/(?:security-gate|ship-review))`)
 
+// boardBootstrapRe matches the board-session bootstrap URL pattern (board_nonce or board_token
+// query parameter). An agent fetching this URL (even via GET) would obtain the board cookie.
+var boardBootstrapRe = regexp.MustCompile(`[?&]board_(?:nonce|token)=`)
+
 // httpMutationRe detects POST/mutation indicators inside inline scripts.
 var httpMutationRe = regexp.MustCompile(
 	`(?i)\bPOST\b|\.post\s*\(|urlopen\s*\(|method\s*[=:]\s*["']\s*POST`)
@@ -19,6 +23,14 @@ var httpMutationRe = regexp.MustCompile(
 // staypointTokenFileRe matches reads of the staypoint auth/board token files in inline scripts.
 var staypointTokenFileRe = regexp.MustCompile(
 	`/\.staypoint/(?:auth_token|board_token)\b|['"](auth_token|board_token)['"]`)
+
+// ptyForgingRe matches PTY-creation calls or pty module imports in inline scripts.
+var ptyForgingRe = regexp.MustCompile(
+	`(?i)\b(?:import\s+pty\b|pty\.spawn|openpty|os\.openpty|zpty|posix_openpt|forkpty)\s*(?:\(|$)`)
+
+// boardCredentialInScriptRe matches board credential names/values in inline scripts
+// that are not already covered by staypointTokenFileRe.
+var boardCredentialInScriptRe = regexp.MustCompile(`\bboard_(?:nonce|token)\b`)
 
 // Tier is a command risk class.
 type Tier int
@@ -146,6 +158,10 @@ var alwaysRed = map[string]string{
 	"halt": "system power", "poweroff": "system power", "crontab": "persistent scheduler",
 	"launchctl": "service manager", "systemctl": "service manager", "chroot": "chroot",
 	"security": "keychain access", "gpg": "keyring access", "openssl": "key material handling",
+	// TTY-forging tools: used to defeat stdout-is-a-terminal guards.
+	"script":   "TTY-forging tool (bypasses terminal checks)",
+	"unbuffer": "TTY-forging tool (bypasses terminal checks)",
+	"expect":   "TTY-forging / automation tool (bypasses terminal checks)",
 }
 
 // wrapper commands whose real command follows their own flags.
@@ -245,6 +261,8 @@ func (c *Classifier) classifySegment(s segment, v *Verdict, depth int) {
 		c.classifyGit(args, v)
 	case name == "gh":
 		c.classifyGh(args, v)
+	case name == "staypoint":
+		c.classifyStaypoint(args, v)
 	case name == "curl" || name == "wget":
 		c.classifyFetch(name, args, v)
 	case name == "python" || name == "python2" || name == "python3":
@@ -639,21 +657,85 @@ func (c *Classifier) classifyScriptInterp(name string, args []string, inlineFlag
 	}
 }
 
+// classifyStaypoint classifies `staypoint <sub> …` calls.
+// `staypoint board …` is always Red: even with TTY-gating the board subcommand
+// contains credentials that agents must never access.
+func (c *Classifier) classifyStaypoint(args []string, v *Verdict) {
+	if len(args) > 0 && args[0] == "board" {
+		v.raise(Red, "staypoint board: accesses board credentials; agents cannot self-approve (use the Board UI)")
+		return
+	}
+	v.raise(Yellow, "")
+}
+
+// isMutatingMethod reports whether a HTTP method string is a mutating operation.
+func isMutatingMethod(m string) bool {
+	switch strings.ToUpper(m) {
+	case "POST", "PUT", "PATCH", "DELETE":
+		return true
+	}
+	return false
+}
+
 func (c *Classifier) classifyFetch(name string, args []string, v *Verdict) {
 	v.raise(Yellow, "")
 	for i, a := range args {
+		lower := strings.ToLower(a)
 		switch {
-		case a == "-d" || strings.HasPrefix(a, "--data") || a == "-F" || strings.HasPrefix(a, "--form") ||
-			a == "-T" || a == "--upload-file" || a == "--json" ||
-			strings.HasPrefix(a, "--post-") || a == "--body-data" || a == "--body-file":
+		case a == "-d" || strings.HasPrefix(lower, "--data") || a == "-F" || strings.HasPrefix(lower, "--form") ||
+			a == "-T" || a == "--upload-file" || lower == "--json" ||
+			strings.HasPrefix(lower, "--post-") || lower == "--body-data" || lower == "--body-file":
 			v.raise(Red, name+": uploads data (possible exfiltration)")
-		case (a == "-X" || a == "--request") && i+1 < len(args):
-			switch strings.ToUpper(args[i+1]) {
-			case "POST", "PUT", "PATCH", "DELETE":
+		// -X POST / --request POST  (separate token)
+		case (a == "-X" || strings.EqualFold(a, "--request")) && i+1 < len(args):
+			if isMutatingMethod(args[i+1]) {
 				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
 			}
-		case a == "-K" || a == "--config" || a == "-i" && name == "wget":
+		// -XPOST / -X=POST  (combined, with or without =)
+		case strings.HasPrefix(lower, "-x") && len(a) > 2:
+			if isMutatingMethod(strings.TrimPrefix(a[2:], "=")) {
+				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
+			}
+		// --request=POST (attached with =)
+		case strings.HasPrefix(lower, "--request="):
+			if isMutatingMethod(a[strings.Index(a, "=")+1:]) {
+				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
+			}
+		// wget --method=POST / wget --method POST
+		case name == "wget" && strings.EqualFold(a, "--method") && i+1 < len(args):
+			if isMutatingMethod(args[i+1]) {
+				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
+			}
+		case name == "wget" && strings.HasPrefix(lower, "--method="):
+			if isMutatingMethod(a[strings.Index(a, "=")+1:]) {
+				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
+			}
+		// wget --post-data / --post-file (already partially caught by --post- prefix above,
+		// kept explicit for clarity and to ensure --post-data without = is caught)
+		case name == "wget" && (lower == "--post-data" || lower == "--post-file"):
+			v.raise(Red, name+": uploads data (possible exfiltration)")
+		case a == "-K" || a == "--config" || (a == "-i" && name == "wget"):
 			v.raise(Red, name+": reads request definition from a file")
+		// curl -c / --cookie-jar: writes cookies to a file.
+		// An agent using this flag against the local daemon would save the board session
+		// cookie for later use in a mutating request. Also detect short-option clusters
+		// that contain 'c' (e.g. -sc, -vc), since curl supports combined short options.
+		case name == "curl" && (strings.EqualFold(a, "--cookie-jar") || strings.HasPrefix(lower, "--cookie-jar=")):
+			v.raise(Red, name+": writes session cookies to a file (possible credential theft)")
+		case name == "curl" && strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsRune(a, 'c'):
+			v.raise(Red, name+": -c flag writes session cookies to a file (possible credential theft)")
+		default:
+			// Non-flag argument: check for board-only endpoints or board bootstrap URLs.
+			// An agent fetching a board bootstrap URL (even via GET) would steal the
+			// board session cookie, granting approve/decide rights.
+			if !strings.HasPrefix(a, "-") {
+				if boardEndpointRe.MatchString(a) {
+					v.raise(Red, name+": URL targets a board-only endpoint (agents cannot call these)")
+				}
+				if boardBootstrapRe.MatchString(a) {
+					v.raise(Red, name+": URL contains board bootstrap credential (board_nonce/board_token)")
+				}
+			}
 		}
 	}
 }
@@ -680,6 +762,8 @@ func (c *Classifier) sensitiveDirs() []string {
 // classifyInlineScript checks an inline script body (from -c / -e / --eval) for:
 //   - reads of staypoint token files
 //   - HTTP POST mutations to board-only API endpoints
+//   - PTY-forging calls that bypass terminal guards
+//   - board bootstrap credential patterns (board_nonce / board_token in URLs)
 //
 // Returns true if a Red verdict was raised.
 func classifyInlineScript(script string, v *Verdict) bool {
@@ -689,6 +773,14 @@ func classifyInlineScript(script string, v *Verdict) bool {
 	}
 	if boardEndpointRe.MatchString(script) && httpMutationRe.MatchString(script) {
 		v.raise(Red, "inline script calls board-only API endpoint (agents cannot self-approve)")
+		return true
+	}
+	if ptyForgingRe.MatchString(script) {
+		v.raise(Red, "inline script creates or imports a pseudo-TTY (bypasses terminal guards)")
+		return true
+	}
+	if boardBootstrapRe.MatchString(script) || boardCredentialInScriptRe.MatchString(script) {
+		v.raise(Red, "inline script references board bootstrap credential (board_nonce/board_token)")
 		return true
 	}
 	return false

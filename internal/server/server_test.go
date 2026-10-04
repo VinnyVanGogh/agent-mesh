@@ -1418,10 +1418,11 @@ func TestServer_BoardToken_Required(t *testing.T) {
 	}
 }
 
-// TestServer_BoardBootstrap_RequiresBoardToken verifies that the ?token= bootstrap
-// redirect only sets the board cookie when a board credential (nonce or board_token)
-// is ALSO present. Agents that present only the auth token cannot obtain a board session.
-func TestServer_BoardBootstrap_RequiresBoardToken(t *testing.T) {
+// TestServer_BoardBootstrap_RequiresBoardNonce verifies that the ?token= bootstrap
+// redirect only sets the board cookie when a valid single-use board_nonce is present.
+// The ?board_token= fallback has been removed (STA-583): a long-lived credential in a
+// URL is replayable and can be captured in logs, history, and network traces.
+func TestServer_BoardBootstrap_RequiresBoardNonce(t *testing.T) {
 	database := setupTestDB(t)
 	srv, token := startTestServer(t, database)
 	boardToken := srv.BoardToken()
@@ -1475,13 +1476,73 @@ func TestServer_BoardBootstrap_RequiresBoardToken(t *testing.T) {
 		}
 	}
 
-	// Fallback: bootstrap with auth + board_token → should also work.
+	// STA-583: ?board_token= fallback is REMOVED. A long-lived credential in a URL is
+	// replayable. Presenting board_token in the query string must NOT grant the board cookie.
 	resp, err = client.Get(fmt.Sprintf("%s/?token=%s&board_token=%s", srv.URL(), token, boardToken))
 	if err != nil {
-		t.Fatalf("bootstrap (board_token) request failed: %v", err)
+		t.Fatalf("bootstrap (board_token fallback) request failed: %v", err)
 	}
 	resp.Body.Close()
-	if !hasBoardCookie(resp) {
-		t.Error("board cookie was not set when valid board_token was provided as fallback")
+	for _, c := range resp.Cookies() {
+		if c.Name == "staypoint_board" {
+			t.Errorf("STA-583: board cookie was set via ?board_token= URL fallback — this must be rejected, got %q", c.Value)
+		}
+	}
+}
+
+// TestServer_FreshNonce_RequiresBoardToken verifies that POST /api/board/fresh-nonce
+// requires both the session auth token and the board token (X-Board-Token header).
+// This ensures agents with only the session token cannot mint a new nonce.
+func TestServer_FreshNonce_RequiresBoardToken(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	boardToken := srv.BoardToken()
+
+	// Helper to call fresh-nonce with specified headers.
+	doFreshNonce := func(authToken, boardTokenHeader string) *http.Response {
+		req, err := http.NewRequest(http.MethodPost, srv.URL()+"/api/board/fresh-nonce", nil)
+		if err != nil {
+			t.Fatalf("build request: %v", err)
+		}
+		if authToken != "" {
+			req.Header.Set("Authorization", "Bearer "+authToken)
+		}
+		if boardTokenHeader != "" {
+			req.Header.Set("X-Board-Token", boardTokenHeader)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+
+	// No auth at all → 401.
+	if resp := doFreshNonce("", ""); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("no-auth: want 401, got %d", resp.StatusCode)
+	}
+
+	// Auth only (agent token), no board token → 403.
+	if resp := doFreshNonce(token, ""); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("auth-only: want 403, got %d", resp.StatusCode)
+	}
+
+	// Wrong board token → 403.
+	if resp := doFreshNonce(token, "wrongtoken"); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("wrong-board-token: want 403, got %d", resp.StatusCode)
+	}
+
+	// Correct auth + correct board token → 200 with a nonce.
+	req, _ := http.NewRequest(http.MethodPost, srv.URL()+"/api/board/fresh-nonce", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Board-Token", boardToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("valid fresh-nonce request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("valid: want 200, got %d", resp.StatusCode)
 	}
 }

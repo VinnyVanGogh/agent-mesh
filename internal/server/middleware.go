@@ -70,6 +70,26 @@ func (sm *SecurityMiddleware) SetBoardNonce(nonce string) {
 	sm.nonce = nonce
 }
 
+// FreshNonce validates boardToken against the stored board credential and, if correct,
+// mints a new single-use nonce, installs it, and returns it. Returns ("", false) if
+// boardToken is empty or does not match. The caller (the staypoint board url CLI command)
+// must present both the session auth token and the board token to obtain a nonce; this
+// keeps the endpoint from being usable by agents that only hold the session auth token.
+func (sm *SecurityMiddleware) FreshNonce(boardToken string) (string, bool) {
+	if sm.boardToken == "" || boardToken == "" {
+		return "", false
+	}
+	if subtle.ConstantTimeCompare([]byte(boardToken), []byte(sm.boardToken)) != 1 {
+		return "", false
+	}
+	nonce, err := GenerateAuthToken()
+	if err != nil {
+		return "", false
+	}
+	sm.SetBoardNonce(nonce)
+	return nonce, true
+}
+
 // consumeNonce returns true and clears the nonce if n matches; false otherwise.
 func (sm *SecurityMiddleware) consumeNonce(n string) bool {
 	if n == "" {
@@ -174,11 +194,14 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 		// 4. Cookie exchange: if browser hit a UI route with ?token=, set the session
 		// cookie and redirect to the clean URL. After this, the bookmark works.
 		//
-		// The board cookie is issued when either:
-		//   a. ?board_nonce=<nonce>  — a one-time value generated at daemon startup and
-		//      consumed on first use (preferred: board_token never appears in a URL), or
-		//   b. ?board_token=<token> — direct credential (fallback for automated tooling).
-		// In both cases the session auth token must also be valid.
+		// The board cookie is issued only via ?board_nonce=<nonce> — a one-time value
+		// minted per-session. The ?board_token= fallback has been removed (STA-583).
+		//
+		// Additionally, the board cookie is only granted when the request looks like a
+		// browser navigation (Sec-Fetch-Mode: navigate) or the Sec-Fetch headers are
+		// absent (direct URL paste). Programmatic fetches (Sec-Fetch-Mode: cors /
+		// no-cors / same-origin) are rejected: those come from script-triggered fetch()
+		// calls, not a human clicking the URL.
 		if qToken := r.URL.Query().Get("token"); qToken != "" && !strings.HasPrefix(r.URL.Path, "/api/") {
 			if subtle.ConstantTimeCompare([]byte(qToken), []byte(sm.token)) == 1 {
 				http.SetCookie(w, &http.Cookie{
@@ -189,11 +212,12 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 					SameSite: http.SameSiteStrictMode,
 					MaxAge:   sessionCookieMaxAge,
 				})
-				if sm.boardToken != "" {
-					grantBoard := sm.consumeNonce(r.URL.Query().Get("board_nonce"))
-					if !grantBoard {
-						grantBoard = subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("board_token")), []byte(sm.boardToken)) == 1
-					}
+				if sm.boardToken != "" && sm.consumeNonce(r.URL.Query().Get("board_nonce")) {
+					// Only grant the board cookie on browser-like navigations.
+					// Sec-Fetch-Mode values for script-triggered requests (cors, no-cors,
+					// same-origin) indicate a programmatic call, not a human navigating.
+					sfm := strings.ToLower(r.Header.Get("Sec-Fetch-Mode"))
+					grantBoard := sfm == "" || sfm == "navigate"
 					if grantBoard {
 						http.SetCookie(w, &http.Cookie{
 							Name:     boardCookieName,
@@ -209,7 +233,6 @@ func (sm *SecurityMiddleware) Wrap(next http.Handler) http.Handler {
 				q := cleanURL.Query()
 				q.Del("token")
 				q.Del("board_nonce")
-				q.Del("board_token")
 				cleanURL.RawQuery = q.Encode()
 				http.Redirect(w, r, cleanURL.String(), http.StatusFound)
 				return

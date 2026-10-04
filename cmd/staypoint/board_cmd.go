@@ -1,7 +1,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,15 +73,19 @@ Features:
 	},
 }
 
-// boardURLCmd prints the Board bootstrap URL so the human can open a Board
-// session in their browser. It is TTY-gated: it refuses to run when stdout is
-// not a terminal or when STAYPOINT_TASK_ID is set (agent context), so the
-// board_token credential is never captured in logs or piped output.
+// boardURLCmd prints a Board bootstrap URL containing a single-use nonce.
+// It is TTY-gated and refuses in agent context. The nonce is obtained from
+// the daemon's /api/board/fresh-nonce endpoint (which requires both the session
+// auth token and the board token), so the long-lived board_token never appears
+// in a URL and the nonce cannot be replayed.
 var boardURLCmd = &cobra.Command{
 	Use:   "url",
 	Short: "Print the Board bootstrap URL (TTY-only; refuses in agent context)",
-	Long: `Print the Board bootstrap URL containing the auth token and board token.
+	Long: `Print a single-use Board bootstrap URL containing a one-time nonce.
 Open the URL in a browser to start a Board session with full approve/reject/decide rights.
+
+The URL contains board_nonce (a single-use random value) instead of the long-lived
+board_token, so it is safe to share exactly once and cannot be replayed.
 
 Refused when:
   - stdout is not a terminal (prevents credential capture in logs/pipes)
@@ -123,7 +130,33 @@ Run 'scripts/reinstall-daemon.sh' once after upgrading to create the file.`,
 		}
 
 		daemonURL, _ := cmd.Flags().GetString("daemon-url")
-		fmt.Printf("%s/?token=%s&board_token=%s\n", daemonURL, authToken, boardToken)
+
+		// Obtain a fresh single-use nonce from the daemon.
+		// The endpoint requires both the session auth token (Bearer) and the board
+		// token (X-Board-Token), so agents with only the session token cannot call it.
+		req, err := http.NewRequest(http.MethodPost, daemonURL+"/api/board/fresh-nonce", nil)
+		if err != nil {
+			return fmt.Errorf("board url: build request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+authToken)
+		req.Header.Set("X-Board-Token", boardToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("board url: daemon request failed: %w\nIs staypointd running?", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("board url: daemon returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		var result struct {
+			Nonce string `json:"nonce"`
+		}
+		if err := json.Unmarshal(body, &result); err != nil || result.Nonce == "" {
+			return fmt.Errorf("board url: unexpected response from daemon: %s", string(body))
+		}
+
+		fmt.Printf("%s/?token=%s&board_nonce=%s\n", daemonURL, authToken, result.Nonce)
 		return nil
 	},
 }
