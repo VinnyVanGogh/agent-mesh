@@ -227,10 +227,21 @@ export const test = base.extend<Fixtures>({
   },
   // boardPage is a page with a Board session cookie set.
   // Requires STAYPOINT_BOARD_TOKEN (exported by scripts/ui-e2e.sh).
-  boardPage: async ({ page, baseURL }, use) => {
+  // Uses POST /api/board/fresh-nonce (STA-583 removed the ?board_token= URL bootstrap).
+  boardPage: async ({ page, baseURL, request }, use) => {
     const bt = BOARD_TOKEN;
     if (!bt) throw new Error('STAYPOINT_BOARD_TOKEN is not set: run via scripts/ui-e2e.sh');
-    await page.goto(`${baseURL}/?token=${encodeURIComponent(TOKEN)}&board_token=${encodeURIComponent(bt)}`);
+    const nonceRes = await request.post(`${baseURL}/api/board/fresh-nonce`, {
+      headers: {
+        'Authorization': `Bearer ${TOKEN}`,
+        'X-Board-Token': bt,
+      },
+    });
+    if (!nonceRes.ok()) {
+      throw new Error(`POST /api/board/fresh-nonce -> ${nonceRes.status()}: ${await nonceRes.text()}`);
+    }
+    const { nonce } = await nonceRes.json();
+    await page.goto(`${baseURL}/?token=${encodeURIComponent(TOKEN)}&board_nonce=${encodeURIComponent(nonce)}`);
     await expect(page).toHaveURL(`${baseURL}/`);
     await use(page);
   },
