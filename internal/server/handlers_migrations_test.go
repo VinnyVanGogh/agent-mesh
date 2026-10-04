@@ -48,15 +48,29 @@ func TestMarkMigrationApplied_RecordsActivity(t *testing.T) {
 	srv, token := startTestServer(t, database)
 	base := fmt.Sprintf("http://127.0.0.1:%d", srv.Port())
 
-	_, taskBody := postTask(t, base, token, map[string]any{"name": "mark-applied-test"})
+	// Place a real migration file in a temp dir so the handler can read it.
+	dir := t.TempDir()
+	migPath := "supabase/migrations/20261003120000_test.sql"
+	_ = os.MkdirAll(fmt.Sprintf("%s/supabase/migrations", dir), 0o755)
+	_ = os.WriteFile(
+		fmt.Sprintf("%s/%s", dir, migPath),
+		[]byte("CREATE TABLE activity_test_tbl (id uuid PRIMARY KEY);"),
+		0o644,
+	)
+
+	_, taskBody := postTask(t, base, token, map[string]any{"name": "mark-applied-test", "repo_path": dir})
 	taskID, _ := taskBody["id"].(string)
 	if taskID == "" {
 		t.Skip("task creation failed")
 	}
 
+	// Supply a passing check_result so the handler can record applied.
 	payload, _ := json.Marshal(map[string]any{
-		"path":       "supabase/migrations/20261003120000_test.sql",
+		"path":       migPath,
 		"applied_by": "board",
+		"check_results": []map[string]any{
+			{"description": "table public.activity_test_tbl exists", "passed": true},
+		},
 	})
 	req, _ := http.NewRequest(http.MethodPost,
 		base+"/api/tasks/"+taskID+"/migrations/mark-applied",
@@ -79,6 +93,39 @@ func TestMarkMigrationApplied_RecordsActivity(t *testing.T) {
 	}
 	if ok, _ := body["ok"].(bool); !ok {
 		t.Errorf("expected ok:true, got %v", body)
+	}
+}
+
+// TestMarkMigrationApplied_UnreadableFile verifies that an unreadable migration
+// file returns 422 (read_error) rather than silently passing with no verification.
+func TestMarkMigrationApplied_UnreadableFile(t *testing.T) {
+	database := setupTestDB(t)
+	srv, token := startTestServer(t, database)
+	base := fmt.Sprintf("http://127.0.0.1:%d", srv.Port())
+
+	_, taskBody := postTask(t, base, token, map[string]any{"name": "unreadable-test"})
+	taskID, _ := taskBody["id"].(string)
+	if taskID == "" {
+		t.Skip("task creation failed")
+	}
+
+	payload, _ := json.Marshal(map[string]any{
+		"path":       "supabase/migrations/nonexistent.sql",
+		"applied_by": "board",
+	})
+	req, _ := http.NewRequest(http.MethodPost,
+		base+"/api/tasks/"+taskID+"/migrations/mark-applied",
+		bytes.NewReader(payload),
+	)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("want 422, got %d (unreadable SQL must not be silently applied)", resp.StatusCode)
 	}
 }
 

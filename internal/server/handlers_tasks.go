@@ -1098,9 +1098,12 @@ func (h *TasksHandler) GetTaskMigrations(w http.ResponseWriter, r *http.Request)
 			}
 			f.AdditiveOnly = false
 		} else {
-			risks, hasRisk := migration.CheckRisk(sqlContent)
+			risks, idempotents, hasRisk := migration.CheckRisk(sqlContent)
 			if risks != nil {
 				f.RiskStatements = risks
+			}
+			if idempotents != nil {
+				f.IdempotentReCreates = idempotents
 			}
 			f.AdditiveOnly = !hasRisk
 			checks = migration.ParseChecks(sqlContent)
@@ -1198,9 +1201,9 @@ func (h *TasksHandler) MarkMigrationApplied(w http.ResponseWriter, r *http.Reque
 		body.AppliedBy = "board"
 	}
 
-	// Read migration SQL: try the task worktree first, then the task branch via
-	// git-show (works after the worktree is pruned). Never verify against empty
-	// or unreadable SQL — treat read_error as ✗.
+	// Read migration SQL: try the task worktree, then the repo root on disk,
+	// then the task branch via git-show (handles pruned worktrees). Never verify
+	// against empty or unreadable SQL — treat read_error as ✗.
 	workDir, hasWT := taskCheckpointWorkDir(task)
 	var sqlContent string
 	var readErr error
@@ -1208,10 +1211,16 @@ func (h *TasksHandler) MarkMigrationApplied(w http.ResponseWriter, r *http.Reque
 		sqlContent, readErr = migration.ReadContent(workDir, body.Path)
 	}
 	if !hasWT || readErr != nil {
+		// Fall back to repo root on disk (covers dev/test setups without a worktree).
+		sqlContent, readErr = migration.ReadContent(task.RepoPath, body.Path)
+	}
+	if readErr != nil {
+		// Repo root doesn't have the file (common after a task branch is pruned and
+		// main doesn't include the file yet): read from the task branch via git.
 		sqlContent, readErr = migration.ReadContentAtRef(r.Context(), task.RepoPath, "staypoint/"+task.ID, body.Path)
 	}
 	if readErr != nil || strings.TrimSpace(sqlContent) == "" {
-		errMsg := "could not read migration file from the task branch"
+		errMsg := "could not read migration file from worktree or task branch"
 		if readErr != nil {
 			errMsg += ": " + readErr.Error()
 		}

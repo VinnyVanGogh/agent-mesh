@@ -22,10 +22,11 @@ var DefaultGlobs = []string{
 
 // File holds a detected migration file with its content and risk analysis.
 type File struct {
-	Path           string   `json:"path"`
-	SQL            string   `json:"sql"`
-	RiskStatements []string `json:"risk_statements"`
-	AdditiveOnly   bool     `json:"additive_only"`
+	Path                string   `json:"path"`
+	SQL                 string   `json:"sql"`
+	RiskStatements      []string `json:"risk_statements"`
+	IdempotentReCreates []string `json:"idempotent_recreates,omitempty"`
+	AdditiveOnly        bool     `json:"additive_only"`
 	// ReadError is set when the file content could not be read; SQL is then
 	// empty and the file must not be treated as safe.
 	ReadError string `json:"read_error,omitempty"`
@@ -91,10 +92,48 @@ func stripComments(sql string) string {
 	return b.String()
 }
 
+// idempotentDropRe matches DROP POLICY/TRIGGER IF EXISTS and captures the name.
+var (
+	reDropPolicyIFE  = regexp.MustCompile(`(?i)\bDROP\s+POLICY\s+IF\s+EXISTS\s+(\w+)`)
+	reDropTriggerIFE = regexp.MustCompile(`(?i)\bDROP\s+TRIGGER\s+IF\s+EXISTS\s+(\w+)`)
+	reCreatePolicyN  = regexp.MustCompile(`(?i)\bCREATE\s+POLICY\s+(\w+)`)
+	reCreateTriggerN = regexp.MustCompile(`(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+(\w+)`)
+)
+
+// idempotentDropKeys returns a set of "policy:<name>" / "trigger:<name>" keys
+// where the DROP … IF EXISTS is followed by a matching CREATE in the same file.
+func idempotentDropKeys(stripped string) map[string]bool {
+	created := map[string]bool{}
+	for _, m := range reCreatePolicyN.FindAllStringSubmatch(stripped, -1) {
+		created["policy:"+strings.ToLower(m[1])] = true
+	}
+	for _, m := range reCreateTriggerN.FindAllStringSubmatch(stripped, -1) {
+		created["trigger:"+strings.ToLower(m[1])] = true
+	}
+	keys := map[string]bool{}
+	for _, m := range reDropPolicyIFE.FindAllStringSubmatch(stripped, -1) {
+		k := "policy:" + strings.ToLower(m[1])
+		if created[k] {
+			keys[k] = true
+		}
+	}
+	for _, m := range reDropTriggerIFE.FindAllStringSubmatch(stripped, -1) {
+		k := "trigger:" + strings.ToLower(m[1])
+		if created[k] {
+			keys[k] = true
+		}
+	}
+	return keys
+}
+
 // CheckRisk scans sql for destructive or locking patterns.
-// Returns the matched snippets and whether any were found.
-func CheckRisk(sql string) (risks []string, hasRisk bool) {
+// Returns destructive snippets, idempotent re-create snippets, and whether any
+// genuinely destructive risks were found. DROP POLICY/TRIGGER IF EXISTS that
+// are immediately re-created with the same name in the same file are classified
+// as idempotent re-creates, not destructive.
+func CheckRisk(sql string) (risks []string, idempotentReCreates []string, hasRisk bool) {
 	stripped := stripComments(sql)
+	idKeys := idempotentDropKeys(stripped)
 	lines := strings.Split(stripped, "\n")
 	seen := map[string]bool{}
 	for _, line := range lines {
@@ -108,14 +147,28 @@ func CheckRisk(sql string) (risks []string, hasRisk bool) {
 				if len(snippet) > 80 {
 					snippet = snippet[:80] + "…"
 				}
-				if !seen[snippet] {
-					seen[snippet] = true
-					risks = append(risks, snippet)
+				if seen[snippet] {
+					continue
 				}
+				seen[snippet] = true
+				// Check if this DROP POLICY/TRIGGER IF EXISTS is an idempotent re-create.
+				if m := reDropPolicyIFE.FindStringSubmatch(trimmed); m != nil {
+					if idKeys["policy:"+strings.ToLower(m[1])] {
+						idempotentReCreates = append(idempotentReCreates, snippet)
+						continue
+					}
+				}
+				if m := reDropTriggerIFE.FindStringSubmatch(trimmed); m != nil {
+					if idKeys["trigger:"+strings.ToLower(m[1])] {
+						idempotentReCreates = append(idempotentReCreates, snippet)
+						continue
+					}
+				}
+				risks = append(risks, snippet)
 			}
 		}
 	}
-	return risks, len(risks) > 0
+	return risks, idempotentReCreates, len(risks) > 0
 }
 
 // matchGlob reports whether path matches any of the globs.

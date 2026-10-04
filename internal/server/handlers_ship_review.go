@@ -50,14 +50,17 @@ func (h *ShipReviewHandler) GetCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Augment the card with unverified migration info so the UI can block Approve.
+	// Merge into a flat map so existing clients that read card fields directly continue to work.
 	task, taskErr := context.GetTask(h.db, taskID)
 	if taskErr == nil {
 		unverified, _ := unverifiedMigrations(r.Context(), h.db, task)
-		writeJSON(w, map[string]any{
-			"card":                  card,
-			"unverified_migrations": unverified,
-		})
-		return
+		cardBytes, _ := json.Marshal(card)
+		var merged map[string]any
+		if jsonErr := json.Unmarshal(cardBytes, &merged); jsonErr == nil {
+			merged["unverified_migrations"] = unverified
+			writeJSON(w, merged)
+			return
+		}
 	}
 	writeJSON(w, card)
 }
