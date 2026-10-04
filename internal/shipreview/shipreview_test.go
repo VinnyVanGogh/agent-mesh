@@ -674,3 +674,153 @@ func TestHasDBMigrationDetected(t *testing.T) {
 		t.Errorf("want HasDBMigration=true for supabase/migrations/ path, got false; files=%v", got.FilesChanged)
 	}
 }
+
+// setupRepoWithHarnessBranch creates a temp git repo with an initial commit on
+// main and a "staypoint/<taskID>" branch with one file change.
+// Returns repoDir and the harness branch SHA.
+// The caller stores git_branch="main" in the DB to simulate the bug scenario.
+func setupRepoWithHarnessBranch(t *testing.T, taskID string) (repoDir, harnessSHA string) {
+	t.Helper()
+	base := t.TempDir()
+	dir := filepath.Join(base, "work")
+	_ = os.MkdirAll(dir, 0755)
+
+	gitEnv := append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t.com",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@t.com",
+	)
+	run := func(d string, args ...string) string {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = d
+		cmd.Env = gitEnv
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("git %v (in %s): %v", args, d, err)
+		}
+		return string(out)
+	}
+
+	run(dir, "init", "-b", "main")
+	run(dir, "config", "user.email", "t@t.com")
+	run(dir, "config", "user.name", "test")
+
+	_ = os.WriteFile(filepath.Join(dir, "README.md"), []byte("init\n"), 0644)
+	run(dir, "add", ".")
+	run(dir, "commit", "-m", "init")
+
+	// Create the harness branch staypoint/<taskID> with one change.
+	harnessBranch := "staypoint/" + taskID
+	run(dir, "checkout", "-b", harnessBranch)
+	_ = os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html/>"), 0644)
+	run(dir, "add", ".")
+	run(dir, "commit", "-m", "feat: add index.html")
+
+	sha, err := shipreview.CurrentBranchHEAD(context.Background(), dir, harnessBranch)
+	if err != nil {
+		t.Fatalf("resolve harness branch HEAD: %v", err)
+	}
+
+	run(dir, "checkout", "main")
+	return dir, sha
+}
+
+// TestBuildAndStartCard_IgnoresGitBranch is the regression test for STA-571.
+// It proves that BuildAndStartCard pins staypoint/<taskID> even when the task
+// has git_branch="main" stored in the DB (which is the default at creation).
+func TestBuildAndStartCard_IgnoresGitBranch(t *testing.T) {
+	const taskID = "task-sta571"
+	db := openTestDB(t)
+
+	repoDir, harnessSHA := setupRepoWithHarnessBranch(t, taskID)
+
+	// Store the task with git_branch = "main" — the bug condition.
+	_, err := db.Exec(
+		`INSERT INTO tasks (id, name, repo_path, git_branch) VALUES (?, ?, ?, ?)`,
+		taskID, "STA-571 regression", repoDir, "main",
+	)
+	if err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+
+	card, err := shipreview.BuildAndStartCard(
+		context.Background(), db,
+		taskID, repoDir,
+		[]string{"1. Verify index.html loads"},
+		"", nil,
+	)
+	if err != nil {
+		t.Fatalf("BuildAndStartCard: %v", err)
+	}
+
+	// The card must pin the harness branch, not "main".
+	wantBranch := "staypoint/" + taskID
+	if card.Branch != wantBranch {
+		t.Errorf("branch = %q, want %q (must never use task.GitBranch)", card.Branch, wantBranch)
+	}
+	if card.HeadSHA != harnessSHA {
+		t.Errorf("head_sha = %q, want harness SHA %q (must not be main HEAD)", card.HeadSHA, harnessSHA)
+	}
+	// FilesChanged must reflect the actual diff, not empty (which would imply main).
+	if len(card.FilesChanged) == 0 {
+		t.Error("files_changed is empty; expected at least index.html (suggests main diff was used)")
+	}
+	found := false
+	for _, f := range card.FilesChanged {
+		if f == "index.html" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("files_changed = %v, want 'index.html' to appear", card.FilesChanged)
+	}
+}
+
+// TestBuildAndStartCard_AutoStartsDevServer verifies that BuildAndStartCard
+// auto-starts the project dev server when a config exists and the card has no
+// explicit dev_url, then persists the URL. This mirrors the HTTP handler path.
+func TestBuildAndStartCard_AutoStartsDevServer(t *testing.T) {
+	const taskID = "task-devserver"
+	db := openTestDB(t)
+
+	repoDir, _ := setupRepoWithHarnessBranch(t, taskID)
+
+	_, err := db.Exec(
+		`INSERT INTO tasks (id, name, repo_path, git_branch) VALUES (?, ?, ?, ?)`,
+		taskID, "Dev server auto-start", repoDir, "main",
+	)
+	if err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+
+	// Register a project dev config with a long-lived no-op command.
+	cfg := &shipreview.ProjectDevConfig{
+		RepoPath:   repoDir,
+		DevCommand: "sleep 9999",
+		DevURL:     "http://127.0.0.1:8799",
+	}
+	if err := shipreview.UpsertProjectDevConfig(db, cfg); err != nil {
+		t.Fatalf("UpsertProjectDevConfig: %v", err)
+	}
+
+	card, err := shipreview.BuildAndStartCard(
+		context.Background(), db,
+		taskID, repoDir,
+		[]string{"1. Open http://127.0.0.1:8799"},
+		"", nil, // no explicit dev_url — BuildAndStartCard should fill it in
+	)
+	if err != nil {
+		t.Fatalf("BuildAndStartCard: %v", err)
+	}
+	defer shipreview.StopDevServer(db, card)
+
+	if card.DevURL != "http://127.0.0.1:8799" {
+		t.Errorf("dev_url = %q, want http://127.0.0.1:8799 (auto-started from project config)", card.DevURL)
+	}
+	if card.DevPID <= 0 {
+		// Reload from DB to pick up PID set by StartDevServer.
+		got, _ := shipreview.GetCard(db, taskID)
+		if got.DevPID <= 0 {
+			t.Errorf("dev_pid = %d, want > 0 after auto-start", got.DevPID)
+		}
+	}
+}

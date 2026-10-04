@@ -88,32 +88,15 @@ func (h *ShipReviewHandler) UpsertCard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "task not found: "+err.Error())
 		return
 	}
-	// Always use the harness branch name. task.GitBranch is the repo's branch at
-	// task-creation time (usually "main") and must never override the real work branch.
-	branch := "staypoint/" + task.ID
 
-	// Resolve HEAD from the repo root (always knows all local branches).
-	headSHA, err := shipreview.CurrentBranchHEAD(r.Context(), task.RepoPath, branch)
+	card, err := shipreview.BuildAndStartCard(r.Context(), h.db, task.ID, task.RepoPath, req.TestSteps, req.DevURL, req.CheckRuns)
 	if err != nil {
-		writeError(w, http.StatusConflict, "cannot resolve branch HEAD: "+err.Error())
-		return
-	}
-
-	card, err := shipreview.CreateCard(h.db, taskID, branch, headSHA, req.TestSteps, req.DevURL, task.RepoPath, req.CheckRuns)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// Auto-start dev server if a project config exists.
-	// Pass task.RepoPath so StartDevServer creates a temp worktree at the pinned SHA.
-	cfg, _ := shipreview.GetProjectDevConfig(h.db, task.RepoPath)
-	if cfg != nil && cfg.DevCommand != "" {
-		startedURL, startErr := shipreview.StartDevServer(h.db, card, cfg, task.RepoPath)
-		if startErr == nil && startedURL != "" && card.DevURL == "" {
-			card.DevURL = startedURL
-			_ = shipreview.SetDevURL(h.db, card.ID, startedURL)
+		code := http.StatusInternalServerError
+		if errors.Is(err, shipreview.ErrTestStepsRequired) || errors.Is(err, shipreview.ErrInvalidBranch) || errors.Is(err, shipreview.ErrInvalidDevURL) {
+			code = http.StatusBadRequest
 		}
+		writeError(w, code, err.Error())
+		return
 	}
 
 	h.hub.Publish("ship_review_created", map[string]any{
