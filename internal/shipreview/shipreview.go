@@ -467,6 +467,41 @@ func StopDevServer(db *sql.DB, card *Card) {
 	)
 }
 
+// BuildAndStartCard is the single entry point for creating a Ship Review card.
+// It must be used by all callers (HTTP handler, MCP tool, CLI) so they all
+// behave identically.
+//
+// Key invariant: the branch is ALWAYS "staypoint/<taskID>". task.GitBranch is
+// set to the repo's active branch at task-creation time (usually "main") and
+// must never be used here — doing so was the bug fixed by STA-571.
+//
+// It resolves HEAD from repoPath, creates the card, then auto-starts the dev
+// server from the project config (if any) and persists dev_url.
+func BuildAndStartCard(ctx context.Context, db *sql.DB, taskID, repoPath string, testSteps []string, devURL string, checkRuns []CheckRun) (*Card, error) {
+	branch := "staypoint/" + taskID
+
+	headSHA, err := CurrentBranchHEAD(ctx, repoPath, branch)
+	if err != nil {
+		return nil, fmt.Errorf("cannot resolve branch HEAD for %q: %w", branch, err)
+	}
+
+	card, err := CreateCard(db, taskID, branch, headSHA, testSteps, devURL, repoPath, checkRuns)
+	if err != nil {
+		return nil, err
+	}
+
+	// Auto-start dev server from project config; persist the URL when successful.
+	cfg, _ := GetProjectDevConfig(db, repoPath)
+	if cfg != nil && cfg.DevCommand != "" {
+		if startedURL, startErr := StartDevServer(db, card, cfg, repoPath); startErr == nil && startedURL != "" && card.DevURL == "" {
+			card.DevURL = startedURL
+			_ = SetDevURL(db, card.ID, startedURL)
+		}
+	}
+
+	return card, nil
+}
+
 // ApproveAndMerge merges branch into the target branch (usually main) only if
 // the current HEAD matches card.HeadSHA. After merge, verifies the reviewed SHA
 // is an ancestor of the new main HEAD.

@@ -87,23 +87,9 @@ func runShipReviewCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("task not found: %w", err)
 	}
 
-	branch := "staypoint/" + task.ID
-	if task.GitBranch != "" {
-		branch = task.GitBranch
-	}
-
-	workDir := task.RepoPath
-	wt := task.RepoPath + "/.worktrees/" + task.ID
-	if fi, err := os.Stat(wt); err == nil && fi.IsDir() {
-		workDir = wt
-	}
-
-	headSHA, err := shipreview.CurrentBranchHEAD(cmd.Context(), workDir, branch)
-	if err != nil {
-		return fmt.Errorf("resolve branch HEAD for %q: %w", branch, err)
-	}
-
-	card, err := shipreview.CreateCard(dbConn, taskID, branch, headSHA, testSteps, srDevURL, workDir, checkRuns)
+	// BuildAndStartCard always pins staypoint/<taskID>, never task.GitBranch
+	// (which is the repo's branch at creation time, usually "main").
+	card, err := shipreview.BuildAndStartCard(cmd.Context(), dbConn, task.ID, task.RepoPath, testSteps, srDevURL, checkRuns)
 	if err != nil {
 		return fmt.Errorf("create card: %w", err)
 	}
