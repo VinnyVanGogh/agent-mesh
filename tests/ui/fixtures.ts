@@ -125,6 +125,9 @@ export class StayPointAPI {
       data: { path, applied_by: appliedBy, ...extra },
     });
     const text = await res.text();
+    if (!res.ok()) {
+      throw new Error(`POST /api/tasks/${encodeURIComponent(id)}/migrations/mark-applied -> ${res.status()}: ${text}`);
+    }
     return (text ? JSON.parse(text) : {}) as { ok: boolean; path: string; applied_by: string; mode?: string; verification_query?: string; checks?: unknown[] };
   }
 

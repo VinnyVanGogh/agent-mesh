@@ -96,8 +96,10 @@ func TestMarkMigrationApplied_RecordsActivity(t *testing.T) {
 	}
 }
 
-// TestMarkMigrationApplied_UnreadableFile verifies that an unreadable migration
-// file returns 422 (read_error) rather than silently passing with no verification.
+// TestMarkMigrationApplied_UnreadableFile verifies that when the migration file
+// cannot be read (task has no associated repo), mark-applied succeeds in
+// unchecked mode (200 ok:true, mode:unchecked) rather than blocking with 422.
+// A human recording "I applied this" is still valid even without schema verification.
 func TestMarkMigrationApplied_UnreadableFile(t *testing.T) {
 	database := setupTestDB(t)
 	srv, token := startTestServer(t, database)
@@ -124,8 +126,19 @@ func TestMarkMigrationApplied_UnreadableFile(t *testing.T) {
 		t.Fatalf("request: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Errorf("want 422, got %d (unreadable SQL must not be silently applied)", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("want 200, got %d (unreadable file should result in unchecked mode, not an error)", resp.StatusCode)
+		return
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if ok, _ := body["ok"].(bool); !ok {
+		t.Errorf("want ok:true, got %v", body["ok"])
+	}
+	if mode, _ := body["mode"].(string); mode != "unchecked" {
+		t.Errorf("want mode:unchecked, got %q", mode)
 	}
 }
 

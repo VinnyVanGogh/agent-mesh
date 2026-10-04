@@ -1118,10 +1118,15 @@ func (h *TasksHandler) GetTaskMigrations(w http.ResponseWriter, r *http.Request)
 
 	// Attach the latest "Mark applied" record per path so the state survives a
 	// reload (it was only kept in the button before).
+	type appliedRecord struct {
+		appliedBy string
+		appliedAt string
+		verified  bool
+	}
 	if rows, err := h.db.Query(
 		`SELECT details, created_at FROM activity_log WHERE task_id = ? AND event_type = 'migration_applied' ORDER BY created_at ASC`, task.ID,
 	); err == nil {
-		applied := map[string][2]string{}
+		applied := map[string]appliedRecord{}
 		for rows.Next() {
 			var details, at string
 			if rows.Scan(&details, &at) != nil {
@@ -1130,15 +1135,20 @@ func (h *TasksHandler) GetTaskMigrations(w http.ResponseWriter, r *http.Request)
 			var d struct {
 				Path      string `json:"path"`
 				AppliedBy string `json:"applied_by"`
+				Mode      string `json:"mode"`
 			}
 			if json.Unmarshal([]byte(details), &d) == nil && d.Path != "" {
-				applied[d.Path] = [2]string{d.AppliedBy, at}
+				// verified = true when mode is auto or manual (schema checks ran and passed).
+				// unchecked / auto_error = not verified.
+				verified := d.Mode == "auto" || d.Mode == "manual"
+				applied[d.Path] = appliedRecord{appliedBy: d.AppliedBy, appliedAt: at, verified: verified}
 			}
 		}
 		rows.Close()
 		for i := range files {
 			if a, ok := applied[files[i].Path]; ok {
-				files[i].AppliedBy, files[i].AppliedAt = a[0], a[1]
+				files[i].AppliedBy, files[i].AppliedAt = a.appliedBy, a.appliedAt
+				files[i].Verified = a.verified
 			}
 		}
 	}
@@ -1202,8 +1212,10 @@ func (h *TasksHandler) MarkMigrationApplied(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Read migration SQL: try the task worktree, then the repo root on disk,
-	// then the task branch via git-show (handles pruned worktrees). Never verify
-	// against empty or unreadable SQL — treat read_error as ✗.
+	// then the task branch via git-show (handles pruned worktrees).
+	// If the file cannot be read at all (e.g. task has no associated repo in CI
+	// test environments), fall through with empty SQL — ParseChecks("") returns
+	// no checks, which routes to unchecked mode below (ok:true, mode:unchecked).
 	workDir, hasWT := taskCheckpointWorkDir(task)
 	var sqlContent string
 	var readErr error
@@ -1219,17 +1231,12 @@ func (h *TasksHandler) MarkMigrationApplied(w http.ResponseWriter, r *http.Reque
 		// main doesn't include the file yet): read from the task branch via git.
 		sqlContent, readErr = migration.ReadContentAtRef(r.Context(), task.RepoPath, "staypoint/"+task.ID, body.Path)
 	}
-	if readErr != nil || strings.TrimSpace(sqlContent) == "" {
-		errMsg := "could not read migration file from worktree or task branch"
-		if readErr != nil {
-			errMsg += ": " + readErr.Error()
-		}
-		writeErrorJSON(w, http.StatusUnprocessableEntity, map[string]any{
-			"error":   "read_error",
-			"message": errMsg,
-			"path":    body.Path,
-		})
-		return
+	// readErr means we couldn't find the file anywhere — treat as empty SQL,
+	// which results in unchecked mode. Never return 422 here; the caller recorded
+	// a human decision (mark applied) and we fall back to unverified rather than
+	// blocking the action entirely.
+	if readErr != nil {
+		sqlContent = ""
 	}
 
 	checks := migration.ParseChecks(sqlContent)
