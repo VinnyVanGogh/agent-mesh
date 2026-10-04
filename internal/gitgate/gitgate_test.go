@@ -299,6 +299,40 @@ func TestMainContains_SquashMerged(t *testing.T) {
 	}
 }
 
+// TestPostFlight_PushedWithoutUpstream verifies that a branch pushed via
+// `git push origin HEAD` (no -u flag) is NOT reported as having unpushed commits
+// even though @{u} is unset (STA-572).
+func TestPostFlight_PushedWithoutUpstream(t *testing.T) {
+	// Create a bare "remote" and clone it.
+	bare := t.TempDir()
+	run(t, bare, "git", "init", "--bare", "-b", "main")
+	clone := cloneRepo(t, bare)
+
+	// Initial commit on main.
+	commit(t, clone, "init", "README.md")
+	run(t, clone, "git", "push", "origin", "main")
+
+	// Create a feature branch, add a commit, push WITHOUT -u.
+	run(t, clone, "git", "checkout", "-b", "feature/no-upstream")
+	commit(t, clone, "feature work", "feature.txt")
+	run(t, clone, "git", "push", "origin", "HEAD") // no -u
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := gitgate.PostFlight(ctx, clone, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should pass (no unpushed commits) even without upstream tracking.
+	for _, e := range result.Errors {
+		if strings.Contains(strings.ToLower(e), "unpushed") {
+			t.Errorf("branch pushed without -u should not report unpushed commits; got error: %s", e)
+		}
+	}
+}
+
 // ----------------------------------------------------------------------------
 // Helper
 // ----------------------------------------------------------------------------

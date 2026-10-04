@@ -411,6 +411,16 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	// turn so extractFinalResponse can find the agent's last assistant message.
 	var lastTurnOutput []byte
 
+	// workProductRegistered tracks whether the branch work product was inserted
+	// during an inline interceptor call so the post-loop path doesn't duplicate it.
+	var workProductRegistered bool
+
+	// completionRejected is set when the agent emitted [[TASK_COMPLETE]] and the
+	// interceptor rejected it at least once. Used post-loop to distinguish
+	// "marker-sent-then-turns-exhausted" (→ capped) from "no marker at all"
+	// (→ post-loop interceptor run, old behaviour).
+	var completionRejected bool
+
 	for turn := 0; turn < maxTurns; turn++ {
 		if ctx.Err() != nil {
 			result.Disposition = "capped"
@@ -528,7 +538,48 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 			markerSeen = tw.detected || strings.Contains(outBuf.String(), taskCompleteMarker)
 		}
 		if markerSeen {
-			break
+			// STA-391 ordering: register the branch work product BEFORE the interceptor
+			// so checkWorkProducts finds it. Eagerly compute the diff; calling
+			// DiffCheckpoint here is idempotent with the post-loop call.
+			if !workProductRegistered && preCP != nil {
+				if ds, dsErr := checkpoint.DiffCheckpoint(ctx, wtPath, preCP.ID); dsErr == nil && ds != "" {
+					result.DiffStat = ds
+					if _, wpErr := h.DB.ExecContext(ctx,
+						`INSERT INTO task_work_products (task_id, product_type, reference) VALUES (?, 'branch', ?)`,
+						taskID, "staypoint/"+taskID,
+					); wpErr == nil {
+						workProductRegistered = true
+					} else {
+						runLog.Warn("register work product (inline) failed", slog.Any("error", wpErr))
+					}
+				}
+			}
+
+			// Run the Mechanical Completion Interceptor immediately so the agent
+			// receives self-correcting feedback within the same run rather than
+			// discovering the rejection only after the heartbeat ends.
+			icCtx, icCancel := context.WithTimeout(ctx, 30*time.Second)
+			approved, diag, _ := h.Interceptor.InterceptCompletion(icCtx, taskID, wtPath, repoPath)
+			icCancel()
+			if approved {
+				result.Disposition = "in_review"
+				break
+			}
+			// Rejected: persist feedback with author 'interceptor' so fetchUserComments
+			// picks it up on the next turn without re-injecting on subsequent runs
+			// (the lastSeenCommentID cursor advances past it).
+			rejMsg := "Completion check failed. Fix the issues and emit [[TASK_COMPLETE]] again."
+			if diag != nil && diag.Message != "" {
+				rejMsg = diag.Message
+			}
+			result.DiagnosticMsg = rejMsg
+			_, _ = h.DB.ExecContext(ctx,
+				`INSERT INTO task_comments (task_id, author, message) VALUES (?, 'interceptor', ?)`,
+				taskID, rejMsg,
+			)
+			completionRejected = true
+			runLog.Info("interceptor rejected completion; continuing run", slog.Int("turn", turn))
+			// Don't break — consume remaining turns so the agent can self-correct.
 		}
 
 		if cfg.MaxBudgetUSD > 0 && result.SpentUSD >= cfg.MaxBudgetUSD {
@@ -613,10 +664,9 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 	cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cleanCancel()
 
-	// Register the work product BEFORE calling the interceptor. checkWorkProducts
-	// queries task_work_products; inserting after the interceptor means the first
-	// run with a non-empty diff can never reach in_review (STA-391).
-	if result.DiffStat != "" && result.Disposition == "" {
+	// Register the work product before any post-loop disposition check (STA-391).
+	// Skip if already registered by the inline interceptor path inside the turn loop.
+	if result.DiffStat != "" && result.Disposition == "" && !workProductRegistered {
 		if _, err := h.DB.ExecContext(cleanCtx,
 			`INSERT INTO task_work_products (task_id, product_type, reference) VALUES (?, 'branch', ?)`,
 			taskID, "staypoint/"+taskID,
@@ -625,15 +675,35 @@ func (h *Harness) Run(ctx context.Context, taskID string, cfg RunConfig) (*RunRe
 		}
 	}
 
-	// Mechanical Completion Interceptor (skipped when stopped).
+	// Post-loop disposition: two cases.
+	//
+	// (a) completionRejected: the agent emitted [[TASK_COMPLETE]], the interceptor
+	//     rejected it (and injected feedback), but turns were exhausted before the
+	//     agent could self-correct. Set "capped" so the task never sits in_progress
+	//     with no live run and no waiting path (STA-572).
+	//
+	// (b) No explicit completion signal (agent never emitted the marker): run the
+	//     interceptor once as the classic post-loop gate — approved → in_review,
+	//     rejected → in_progress.  This preserves the existing behaviour for runs
+	//     where the agent does meaningful work across multiple turns but does not
+	//     emit the marker explicitly.
 	if result.Disposition == "" {
-		approved, diag, _ := h.Interceptor.InterceptCompletion(ctx, taskID, wtPath, repoPath)
-		if approved {
-			result.Disposition = "in_review"
+		if completionRejected {
+			result.Disposition = "capped"
+			capMsg := fmt.Sprintf(
+				"Turn budget exhausted after completion rejection (%d turn(s)). Fix the listed issues and start a new run.",
+				result.Turns,
+			)
+			result.DiagnosticMsg = capMsg
 		} else {
-			result.Disposition = "in_progress"
-			if diag != nil {
-				result.DiagnosticMsg = diag.Message
+			approved, diag, _ := h.Interceptor.InterceptCompletion(ctx, taskID, wtPath, repoPath)
+			if approved {
+				result.Disposition = "in_review"
+			} else {
+				result.Disposition = "in_progress"
+				if diag != nil {
+					result.DiagnosticMsg = diag.Message
+				}
 			}
 		}
 	}
@@ -709,12 +779,13 @@ const briefMaxBytes = 8 * 1024 // 8 KB
 
 // taskBrief holds the immutable task metadata fetched once before the run loop.
 type taskBrief struct {
-	Name        string
-	Org         string
-	Project     string
-	RepoPath    string
-	GitBranch   string
-	Description string
+	Name            string
+	Org             string
+	Project         string
+	RepoPath        string
+	GitBranch       string
+	Description     string
+	ShipReviewGate  bool // true when gates.ship_review is enabled
 }
 
 // harnessComment is a non-harness comment visible to the agent.
@@ -736,6 +807,9 @@ func fetchTaskBrief(ctx context.Context, db *sql.DB, taskID string) taskBrief {
 		`SELECT content FROM task_documents WHERE task_id = ? AND doc_key = 'description' ORDER BY version DESC LIMIT 1`,
 		taskID,
 	).Scan(&b.Description)
+	var gateVal string
+	_ = db.QueryRowContext(ctx, `SELECT value FROM settings_kv WHERE key='gates.ship_review'`).Scan(&gateVal)
+	b.ShipReviewGate = gateVal != "false"
 	return b
 }
 
@@ -779,6 +853,9 @@ func buildBriefBlock(brief taskBrief, comments []harnessComment, isFirstTurn boo
 		}
 		if brief.Description != "" {
 			b.WriteString("---\nDescription:\n" + safeField(brief.Description) + "\n")
+		}
+		if brief.ShipReviewGate {
+			b.WriteString("---\nCompletion gate: Ship Review is enabled. Before emitting " + taskCompleteMarker + ", use the `staypoint_ship_review` MCP tool (or run `staypoint ship-review create`) to create a Ship Review card with a numbered test list and check runs. The harness will reject completion without a pending card.\n")
 		}
 	}
 	if len(comments) > 0 {

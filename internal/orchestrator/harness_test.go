@@ -1732,6 +1732,112 @@ func TestSafeField_NoBracketBypass(t *testing.T) {
 	}
 }
 
+// TestBrief_ShipReviewGateInjected verifies that when gates.ship_review is enabled
+// the first-turn brief includes the ship review completion instruction (STA-572).
+func TestBrief_ShipReviewGateInjected(t *testing.T) {
+	db := openTestDB(t)
+	_, err := db.Exec(`INSERT INTO tasks (id, name, repo_path) VALUES ('gate-task', 'Gate test', '/repo')`)
+	if err != nil {
+		t.Fatal("insert task:", err)
+	}
+	// Ship review gate on (default; no row means enabled).
+	brief := fetchTaskBrief(context.Background(), db, "gate-task")
+	if !brief.ShipReviewGate {
+		t.Fatal("ShipReviewGate should be true when no settings_kv row exists")
+	}
+	block := buildBriefBlock(brief, nil, true)
+	if !strings.Contains(block, "staypoint_ship_review") {
+		t.Errorf("brief must mention staypoint_ship_review when gate is on; got:\n%s", block)
+	}
+	if !strings.Contains(block, "Ship Review") {
+		t.Errorf("brief must mention Ship Review when gate is on; got:\n%s", block)
+	}
+}
+
+// TestBrief_ShipReviewGateOff verifies that when gates.ship_review is disabled
+// the brief omits the ship review instruction (STA-572).
+func TestBrief_ShipReviewGateOff(t *testing.T) {
+	db := openTestDB(t)
+	_, err := db.Exec(`INSERT INTO tasks (id, name, repo_path) VALUES ('gate-off-task', 'Gate off test', '/repo')`)
+	if err != nil {
+		t.Fatal("insert task:", err)
+	}
+	_, _ = db.Exec(`INSERT INTO settings_kv (key, value) VALUES ('gates.ship_review', 'false')`)
+
+	brief := fetchTaskBrief(context.Background(), db, "gate-off-task")
+	if brief.ShipReviewGate {
+		t.Fatal("ShipReviewGate should be false when gate is explicitly off")
+	}
+	block := buildBriefBlock(brief, nil, true)
+	if strings.Contains(block, "staypoint_ship_review") {
+		t.Errorf("brief must NOT mention staypoint_ship_review when gate is off; got:\n%s", block)
+	}
+}
+
+// TestRun_InterceptorRejectionContinuesRun verifies that a [[TASK_COMPLETE]] signal
+// rejected by the interceptor does not strand the task in_progress with no live run:
+// the harness injects a diagnostic comment with author 'interceptor' and continues
+// the turn loop so the agent can self-correct (STA-572).
+func TestRun_InterceptorRejectionContinuesRun(t *testing.T) {
+	activeClaims.Store(0)
+
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	db := openTestDB(t)
+	insertTask(t, db, "cont-task", repoDir)
+
+	// Adapter emits [[TASK_COMPLETE]] on turn 0; interceptor rejects (no work product).
+	// Turn 1 emits nothing. Run exhausts MaxTurns and ends as "capped".
+	turn := 0
+	h := &Harness{
+		DB:          db,
+		RepoRoot:    repoDir,
+		WM:          workspace.NewWorktreeManager(repoDir, db),
+		Interceptor: NewInterceptor(db),
+	}
+	// Only the work-product guard to keep the test self-contained.
+	h.Interceptor.Guards = []GuardFunc{h.Interceptor.checkWorkProducts}
+
+	result, err := h.Run(context.Background(), "cont-task", RunConfig{
+		MaxTurns:         2,
+		AgentID:          "tester",
+		MaxWallclock:     30 * time.Second,
+		SkipGitPreflight: true,
+		RunAdapter: func(_ context.Context, _, _ string, _, _ []string, stdout, _ io.Writer) error {
+			if turn == 0 {
+				// Emit the completion marker; interceptor will reject (no work product registered).
+				_, _ = fmt.Fprintf(stdout, "work done\n%s\n", taskCompleteMarker)
+				turn++
+			}
+			// Turn 1: emit nothing — run will exhaust turns and end as capped.
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Diagnostic must be recorded.
+	if result.DiagnosticMsg == "" {
+		t.Error("expected non-empty DiagnosticMsg after interceptor rejection")
+	}
+
+	// An 'interceptor' comment must have been persisted so the next turn can see it.
+	var icCount int
+	_ = db.QueryRow(`SELECT COUNT(1) FROM task_comments WHERE task_id='cont-task' AND author='interceptor'`).Scan(&icCount)
+	if icCount == 0 {
+		t.Error("expected at least one 'interceptor' author comment persisted")
+	}
+
+	// The run must not be left as in_progress (which would look alive but have no
+	// live run). It should be capped (turns exhausted) — never in_progress.
+	if result.Disposition == "in_progress" {
+		t.Errorf("disposition must not be in_progress after run ends; got %q (DiagnosticMsg: %s)",
+			result.Disposition, result.DiagnosticMsg)
+	}
+}
+
 // TestBuildBriefBlock_DelimiterEscape verifies that brief delimiters and [[TASK_COMPLETE]]
 // embedded in user-supplied description or comment bodies are sanitised (STA-542).
 func TestBuildBriefBlock_DelimiterEscape(t *testing.T) {
