@@ -10135,8 +10135,7 @@ function renderLogsTable(container, errors, filter, adapterFilter) {
 
 async function updateGatesBadge() {
   try {
-    const res = await apiFetch('/api/security/gate-requests?status=pending');
-    const data = await res.json();
+    const data = await apiFetch('/api/security/gate-requests?status=pending');
     const count = (data.gate_requests || []).length;
     const badge = document.getElementById('gates-badge');
     if (!badge) return;
@@ -10161,9 +10160,7 @@ async function renderGatesPage() {
 
   let requests = [];
   try {
-    const res = await apiFetch(url);
-    if (!res.ok) throw new Error('fetch failed');
-    const data = await res.json();
+    const data = await apiFetch(url);
     requests = data.gate_requests || [];
   } catch (e) {
     container.innerHTML = `<p class="muted-text" style="padding:20px;">Failed to load gate requests: ${e.message}</p>`;
@@ -10258,20 +10255,23 @@ async function renderGatesPage() {
 
 async function decideGate(id, decision) {
   try {
-    const res = await apiFetch(`/api/security/gate-requests/${id}/decide`, {
+    const r = await fetch(`/api/security/gate-requests/${id}/decide`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify({ decision }),
     });
-    if (res.status === 403) {
+    if (r.status === 403) {
       alert('Board session required. Open StayPoint in a browser with your board token to approve/deny gates.');
       return;
     }
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      alert(`Failed: ${err.error || res.statusText}`);
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      alert(`Failed: ${err.error || r.statusText}`);
       return;
     }
+    // Switch to 'all' so the decided row stays visible with its new status.
+    const filterEl = document.getElementById('gates-status-filter');
+    if (filterEl) filterEl.value = 'all';
     await renderGatesPage();
     await updateGatesBadge();
   } catch (e) {
@@ -10292,9 +10292,7 @@ async function renderPendingGatesForTask(container, runId) {
   if (!runId) return;
   let pending = [];
   try {
-    const res = await apiFetch('/api/security/gate-requests?status=pending');
-    if (!res.ok) return;
-    const data = await res.json();
+    const data = await apiFetch('/api/security/gate-requests?status=pending');
     pending = (data.gate_requests || []).filter(g => g.run_id === runId);
   } catch (_) { return; }
   if (pending.length === 0) return;

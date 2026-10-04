@@ -215,9 +215,19 @@ func setSettingKV(db *sql.DB, key, value string) error {
 }
 
 func listGateRequestsByStatus(db *sql.DB, status string) ([]*security.GateRequest, error) {
-	rows, err := db.Query(
-		`SELECT id, cmdline, reasons_json, run_id, status, created_at, decided_at
-		 FROM security_gate_requests WHERE status = ? ORDER BY created_at DESC LIMIT 100`, status)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if status == "all" {
+		rows, err = db.Query(
+			`SELECT id, cmdline, reasons_json, run_id, status, created_at, decided_at
+			 FROM security_gate_requests ORDER BY created_at DESC LIMIT 100`)
+	} else {
+		rows, err = db.Query(
+			`SELECT id, cmdline, reasons_json, run_id, status, created_at, decided_at
+			 FROM security_gate_requests WHERE status = ? ORDER BY created_at DESC LIMIT 100`, status)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -248,3 +258,4 @@ func listGateRequestsByStatus(db *sql.DB, status string) ([]*security.GateReques
 	}
 	return out, rows.Err()
 }
+
