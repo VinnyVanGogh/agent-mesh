@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/paperclip"
@@ -495,126 +496,149 @@ func (a *Aggregator) gatherOrgsAndTasks(ctx context.Context, overview *FleetOver
 		return s
 	}
 
-	// 2a. Query Paperclip companies if client is usable
+	// 2a. Query Paperclip companies if client is usable.
+	// Projects, issues, and agents are fetched in parallel per company to avoid
+	// sequential HTTP round-trips that previously added ≈3–4 s to every boot.
 	if a.PaperclipClient != nil {
 		if companies, err := a.PaperclipClient.ListCompanies(ctx); err == nil && len(companies) > 0 {
-			for _, c := range companies {
+			type companyFetch struct {
+				company paperclip.CompanyResponse
+				projs   []paperclip.ProjectResponse
+				issues  []paperclip.IssueResponse
+				agents  []paperclip.AgentResponse
+			}
+			fetched := make([]companyFetch, len(companies))
+			var wg sync.WaitGroup
+			for i, c := range companies {
+				fetched[i].company = c
+				wg.Add(3)
+				go func(i int, cid string) {
+					defer wg.Done()
+					projs, _ := a.PaperclipClient.ListProjects(ctx, cid)
+					fetched[i].projs = projs
+				}(i, c.ID)
+				go func(i int, cid string) {
+					defer wg.Done()
+					issues, _ := a.PaperclipClient.ListActiveIssues(ctx, cid)
+					fetched[i].issues = issues
+				}(i, c.ID)
+				go func(i int, cid string) {
+					defer wg.Done()
+					agents, _ := a.PaperclipClient.ListAgents(ctx, cid)
+					fetched[i].agents = agents
+				}(i, c.ID)
+			}
+			wg.Wait()
+
+			for _, cf := range fetched {
+				c := cf.company
 				orgSummary := ensureOrg(c.Name, c.ID, c.IssuePrefix)
 
-				// Fetch projects for this company to resolve project names
 				projMap := make(map[string]string)
-				if projs, err := a.PaperclipClient.ListProjects(ctx, c.ID); err == nil {
-					for _, p := range projs {
-						projMap[p.ID] = p.Name
-						orgSummary.Projects = append(orgSummary.Projects, p.Name)
-					}
+				for _, p := range cf.projs {
+					projMap[p.ID] = p.Name
+					orgSummary.Projects = append(orgSummary.Projects, p.Name)
 				}
 
-				// Fetch active issues
-				if issues, err := a.PaperclipClient.ListActiveIssues(ctx, c.ID); err == nil {
-					for _, iss := range issues {
-						projectName := ""
-						if iss.ProjectID != "" {
-							if pName, ok := projMap[iss.ProjectID]; ok {
-								projectName = pName
-							}
+				for _, iss := range cf.issues {
+					projectName := ""
+					if iss.ProjectID != "" {
+						if pName, ok := projMap[iss.ProjectID]; ok {
+							projectName = pName
 						}
-						tItem := TaskItem{
-							ID:              iss.ID,
-							Identifier:      iss.Identifier,
-							Title:           iss.Title,
-							Description:     iss.Description,
-							Organization:    c.Name,
-							Project:         projectName,
-							AssigneeAgentID: iss.AssigneeAgentID,
-							CheckoutAgentID: iss.CheckoutAgentID,
-							Priority:        iss.Priority,
-							ParentID:        iss.ParentID,
-							UpdatedAt:       now,
-						}
-						switch iss.Status {
-						case "in_progress", "running":
-							tItem.Status = "running"
-							orgSummary.TaskCounts.Running++
-							overview.GlobalTasks.Running++
-						case "blocked":
-							tItem.Status = "blocked"
-							tItem.IsBlocked = true
-							orgSummary.TaskCounts.Blocked++
-							overview.GlobalTasks.Blocked++
-						case "stopped", "paused", "cancelled":
-							tItem.Status = "stopped"
-							orgSummary.TaskCounts.Stopped++
-							overview.GlobalTasks.Stopped++
-						case "done", "closed":
-							tItem.Status = "done"
-							orgSummary.TaskCounts.Done++
-							overview.GlobalTasks.Done++
-						case "error", "failed":
-							tItem.Status = "errored"
-							orgSummary.TaskCounts.Errored++
-							overview.GlobalTasks.Errored++
-						default:
-							tItem.Status = "active"
-							orgSummary.TaskCounts.Active++
-							overview.GlobalTasks.Active++
-						}
-						orgSummary.TaskCounts.Total++
-						overview.GlobalTasks.Total++
-
-						orgSummary.Tasks = append(orgSummary.Tasks, tItem)
-						overview.Tasks = append(overview.Tasks, tItem)
 					}
+					tItem := TaskItem{
+						ID:              iss.ID,
+						Identifier:      iss.Identifier,
+						Title:           iss.Title,
+						Description:     iss.Description,
+						Organization:    c.Name,
+						Project:         projectName,
+						AssigneeAgentID: iss.AssigneeAgentID,
+						CheckoutAgentID: iss.CheckoutAgentID,
+						Priority:        iss.Priority,
+						ParentID:        iss.ParentID,
+						UpdatedAt:       now,
+					}
+					switch iss.Status {
+					case "in_progress", "running":
+						tItem.Status = "running"
+						orgSummary.TaskCounts.Running++
+						overview.GlobalTasks.Running++
+					case "blocked":
+						tItem.Status = "blocked"
+						tItem.IsBlocked = true
+						orgSummary.TaskCounts.Blocked++
+						overview.GlobalTasks.Blocked++
+					case "stopped", "paused", "cancelled":
+						tItem.Status = "stopped"
+						orgSummary.TaskCounts.Stopped++
+						overview.GlobalTasks.Stopped++
+					case "done", "closed":
+						tItem.Status = "done"
+						orgSummary.TaskCounts.Done++
+						overview.GlobalTasks.Done++
+					case "error", "failed":
+						tItem.Status = "errored"
+						orgSummary.TaskCounts.Errored++
+						overview.GlobalTasks.Errored++
+					default:
+						tItem.Status = "active"
+						orgSummary.TaskCounts.Active++
+						overview.GlobalTasks.Active++
+					}
+					orgSummary.TaskCounts.Total++
+					overview.GlobalTasks.Total++
+
+					orgSummary.Tasks = append(orgSummary.Tasks, tItem)
+					overview.Tasks = append(overview.Tasks, tItem)
 				}
 
-				// Fetch agents
-				if agents, err := a.PaperclipClient.ListAgents(ctx, c.ID); err == nil {
-					for _, ag := range agents {
-						model := extractConfigString(ag.RuntimeConfig, "model", "defaultModel", "default_model")
-						if model == "" {
-							model = extractConfigString(ag.AdapterConfig, "model", "defaultModel", "default_model")
-						}
-						if model == "" {
-							model = ag.Model
-						}
-						provider := ResolveAgentProvider(ag.AdapterType, ag.AdapterConfig, ag.RuntimeConfig, model, ag.Name, ag.Role, ag.Title)
-
-						status := ag.Status
-						if status == "" {
-							status = "active"
-						}
-
-						hb := now
-						if ag.LastHeartbeatAt != "" {
-							if t, err := time.Parse(time.RFC3339Nano, ag.LastHeartbeatAt); err == nil {
-								hb = t
-							} else if t, err := time.Parse(time.RFC3339, ag.LastHeartbeatAt); err == nil {
-								hb = t
-							}
-						}
-
-						quota := getProviderQuotaGauge(overview.ProviderQuotas, provider, c.Name)
-
-						aItem := AgentItem{
-							ID:            ag.ID,
-							Name:          ag.Name,
-							Role:          ag.Role,
-							Organization:  c.Name,
-							Provider:      provider,
-							Model:         model,
-							Status:        status,
-							LastHeartbeat: hb,
-							Quota:         quota,
-						}
-						orgSummary.ActiveAgents++
-						orgSummary.ActiveAgentsByProvider[provider]++
-						overview.GlobalAgents.Total++
-						overview.GlobalAgents.ActiveRunning++
-						overview.GlobalAgents.ByProvider[provider]++
-						overview.GlobalAgents.ByOrganization[c.Name]++
-						orgSummary.Agents = append(orgSummary.Agents, aItem)
-						overview.GlobalAgents.Items = append(overview.GlobalAgents.Items, aItem)
+				for _, ag := range cf.agents {
+					model := extractConfigString(ag.RuntimeConfig, "model", "defaultModel", "default_model")
+					if model == "" {
+						model = extractConfigString(ag.AdapterConfig, "model", "defaultModel", "default_model")
 					}
+					if model == "" {
+						model = ag.Model
+					}
+					provider := ResolveAgentProvider(ag.AdapterType, ag.AdapterConfig, ag.RuntimeConfig, model, ag.Name, ag.Role, ag.Title)
+
+					status := ag.Status
+					if status == "" {
+						status = "active"
+					}
+
+					hb := now
+					if ag.LastHeartbeatAt != "" {
+						if t, err := time.Parse(time.RFC3339Nano, ag.LastHeartbeatAt); err == nil {
+							hb = t
+						} else if t, err := time.Parse(time.RFC3339, ag.LastHeartbeatAt); err == nil {
+							hb = t
+						}
+					}
+
+					quota := getProviderQuotaGauge(overview.ProviderQuotas, provider, c.Name)
+
+					aItem := AgentItem{
+						ID:            ag.ID,
+						Name:          ag.Name,
+						Role:          ag.Role,
+						Organization:  c.Name,
+						Provider:      provider,
+						Model:         model,
+						Status:        status,
+						LastHeartbeat: hb,
+						Quota:         quota,
+					}
+					orgSummary.ActiveAgents++
+					orgSummary.ActiveAgentsByProvider[provider]++
+					overview.GlobalAgents.Total++
+					overview.GlobalAgents.ActiveRunning++
+					overview.GlobalAgents.ByProvider[provider]++
+					overview.GlobalAgents.ByOrganization[c.Name]++
+					orgSummary.Agents = append(orgSummary.Agents, aItem)
+					overview.GlobalAgents.Items = append(overview.GlobalAgents.Items, aItem)
 				}
 			}
 		}
