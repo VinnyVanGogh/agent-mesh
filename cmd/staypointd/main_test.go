@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -212,10 +213,12 @@ func TestWireOnWake_ParseDeltaUsesClaudeAdapter(t *testing.T) {
 // options path (not just the apitest server). It verifies:
 //  1. When BoardTokenPath is set (as it now is in runDaemon), the board_token
 //     file is written to DataDir at server startup.
-//  2. A Board session bootstrapped with the persisted board_token can call a
-//     WrapBoardAction-protected endpoint and receives 200 (not 403).
-//  3. An agent-only request (no staypoint_board cookie) to the same endpoint
-//     receives 403, confirming agents cannot self-approve Board actions.
+//  2. POST /api/board/fresh-nonce (auth token + X-Board-Token) mints a one-time nonce.
+//  3. GET /?token=…&board_nonce=… sets the staypoint_board cookie (nonce flow, STA-583).
+//  4. Reusing the same nonce does NOT set the cookie (single-use).
+//  5. The legacy ?board_token= URL bootstrap is rejected (removed in STA-583).
+//  6. A board session can call a WrapBoardAction-protected endpoint (not 403).
+//  7. An agent-only request (no board cookie) gets 403.
 func TestStaypointd_BoardToken_PersistedAndUsable(t *testing.T) {
 	dataDir := t.TempDir()
 	boardTokenPath := filepath.Join(dataDir, "board_token")
@@ -258,24 +261,46 @@ func TestStaypointd_BoardToken_PersistedAndUsable(t *testing.T) {
 	authToken := srv.Token()
 	base := srv.URL()
 
-	// Bootstrap a board session using the persisted board_token.
-	// The middleware sets the staypoint_board cookie on the /?token=…&board_token=… redirect.
+	// 2. Mint a one-time nonce via POST /api/board/fresh-nonce.
+	// Requires bearer auth token + X-Board-Token with the board credential.
+	nonceReq, _ := http.NewRequest("POST", base+"/api/board/fresh-nonce", nil)
+	nonceReq.Header.Set("Authorization", "Bearer "+authToken)
+	nonceReq.Header.Set("X-Board-Token", boardToken)
+	nonceResp, err := http.DefaultClient.Do(nonceReq)
+	if err != nil {
+		t.Fatalf("fresh-nonce POST: %v", err)
+	}
+	nonceBody, _ := io.ReadAll(nonceResp.Body)
+	nonceResp.Body.Close()
+	if nonceResp.StatusCode != http.StatusOK {
+		t.Fatalf("fresh-nonce: expected 200, got %d: %s", nonceResp.StatusCode, nonceBody)
+	}
+	var noncePayload struct {
+		Nonce string `json:"nonce"`
+	}
+	if err := json.Unmarshal(nonceBody, &noncePayload); err != nil {
+		t.Fatalf("fresh-nonce: unmarshal: %v; body=%s", err, nonceBody)
+	}
+	nonce := noncePayload.Nonce
+	if len(nonce) < 16 {
+		t.Fatalf("fresh-nonce: nonce too short: %q", nonce)
+	}
+
+	// 3. Bootstrap a board session: GET /?token=…&board_nonce=… sets the staypoint_board cookie.
 	jar := newTestCookieJar()
 	client := &http.Client{
 		Jar: jar,
-		// Follow redirects so the cookie is captured.
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return nil
 		},
 	}
-	bootstrapURL := fmt.Sprintf("%s/?token=%s&board_token=%s", base, authToken, boardToken)
+	bootstrapURL := fmt.Sprintf("%s/?token=%s&board_nonce=%s", base, authToken, nonce)
 	resp, err := client.Get(bootstrapURL)
 	if err != nil {
 		t.Fatalf("bootstrap GET: %v", err)
 	}
 	resp.Body.Close()
 
-	// Confirm staypoint_board cookie was set.
 	var gotBoardCookie bool
 	for _, c := range jar.cookies {
 		if c.Name == "staypoint_board" {
@@ -284,37 +309,68 @@ func TestStaypointd_BoardToken_PersistedAndUsable(t *testing.T) {
 		}
 	}
 	if !gotBoardCookie {
-		t.Fatal("staypoint_board cookie was not set after bootstrap with valid board_token")
+		t.Fatal("staypoint_board cookie was not set after bootstrap with valid board_nonce")
 	}
 
-	// 2. Board session → POST /api/settings/security-gate must return something other than 403.
-	// (It may return 400/422 due to missing body, but not 403 — the board gate is passed.)
-	req, _ := http.NewRequest("POST", base+"/api/settings/security-gate", strings.NewReader(`{}`))
-	req.Header.Set("Authorization", "Bearer "+authToken)
-	req.Header.Set("Content-Type", "application/json")
-	for _, c := range jar.cookies {
-		req.AddCookie(c)
+	// 4. Nonce reuse must be rejected: the same nonce must NOT set the cookie a second time.
+	jar2 := newTestCookieJar()
+	client2 := &http.Client{Jar: jar2, CheckRedirect: func(req *http.Request, via []*http.Request) error { return nil }}
+	resp4, err := client2.Get(bootstrapURL)
+	if err != nil {
+		t.Fatalf("nonce-reuse GET: %v", err)
 	}
-	resp2, err := client.Do(req)
+	resp4.Body.Close()
+	for _, c := range jar2.cookies {
+		if c.Name == "staypoint_board" {
+			t.Error("staypoint_board cookie was set on nonce reuse; nonce must be single-use")
+			break
+		}
+	}
+
+	// 5. Legacy ?board_token= bootstrap is rejected (removed in STA-583).
+	jar3 := newTestCookieJar()
+	client3 := &http.Client{Jar: jar3, CheckRedirect: func(req *http.Request, via []*http.Request) error { return nil }}
+	legacyURL := fmt.Sprintf("%s/?token=%s&board_token=%s", base, authToken, boardToken)
+	resp5, err := client3.Get(legacyURL)
+	if err != nil {
+		t.Fatalf("legacy board_token GET: %v", err)
+	}
+	resp5.Body.Close()
+	for _, c := range jar3.cookies {
+		if c.Name == "staypoint_board" {
+			t.Error("staypoint_board cookie was set via ?board_token= URL; this bootstrap path was removed in STA-583")
+			break
+		}
+	}
+
+	// 6. Board session → POST /api/settings/security-gate must return something other than 403.
+	// (It may return 400/422 due to missing body, but not 403 — the board gate is passed.)
+	req6, _ := http.NewRequest("POST", base+"/api/settings/security-gate", strings.NewReader(`{}`))
+	req6.Header.Set("Authorization", "Bearer "+authToken)
+	req6.Header.Set("Content-Type", "application/json")
+	for _, c := range jar.cookies {
+		req6.AddCookie(c)
+	}
+	resp6, err := client.Do(req6)
 	if err != nil {
 		t.Fatalf("board-session POST: %v", err)
 	}
-	resp2.Body.Close()
-	if resp2.StatusCode == http.StatusForbidden {
+	resp6.Body.Close()
+	if resp6.StatusCode == http.StatusForbidden {
 		t.Errorf("board session got 403 Forbidden on /api/settings/security-gate; board cookie gate is broken")
 	}
 
-	// 3. Agent-only (no board cookie) → must get 403.
-	req3, _ := http.NewRequest("POST", base+"/api/settings/security-gate", strings.NewReader(`{}`))
-	req3.Header.Set("Authorization", "Bearer "+authToken)
-	req3.Header.Set("Content-Type", "application/json")
-	resp3, err := http.DefaultClient.Do(req3)
+	// 7. Agent-only (no board cookie) → must get 403.
+	req7, _ := http.NewRequest("POST", base+"/api/settings/security-gate", strings.NewReader(`{}`))
+	req7.Header.Set("Authorization", "Bearer "+authToken)
+	req7.Header.Set("Content-Type", "application/json")
+	resp7, err := http.DefaultClient.Do(req7)
 	if err != nil {
 		t.Fatalf("agent-only POST: %v", err)
 	}
-	resp3.Body.Close()
-	if resp3.StatusCode != http.StatusForbidden {
-		t.Errorf("agent-only request expected 403, got %d", resp3.StatusCode)
+	resp7.Body.Close()
+	if resp7.StatusCode != http.StatusForbidden {
+		t.Errorf("agent-only request expected 403, got %d", resp7.StatusCode)
 	}
 }
 
