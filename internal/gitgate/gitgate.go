@@ -139,12 +139,27 @@ func PostFlight(ctx context.Context, repo, branch string) (*Result, error) {
 	// 2. Unpushed commits
 	unpushed, err := git(ctx, repo, "log", "--oneline", "@{u}..HEAD")
 	if err != nil {
-		// No upstream tracking — treat commits as unpushed if HEAD != origin/main
-		unpushed = gitNoFail(ctx, repo, "log", "--oneline", "origin/main..HEAD")
-		if unpushed != "" {
-			r.addErr(fmt.Sprintf("unpushed commits (no upstream, checked vs origin/main):\n%s", unpushed))
+		// No upstream tracking set. Check if the current branch has a same-named
+		// remote ref (e.g. pushed via `git push origin HEAD` without -u).
+		branchName := gitNoFail(ctx, repo, "rev-parse", "--abbrev-ref", "HEAD")
+		remoteRef := "origin/" + branchName
+		remoteExists := gitNoFail(ctx, repo, "rev-parse", "--verify", remoteRef) != ""
+		if remoteExists {
+			// Remote ref exists: compare against it to detect truly unpushed commits.
+			unpushed = gitNoFail(ctx, repo, "log", "--oneline", remoteRef+"..HEAD")
+			if unpushed != "" {
+				r.addErr(fmt.Sprintf("unpushed commits (no upstream tracking, checked vs %s):\n%s", remoteRef, unpushed))
+			} else {
+				r.addInfo(fmt.Sprintf("no unpushed commits (no upstream tracking, checked vs %s)", remoteRef))
+			}
 		} else {
-			r.addInfo("no upstream tracking; branch tip is in origin/main")
+			// No remote ref at all — fall back to origin/main comparison.
+			unpushed = gitNoFail(ctx, repo, "log", "--oneline", "origin/main..HEAD")
+			if unpushed != "" {
+				r.addErr(fmt.Sprintf("unpushed commits (no upstream, checked vs origin/main):\n%s", unpushed))
+			} else {
+				r.addInfo("no upstream tracking; branch tip is in origin/main")
+			}
 		}
 	} else if unpushed != "" {
 		r.addErr(fmt.Sprintf("unpushed commits:\n%s", unpushed))
