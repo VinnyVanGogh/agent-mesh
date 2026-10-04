@@ -12,7 +12,7 @@ import (
 
 func TestCheckRisk_AdditiveOnly(t *testing.T) {
 	sql := `CREATE TABLE users (id uuid PRIMARY KEY, name text NOT NULL);`
-	risks, hasRisk := migration.CheckRisk(sql)
+	risks, _, hasRisk := migration.CheckRisk(sql)
 	if hasRisk {
 		t.Errorf("additive SQL flagged as risky: %v", risks)
 	}
@@ -20,7 +20,7 @@ func TestCheckRisk_AdditiveOnly(t *testing.T) {
 
 func TestCheckRisk_Drop(t *testing.T) {
 	sql := `DROP TABLE users;`
-	risks, hasRisk := migration.CheckRisk(sql)
+	risks, _, hasRisk := migration.CheckRisk(sql)
 	if !hasRisk {
 		t.Error("DROP TABLE not detected as risky")
 	}
@@ -30,14 +30,14 @@ func TestCheckRisk_Drop(t *testing.T) {
 }
 
 func TestCheckRisk_Truncate(t *testing.T) {
-	_, hasRisk := migration.CheckRisk(`TRUNCATE sessions;`)
+	_, _, hasRisk := migration.CheckRisk(`TRUNCATE sessions;`)
 	if !hasRisk {
 		t.Error("TRUNCATE not detected as risky")
 	}
 }
 
 func TestCheckRisk_DeleteWithoutWhere(t *testing.T) {
-	_, hasRisk := migration.CheckRisk("DELETE FROM old_logs;")
+	_, _, hasRisk := migration.CheckRisk("DELETE FROM old_logs;")
 	if !hasRisk {
 		t.Error("DELETE without WHERE not detected as risky")
 	}
@@ -47,43 +47,86 @@ func TestCheckRisk_DeleteWithWhere(t *testing.T) {
 	// DELETE with WHERE — the current regex catches bare DELETE FROM tbl; (ends with ; or EOL)
 	// but a WHERE clause means the regex won't match because it looks for ;|$ after SET.
 	// The DELETE pattern only fires when there's no WHERE on the same statement.
-	risks, _ := migration.CheckRisk("DELETE FROM old_logs WHERE created_at < '2020-01-01';")
+	risks, _, _ := migration.CheckRisk("DELETE FROM old_logs WHERE created_at < '2020-01-01';")
 	// This may or may not fire depending on how the regex matches; just verify no panic.
 	_ = risks
 }
 
 func TestCheckRisk_AlterDropColumn(t *testing.T) {
-	_, hasRisk := migration.CheckRisk(`ALTER TABLE users DROP COLUMN legacy_col;`)
+	_, _, hasRisk := migration.CheckRisk(`ALTER TABLE users DROP COLUMN legacy_col;`)
 	if !hasRisk {
 		t.Error("ALTER TABLE DROP COLUMN not detected as risky")
 	}
 }
 
 func TestCheckRisk_DisableRLS(t *testing.T) {
-	_, hasRisk := migration.CheckRisk(`ALTER TABLE secret_data DISABLE ROW LEVEL SECURITY;`)
+	_, _, hasRisk := migration.CheckRisk(`ALTER TABLE secret_data DISABLE ROW LEVEL SECURITY;`)
 	if !hasRisk {
 		t.Error("DISABLE ROW LEVEL SECURITY not detected as risky")
 	}
 }
 
 func TestCheckRisk_DropPolicy(t *testing.T) {
-	_, hasRisk := migration.CheckRisk(`DROP POLICY user_read ON profiles;`)
+	_, _, hasRisk := migration.CheckRisk(`DROP POLICY user_read ON profiles;`)
 	if !hasRisk {
 		t.Error("DROP POLICY not detected as risky")
 	}
 }
 
 func TestCheckRisk_LineCommentIgnored(t *testing.T) {
-	risks, hasRisk := migration.CheckRisk("-- DROP TABLE users;\nCREATE TABLE new_users (id uuid PRIMARY KEY);")
+	risks, _, hasRisk := migration.CheckRisk("-- DROP TABLE users;\nCREATE TABLE new_users (id uuid PRIMARY KEY);")
 	if hasRisk {
 		t.Errorf("line-comment DROP flagged as risky: %v", risks)
 	}
 }
 
 func TestCheckRisk_BlockCommentIgnored(t *testing.T) {
-	risks, hasRisk := migration.CheckRisk("/* DROP TABLE users; TRUNCATE sessions; */\nCREATE TABLE new_users (id uuid PRIMARY KEY);")
+	risks, _, hasRisk := migration.CheckRisk("/* DROP TABLE users; TRUNCATE sessions; */\nCREATE TABLE new_users (id uuid PRIMARY KEY);")
 	if hasRisk {
 		t.Errorf("block-comment DROP flagged as risky: %v", risks)
+	}
+}
+
+func TestCheckRisk_IdempotentReCreate_Policy(t *testing.T) {
+	sql := `DROP POLICY IF EXISTS cv_select ON corporate_values;
+CREATE POLICY cv_select ON corporate_values FOR SELECT USING (true);`
+	risks, idempotents, hasRisk := migration.CheckRisk(sql)
+	if hasRisk {
+		t.Errorf("idempotent DROP POLICY IF EXISTS flagged as risky: %v", risks)
+	}
+	if len(idempotents) == 0 {
+		t.Error("expected idempotent re-create entry for cv_select policy")
+	}
+}
+
+func TestCheckRisk_IdempotentReCreate_Trigger(t *testing.T) {
+	sql := `DROP TRIGGER IF EXISTS trg_updated_at ON users;
+CREATE TRIGGER trg_updated_at BEFORE UPDATE ON users EXECUTE FUNCTION set_updated_at();`
+	risks, idempotents, hasRisk := migration.CheckRisk(sql)
+	if hasRisk {
+		t.Errorf("idempotent DROP TRIGGER IF EXISTS flagged as risky: %v", risks)
+	}
+	if len(idempotents) == 0 {
+		t.Error("expected idempotent re-create entry for trg_updated_at trigger")
+	}
+}
+
+func TestCheckRisk_DropPolicyWithoutCreate_StillRisky(t *testing.T) {
+	// DROP POLICY without a matching CREATE in the same file stays destructive.
+	sql := `DROP POLICY IF EXISTS old_policy ON profiles;`
+	_, _, hasRisk := migration.CheckRisk(sql)
+	if !hasRisk {
+		t.Error("DROP POLICY IF EXISTS without matching CREATE should still be risky")
+	}
+}
+
+func TestCheckRisk_DropPolicyNoIFE_StillRisky(t *testing.T) {
+	// DROP POLICY (without IF EXISTS) never gets idempotent treatment even with CREATE.
+	sql := `DROP POLICY cv_select ON corporate_values;
+CREATE POLICY cv_select ON corporate_values FOR SELECT USING (true);`
+	_, _, hasRisk := migration.CheckRisk(sql)
+	if !hasRisk {
+		t.Error("DROP POLICY without IF EXISTS should always be risky")
 	}
 }
 

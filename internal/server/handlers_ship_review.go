@@ -1,12 +1,15 @@
 package server
 
 import (
+	gocontext "context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 
+	"github.com/VinnyVanGogh/staypoint/internal/checkpoint"
 	"github.com/VinnyVanGogh/staypoint/internal/context"
+	"github.com/VinnyVanGogh/staypoint/internal/migration"
 	"github.com/VinnyVanGogh/staypoint/internal/shipreview"
 	"github.com/google/uuid"
 )
@@ -45,6 +48,19 @@ func (h *ShipReviewHandler) GetCard(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// Augment the card with unverified migration info so the UI can block Approve.
+	// Merge into a flat map so existing clients that read card fields directly continue to work.
+	task, taskErr := context.GetTask(h.db, taskID)
+	if taskErr == nil {
+		unverified, _ := unverifiedMigrations(r.Context(), h.db, task)
+		cardBytes, _ := json.Marshal(card)
+		var merged map[string]any
+		if jsonErr := json.Unmarshal(cardBytes, &merged); jsonErr == nil {
+			merged["unverified_migrations"] = unverified
+			writeJSON(w, merged)
+			return
+		}
 	}
 	writeJSON(w, card)
 }
@@ -146,6 +162,55 @@ func (h *ShipReviewHandler) StopDev(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
+// unverifiedMigrations returns migration file paths that appear in the task diff
+// but have not been marked applied (with successful verification) in the activity log.
+func unverifiedMigrations(ctx gocontext.Context, db *sql.DB, task *context.Task) ([]string, error) {
+	// Detect migration files in the task diff.
+	workDir, hasWorktree := taskCheckpointWorkDir(task)
+	cpID := ""
+	var fileStats []checkpoint.FileDiffStat
+	if hasWorktree {
+		fileStats, _ = checkpoint.DiffCheckpointFiles(ctx, workDir, cpID)
+	} else {
+		branch := "staypoint/" + task.ID
+		fileStats, _ = checkpoint.DiffCheckpointFilesAgainstRef(ctx, task.RepoPath, cpID, branch)
+	}
+	filePaths := make([]string, len(fileStats))
+	for i, s := range fileStats {
+		filePaths[i] = s.Path
+	}
+	migPaths := migration.Detect(filePaths, migration.DefaultGlobs)
+	if len(migPaths) == 0 {
+		return nil, nil
+	}
+
+	// Build set of applied migration paths from activity log.
+	logs, err := context.GetTaskActivityLog(db, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	appliedPaths := map[string]bool{}
+	for _, l := range logs {
+		if l.EventType != "migration_applied" {
+			continue
+		}
+		var detail struct {
+			Path string `json:"path"`
+		}
+		if jsonErr := json.Unmarshal([]byte(l.Details), &detail); jsonErr == nil && detail.Path != "" {
+			appliedPaths[detail.Path] = true
+		}
+	}
+
+	var unverified []string
+	for _, p := range migPaths {
+		if !appliedPaths[p] {
+			unverified = append(unverified, p)
+		}
+	}
+	return unverified, nil
+}
+
 // Approve handles POST /api/tasks/{id}/ship-review/approve (Board action)
 func (h *ShipReviewHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("id")
@@ -156,6 +221,38 @@ func (h *ShipReviewHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	if card.Status != shipreview.StatusPending {
 		writeError(w, http.StatusConflict, "card is not pending")
 		return
+	}
+
+	// Parse optional override reason from request body.
+	var req struct {
+		MigrationOverrideReason string `json:"migration_override_reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	// Block if any migration has not been verified, unless override supplied.
+	// Fail-closed: if we can't determine unverified migrations, block approval.
+	if req.MigrationOverrideReason == "" {
+		unverified, unverifiedErr := unverifiedMigrations(r.Context(), h.db, task)
+		if unverifiedErr != nil {
+			writeError(w, http.StatusInternalServerError, "could not check migration verification status: "+unverifiedErr.Error())
+			return
+		}
+		if len(unverified) > 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error":                 "unverified_migrations",
+				"message":               "one or more migration files have not been verified; mark them applied or supply migration_override_reason",
+				"unverified_migrations": unverified,
+			})
+			return
+		}
+	} else {
+		// Log the override reason before merging.
+		logPayload, _ := json.Marshal(map[string]string{
+			"override_reason": req.MigrationOverrideReason,
+		})
+		_ = context.LogActivity(h.db, taskID, "migration_override", string(logPayload))
 	}
 
 	// Always merge from the repo root (on main), never from a task worktree which

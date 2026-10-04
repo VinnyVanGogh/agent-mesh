@@ -7612,6 +7612,136 @@ function highlightSQL(raw) {
   return withStrings;
 }
 
+// showManualVerifyUI inserts a "paste results" UI below the actions row
+// for manual verification mode.
+function showManualVerifyUI(card, actions, taskId, mig, checks, verifyQuery, applyBtn, copyVerifyBtn) {
+  const existing = card.querySelector('.migration-manual-verify');
+  if (existing) return;
+
+  const box = el('div', 'migration-manual-verify');
+  box.style.cssText = 'margin-top:8px;padding:8px;border:1px solid var(--border,#334155);border-radius:6px;font-size:0.8rem;';
+
+  box.appendChild(el('div', '', 'No read-only connection configured. Run the verification query in your SQL editor, then tick each object below:'));
+
+  const checkList = el('div', 'migration-manual-checks');
+  checkList.style.cssText = 'margin:8px 0;display:flex;flex-direction:column;gap:4px;';
+  const tickStates = {};
+  for (const c of checks) {
+    const row = el('label', 'migration-check-row');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.dataset.description = c.description;
+    tickStates[c.description] = false;
+    cb.addEventListener('change', () => { tickStates[c.description] = cb.checked; });
+    row.appendChild(cb);
+    row.appendChild(el('span', '', c.description));
+    checkList.appendChild(row);
+  }
+  box.appendChild(checkList);
+
+  const confirmBtn = el('button', 'btn btn-primary btn-sm', 'Confirm results');
+  confirmBtn.style.marginTop = '4px';
+  confirmBtn.addEventListener('click', async () => {
+    confirmBtn.disabled = true;
+    const checkResults = checks.map(c => ({ description: c.description, passed: !!tickStates[c.description] }));
+    try {
+      const resp = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/migrations/mark-applied`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ path: mig.path, applied_by: 'board', check_results: checkResults }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        applyBtn.textContent = '✓ Applied (manual)';
+        applyBtn.dataset.applied = '1';
+        card.classList.add('migration-applied');
+        box.remove();
+        if (copyVerifyBtn) copyVerifyBtn.style.display = 'none';
+      } else if (resp.status === 409) {
+        confirmBtn.disabled = false;
+        const failed = (data.failed || []).join(', ');
+        const errMsg = card.querySelector('.migration-verify-error') || el('div', 'migration-verify-error');
+        errMsg.style.cssText = 'color:var(--danger,#f87171);margin-top:4px;font-size:0.75rem;';
+        errMsg.textContent = `Failed: ${failed || 'some checks did not pass'}`;
+        box.appendChild(errMsg);
+      }
+    } catch (err) {
+      confirmBtn.disabled = false;
+      console.error('manual confirm failed:', err);
+    }
+  });
+  box.appendChild(confirmBtn);
+
+  // Override link
+  const overrideLink = document.createElement('a');
+  overrideLink.href = '#';
+  overrideLink.textContent = 'Override (type reason)';
+  overrideLink.style.cssText = 'display:block;margin-top:6px;font-size:0.75rem;color:var(--accent,#38bdf8);';
+  overrideLink.addEventListener('click', e => {
+    e.preventDefault();
+    const reason = prompt('Override reason (required):');
+    if (!reason) return;
+    fetch(`/api/tasks/${encodeURIComponent(taskId)}/migrations/mark-applied`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ path: mig.path, applied_by: 'board', override_reason: reason }),
+    }).then(r => r.json()).then(d => {
+      if (d.ok) {
+        applyBtn.textContent = '✓ Applied (override)';
+        applyBtn.dataset.applied = '1';
+        card.classList.add('migration-applied');
+        box.remove();
+        if (copyVerifyBtn) copyVerifyBtn.style.display = 'none';
+      }
+    });
+  });
+  box.appendChild(overrideLink);
+
+  card.appendChild(box);
+}
+
+// showVerifyFailedUI displays failed auto-verify results with override option.
+function showVerifyFailedUI(card, actions, taskId, mig, data, applyBtn, copyVerifyBtn) {
+  const existing = card.querySelector('.migration-verify-failed');
+  if (existing) existing.remove();
+
+  const box = el('div', 'migration-verify-failed');
+  box.style.cssText = 'margin-top:8px;padding:8px;border:1px solid var(--danger,#f87171);border-radius:6px;font-size:0.8rem;';
+  box.appendChild(el('div', '', `Verification failed — these objects are missing:`));
+  const ul = el('ul', '');
+  ul.style.cssText = 'margin:4px 0 4px 16px;';
+  for (const f of (data.failed || [])) {
+    ul.appendChild(el('li', '', f));
+  }
+  box.appendChild(ul);
+
+  const overrideLink = document.createElement('a');
+  overrideLink.href = '#';
+  overrideLink.textContent = 'Override (type reason)';
+  overrideLink.style.cssText = 'display:block;margin-top:4px;font-size:0.75rem;color:var(--accent,#38bdf8);';
+  overrideLink.addEventListener('click', e => {
+    e.preventDefault();
+    const reason = prompt('Override reason (required):');
+    if (!reason) return;
+    fetch(`/api/tasks/${encodeURIComponent(taskId)}/migrations/mark-applied`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ path: mig.path, applied_by: 'board', override_reason: reason }),
+    }).then(r => r.json()).then(d => {
+      if (d.ok) {
+        applyBtn.textContent = '✓ Applied (override)';
+        applyBtn.dataset.applied = '1';
+        card.classList.add('migration-applied');
+        box.remove();
+        if (copyVerifyBtn) copyVerifyBtn.style.display = 'none';
+      }
+    });
+  });
+  box.appendChild(overrideLink);
+  card.appendChild(box);
+}
+
 async function renderMigrationsPanel(container, taskId) {
   let data;
   try {
@@ -7621,6 +7751,7 @@ async function renderMigrationsPanel(container, taskId) {
   }
   const migrations = data.migrations || [];
   if (!migrations.length) return;
+  const hasAutoVerify = !!data.has_auto_verify;
 
   const section = el('div', 'task-page-section migrations-section');
   section.id = `migrations-panel-${taskId}`;
@@ -7628,6 +7759,12 @@ async function renderMigrationsPanel(container, taskId) {
   const titleRow = el('div', 'task-page-section-title-row');
   titleRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
   titleRow.appendChild(el('div', 'task-page-section-title', `Migrations (${migrations.length})`));
+  if (hasAutoVerify) {
+    const autoBadge = el('span', 'migration-badge-auto', '⚡ Auto-verify');
+    autoBadge.title = 'Read-only DB connection configured — Mark applied will verify automatically';
+    autoBadge.style.cssText = 'font-size:0.7rem;padding:2px 6px;border-radius:4px;background:var(--accent,#38bdf8);color:#0f172a;font-weight:600;';
+    titleRow.appendChild(autoBadge);
+  }
 
   // Validate sql_editor_url scheme before setting href (prevent javascript: XSS).
   const safeEditorURL = (() => {
@@ -7716,8 +7853,24 @@ async function renderMigrationsPanel(container, taskId) {
     });
     actions.appendChild(copyBtn);
 
+    // Verification query copy button (shown before verification is done)
+    const verifyChecks = mig.verification_checks || [];
+    let copyVerifyBtn = null;
+    if (verifyChecks.length > 0 && !hasAutoVerify) {
+      copyVerifyBtn = el('button', 'btn btn-secondary btn-sm migration-copy-verify-btn', 'Copy verify query');
+      copyVerifyBtn.title = 'Copy read-only verification query to clipboard';
+      copyVerifyBtn.addEventListener('click', async () => {
+        const q = mig.verification_query || '';
+        try { await navigator.clipboard.writeText(q); }
+        catch { const ta = document.createElement('textarea'); ta.value = q; ta.style.cssText='position:fixed;opacity:0;'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
+        copyVerifyBtn.textContent = '✓ Copied';
+        setTimeout(() => { copyVerifyBtn.textContent = 'Copy verify query'; }, 2000);
+      });
+      actions.appendChild(copyVerifyBtn);
+    }
+
     const applyBtn = el('button', 'btn btn-secondary btn-sm migration-apply-btn', 'Mark applied');
-    applyBtn.title = 'Record that this migration was applied';
+    applyBtn.title = hasAutoVerify ? 'Verify schema and record as applied' : 'Paste check results or override to record as applied';
     applyBtn.dataset.path = mig.path;
     applyBtn.dataset.applied = mig.applied_at ? '1' : '';
     if (mig.applied_at) {
@@ -7728,15 +7881,37 @@ async function renderMigrationsPanel(container, taskId) {
     applyBtn.addEventListener('click', async () => {
       if (applyBtn.dataset.applied) return;
       applyBtn.disabled = true;
-      applyBtn.textContent = 'Marking…';
+      applyBtn.textContent = hasAutoVerify ? 'Verifying…' : 'Marking…';
       try {
-        await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/migrations/mark-applied`, {
+        const resp = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/migrations/mark-applied`, {
           method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader() },
           body: JSON.stringify({ path: mig.path, applied_by: 'board' }),
         });
-        applyBtn.textContent = '✓ Applied';
-        applyBtn.dataset.applied = '1';
-        card.classList.add('migration-applied');
+        const data = await resp.json();
+
+        if (data.ok === true) {
+          // Success — auto or unchecked mode
+          const modeBadge = data.mode === 'auto' ? ' (auto-verified)' : data.mode === 'unchecked' ? '' : ' (manual)';
+          applyBtn.textContent = `✓ Applied${modeBadge}`;
+          applyBtn.dataset.applied = '1';
+          card.classList.add('migration-applied');
+          if (copyVerifyBtn) copyVerifyBtn.style.display = 'none';
+        } else if (data.mode === 'manual' && data.verification_query) {
+          // Manual fallback — show paste UI
+          applyBtn.disabled = false;
+          applyBtn.textContent = 'Mark applied';
+          showManualVerifyUI(card, actions, taskId, mig, verifyChecks, data.verification_query, applyBtn, copyVerifyBtn);
+        } else if (!resp.ok && data.failed) {
+          // Verification failed — show failed checks
+          applyBtn.disabled = false;
+          applyBtn.textContent = 'Mark applied';
+          showVerifyFailedUI(card, actions, taskId, mig, data, applyBtn, copyVerifyBtn);
+        } else {
+          applyBtn.disabled = false;
+          applyBtn.textContent = 'Mark applied';
+          console.error('mark-applied unexpected response:', data);
+        }
       } catch (err) {
         applyBtn.disabled = false;
         applyBtn.textContent = 'Mark applied';

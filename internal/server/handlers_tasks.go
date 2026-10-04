@@ -1015,7 +1015,8 @@ func (h *TasksHandler) GetAllRunErrors(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetTaskMigrations handles GET /api/tasks/{id}/migrations
-// Returns migration files found in the task's diff, with SQL content and risk analysis.
+// Returns migration files found in the task's diff, with SQL content, risk analysis,
+// and verification checks derived from the DDL.
 func (h *TasksHandler) GetTaskMigrations(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -1060,8 +1061,19 @@ func (h *TasksHandler) GetTaskMigrations(w http.ResponseWriter, r *http.Request)
 
 	migPaths := migration.Detect(filePaths, globs)
 
+	// Determine if a read-only DB connection is configured for auto-verify.
+	hasAutoConn := false
+	if dsn, _ := migration.GetProjectDSN(task.RepoPath); dsn != "" {
+		hasAutoConn = true
+	}
+
 	// Read SQL content and check risk for each detected migration file.
-	files := make([]migration.File, 0, len(migPaths))
+	type MigrationFileResponse struct {
+		migration.File
+		VerificationChecks []migration.Check `json:"verification_checks"`
+		VerificationQuery  string            `json:"verification_query"`
+	}
+	files := make([]MigrationFileResponse, 0, len(migPaths))
 	branch := "staypoint/" + task.ID
 	for _, p := range migPaths {
 		var sqlContent string
@@ -1076,29 +1088,45 @@ func (h *TasksHandler) GetTaskMigrations(w http.ResponseWriter, r *http.Request)
 			sqlContent, readErr = migration.ReadContentAtRef(r.Context(), task.RepoPath, branch, p)
 		}
 		f := migration.File{Path: p, SQL: sqlContent, RiskStatements: []string{}}
+		var checks []migration.Check
+		var verQuery string
 		if readErr != nil || strings.TrimSpace(sqlContent) == "" {
-			// Never call unreadable SQL "additive only".
+			// Never verify against unreadable or empty SQL — read_error = ✗.
 			f.ReadError = "could not read migration file from the task branch"
 			if readErr != nil {
 				f.ReadError += ": " + readErr.Error()
 			}
 			f.AdditiveOnly = false
 		} else {
-			risks, hasRisk := migration.CheckRisk(sqlContent)
+			risks, idempotents, hasRisk := migration.CheckRisk(sqlContent)
 			if risks != nil {
 				f.RiskStatements = risks
 			}
+			if idempotents != nil {
+				f.IdempotentReCreates = idempotents
+			}
 			f.AdditiveOnly = !hasRisk
+			checks = migration.ParseChecks(sqlContent)
+			verQuery = migration.BuildVerificationQuery(checks)
 		}
-		files = append(files, f)
+		files = append(files, MigrationFileResponse{
+			File:               f,
+			VerificationChecks: checks,
+			VerificationQuery:  verQuery,
+		})
 	}
 
 	// Attach the latest "Mark applied" record per path so the state survives a
 	// reload (it was only kept in the button before).
+	type appliedRecord struct {
+		appliedBy string
+		appliedAt string
+		verified  bool
+	}
 	if rows, err := h.db.Query(
 		`SELECT details, created_at FROM activity_log WHERE task_id = ? AND event_type = 'migration_applied' ORDER BY created_at ASC`, task.ID,
 	); err == nil {
-		applied := map[string][2]string{}
+		applied := map[string]appliedRecord{}
 		for rows.Next() {
 			var details, at string
 			if rows.Scan(&details, &at) != nil {
@@ -1107,41 +1135,69 @@ func (h *TasksHandler) GetTaskMigrations(w http.ResponseWriter, r *http.Request)
 			var d struct {
 				Path      string `json:"path"`
 				AppliedBy string `json:"applied_by"`
+				Mode      string `json:"mode"`
 			}
 			if json.Unmarshal([]byte(details), &d) == nil && d.Path != "" {
-				applied[d.Path] = [2]string{d.AppliedBy, at}
+				// verified = true when mode is auto or manual (schema checks ran and passed).
+				// unchecked / auto_error = not verified.
+				verified := d.Mode == "auto" || d.Mode == "manual"
+				applied[d.Path] = appliedRecord{appliedBy: d.AppliedBy, appliedAt: at, verified: verified}
 			}
 		}
 		rows.Close()
 		for i := range files {
 			if a, ok := applied[files[i].Path]; ok {
-				files[i].AppliedBy, files[i].AppliedAt = a[0], a[1]
+				files[i].AppliedBy, files[i].AppliedAt = a.appliedBy, a.appliedAt
+				files[i].Verified = a.verified
 			}
 		}
 	}
 
 	writeJSON(w, map[string]any{
-		"migrations":     files,
-		"sql_editor_url": sqlEditorURL,
+		"migrations":      files,
+		"sql_editor_url":  sqlEditorURL,
+		"has_auto_verify": hasAutoConn,
 	})
 }
 
-// MarkMigrationApplied handles POST /api/tasks/{id}/migrations/mark-applied
-// Records a migration_applied event in the task's activity log.
+// MarkMigrationApplied handles POST /api/tasks/{id}/migrations/mark-applied.
+//
+// It always parses the migration file to produce verification checks, then runs
+// them in one of two modes:
+//
+//   - Auto mode: a read-only DSN is stored in the macOS Keychain for this
+//     project. StayPoint connects, runs each check inside BEGIN READ ONLY, and
+//     records "applied" only when every check passes.
+//
+//   - Manual fallback: no DSN configured, or the body includes
+//     check_results from a previous copy-and-paste round. If check_results are
+//     present and all pass, "applied" is recorded. If not, the response returns
+//     the verification_query for the caller to run externally.
+//
+// Override: include override_reason (non-empty string) to bypass failed checks;
+// the reason is recorded in the activity log.
 func (h *TasksHandler) MarkMigrationApplied(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "task id required")
 		return
 	}
-	if _, err := context.GetTask(h.db, id); err != nil {
+	task, err := context.GetTask(h.db, id)
+	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
 	}
 
 	var body struct {
-		Path      string `json:"path"`
-		AppliedBy string `json:"applied_by"`
+		Path           string `json:"path"`
+		AppliedBy      string `json:"applied_by"`
+		// ManualResults contains check results pasted back by the user in manual mode.
+		ManualResults  []struct {
+			Description string `json:"description"`
+			Passed      bool   `json:"passed"`
+		} `json:"check_results"`
+		// OverrideReason bypasses verification failures when non-empty.
+		OverrideReason string `json:"override_reason"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -1155,13 +1211,138 @@ func (h *TasksHandler) MarkMigrationApplied(w http.ResponseWriter, r *http.Reque
 		body.AppliedBy = "board"
 	}
 
-	details, _ := json.Marshal(map[string]string{
+	// Read migration SQL: try the task worktree, then the repo root on disk,
+	// then the task branch via git-show (handles pruned worktrees).
+	// If the file cannot be read at all (e.g. task has no associated repo in CI
+	// test environments), fall through with empty SQL — ParseChecks("") returns
+	// no checks, which routes to unchecked mode below (ok:true, mode:unchecked).
+	workDir, hasWT := taskCheckpointWorkDir(task)
+	var sqlContent string
+	var readErr error
+	if hasWT {
+		sqlContent, readErr = migration.ReadContent(workDir, body.Path)
+	}
+	if !hasWT || readErr != nil {
+		// Fall back to repo root on disk (covers dev/test setups without a worktree).
+		sqlContent, readErr = migration.ReadContent(task.RepoPath, body.Path)
+	}
+	if readErr != nil {
+		// Repo root doesn't have the file (common after a task branch is pruned and
+		// main doesn't include the file yet): read from the task branch via git.
+		sqlContent, readErr = migration.ReadContentAtRef(r.Context(), task.RepoPath, "staypoint/"+task.ID, body.Path)
+	}
+	// readErr means we couldn't find the file anywhere — treat as empty SQL,
+	// which results in unchecked mode. Never return 422 here; the caller recorded
+	// a human decision (mark applied) and we fall back to unverified rather than
+	// blocking the action entirely.
+	if readErr != nil {
+		sqlContent = ""
+	}
+
+	checks := migration.ParseChecks(sqlContent)
+	verQuery := migration.BuildVerificationQuery(checks)
+
+	// No detectable objects → nothing to verify; record applied immediately.
+	if len(checks) == 0 {
+		details, _ := json.Marshal(map[string]any{
+			"path":       body.Path,
+			"applied_by": body.AppliedBy,
+			"mode":       "unchecked",
+			"reason":     "no parseable DDL/DML found in migration file",
+		})
+		if err := context.LogActivity(h.db, id, "migration_applied", string(details)); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{
+			"ok":         true,
+			"path":       body.Path,
+			"applied_by": body.AppliedBy,
+			"mode":       "unchecked",
+			"checks":     []migration.Check{},
+		})
+		return
+	}
+
+	mode := "manual"
+	var results []migration.CheckResult
+	var verifyErr string
+
+	// Attempt auto mode via Keychain DSN.
+	dsn, _ := migration.GetProjectDSN(task.RepoPath)
+	if dsn != "" {
+		mode = "auto"
+		results, err = migration.RunChecks(r.Context(), dsn, checks)
+		if err != nil {
+			verifyErr = err.Error()
+			mode = "auto_error"
+		}
+	} else if len(body.ManualResults) > 0 {
+		// Manual mode: user supplied check results.
+		mode = "manual"
+		for _, mr := range body.ManualResults {
+			results = append(results, migration.CheckResult{
+				Check:  migration.Check{Description: mr.Description},
+				Passed: mr.Passed,
+			})
+		}
+	} else {
+		// No DSN and no manual results — return the query for the user to run.
+		writeJSON(w, map[string]any{
+			"ok":                 false,
+			"mode":               "manual",
+			"verification_query": verQuery,
+			"checks":             checks,
+			"message":            "run the verification_query and submit check_results to confirm",
+		})
+		return
+	}
+
+	allPassed := verifyErr == "" && migration.AllPassed(results)
+	overridden := body.OverrideReason != ""
+
+	if !allPassed && !overridden {
+		failed := migration.FailedDescriptions(results)
+		writeErrorJSON(w, http.StatusConflict, map[string]any{
+			"error":   "verification failed: some schema objects are missing",
+			"failed":  failed,
+			"mode":    mode,
+			"checks":  results,
+		})
+		return
+	}
+
+	// Build detailed activity record.
+	logPayload := map[string]any{
 		"path":       body.Path,
 		"applied_by": body.AppliedBy,
-	})
-	if err := context.LogActivity(h.db, id, "migration_applied", string(details)); err != nil {
+		"mode":       mode,
+		"checks":     results,
+	}
+	if verifyErr != "" {
+		logPayload["verify_error"] = verifyErr
+	}
+	if overridden {
+		logPayload["override_reason"] = body.OverrideReason
+	}
+	detailsBytes, _ := json.Marshal(logPayload)
+	if err := context.LogActivity(h.db, id, "migration_applied", string(detailsBytes)); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "path": body.Path, "applied_by": body.AppliedBy})
+
+	writeJSON(w, map[string]any{
+		"ok":         true,
+		"path":       body.Path,
+		"applied_by": body.AppliedBy,
+		"mode":       mode,
+		"checks":     results,
+	})
+}
+
+// writeErrorJSON writes a JSON error body (for rich error responses with extra fields).
+func writeErrorJSON(w http.ResponseWriter, status int, payload map[string]any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
 }
