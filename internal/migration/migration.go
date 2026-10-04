@@ -29,6 +29,11 @@ type File struct {
 	// ReadError is set when the file content could not be read; SQL is then
 	// empty and the file must not be treated as safe.
 	ReadError string `json:"read_error,omitempty"`
+	// AppliedBy/AppliedAt come from the latest "migration_applied" activity
+	// for this path. Verified stays false until a schema check exists (STA-564).
+	AppliedBy string `json:"applied_by,omitempty"`
+	AppliedAt string `json:"applied_at,omitempty"`
+	Verified  bool   `json:"verified"`
 }
 
 // destructivePatterns is compiled once at startup.

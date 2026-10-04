@@ -1093,6 +1093,33 @@ func (h *TasksHandler) GetTaskMigrations(w http.ResponseWriter, r *http.Request)
 		files = append(files, f)
 	}
 
+	// Attach the latest "Mark applied" record per path so the state survives a
+	// reload (it was only kept in the button before).
+	if rows, err := h.db.Query(
+		`SELECT details, created_at FROM activity_log WHERE task_id = ? AND event_type = 'migration_applied' ORDER BY created_at ASC`, task.ID,
+	); err == nil {
+		applied := map[string][2]string{}
+		for rows.Next() {
+			var details, at string
+			if rows.Scan(&details, &at) != nil {
+				continue
+			}
+			var d struct {
+				Path      string `json:"path"`
+				AppliedBy string `json:"applied_by"`
+			}
+			if json.Unmarshal([]byte(details), &d) == nil && d.Path != "" {
+				applied[d.Path] = [2]string{d.AppliedBy, at}
+			}
+		}
+		rows.Close()
+		for i := range files {
+			if a, ok := applied[files[i].Path]; ok {
+				files[i].AppliedBy, files[i].AppliedAt = a[0], a[1]
+			}
+		}
+	}
+
 	writeJSON(w, map[string]any{
 		"migrations":     files,
 		"sql_editor_url": sqlEditorURL,
