@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/VinnyVanGogh/staypoint/internal/governance"
 	"github.com/VinnyVanGogh/staypoint/internal/security"
 )
 
@@ -140,6 +141,15 @@ func (h *SecurityGateHandler) DecideGateRequest(w http.ResponseWriter, r *http.R
 		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
 		return
 	}
+
+	// Write to governance audit log so the decision (and who made it) is durable.
+	pendingStatus := string(security.GateRequestPending)
+	decidedStatus := string(gr.Status)
+	_ = governance.LogEvent(h.db, gr.ID, "board", "security_gate_decided",
+		&pendingStatus, &decidedStatus,
+		map[string]any{"cmdline": gr.Cmdline, "decision": string(gr.Status), "run_id": gr.RunID},
+	)
+
 	h.hub.Publish("security_gate_decided", map[string]any{
 		"id":       gr.ID,
 		"decision": gr.Status,
