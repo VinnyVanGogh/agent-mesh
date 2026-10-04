@@ -78,6 +78,10 @@ type Options struct {
 	// userscripts via GM_xmlhttpRequest) can reach the local API from any page origin.
 	// Disabled by default; enable via [server] cors_allow_all = true in config.toml.
 	CORSAllowAll bool
+
+	// TestMode enables test-only routes (e.g. ship-review seed endpoint).
+	// Must never be set in production.
+	TestMode bool
 }
 
 // GenerateAuthToken generates a 32-byte (64-character hex) cryptographically secure random token.

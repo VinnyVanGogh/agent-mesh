@@ -8,6 +8,7 @@ import (
 
 	"github.com/VinnyVanGogh/staypoint/internal/context"
 	"github.com/VinnyVanGogh/staypoint/internal/shipreview"
+	"github.com/google/uuid"
 )
 
 // ShipReviewHandler handles Ship Review card lifecycle endpoints.
@@ -366,5 +367,56 @@ func (h *ShipReviewHandler) requireCard(w http.ResponseWriter, taskID string) (*
 		return nil, nil, false
 	}
 	return card, task, true
+}
+
+// SeedCard handles PUT /api/tasks/{id}/ship-review/seed (test-only).
+// Inserts a card directly into the DB without requiring a real git branch.
+// Only registered when server.Options.TestMode is true.
+func (h *ShipReviewHandler) SeedCard(w http.ResponseWriter, r *http.Request) {
+	taskID := r.PathValue("id")
+	if taskID == "" {
+		writeError(w, http.StatusBadRequest, "task id required")
+		return
+	}
+	var req struct {
+		Status    string   `json:"status"`
+		HeadSHA   string   `json:"head_sha"`
+		Branch    string   `json:"branch"`
+		TestSteps []string `json:"test_steps"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if req.Status == "" {
+		req.Status = "pending"
+	}
+	if req.HeadSHA == "" {
+		req.HeadSHA = "seed-" + uuid.New().String()[:12]
+	}
+	if req.Branch == "" {
+		req.Branch = "staypoint/" + taskID
+	}
+	if len(req.TestSteps) == 0 {
+		req.TestSteps = []string{"Verify the feature works as described."}
+	}
+	id := uuid.New().String()
+	stepsJSON, _ := json.Marshal(req.TestSteps)
+	_, err := h.db.Exec(`
+		INSERT INTO ship_review_cards (id, task_id, branch, head_sha, test_steps_json, status)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (id) DO NOTHING`,
+		id, taskID, req.Branch, req.HeadSHA, string(stepsJSON), req.Status,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	card, err := shipreview.GetCard(h.db, taskID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, card)
 }
 
