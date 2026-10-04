@@ -24,9 +24,13 @@ var httpMutationRe = regexp.MustCompile(
 var staypointTokenFileRe = regexp.MustCompile(
 	`/\.staypoint/(?:auth_token|board_token)\b|['"](auth_token|board_token)['"]`)
 
-// ptyForgingRe matches PTY-creation calls in inline scripts that bypass terminal guards.
+// ptyForgingRe matches PTY-creation calls or pty module imports in inline scripts.
 var ptyForgingRe = regexp.MustCompile(
-	`(?i)\b(?:pty\.spawn|openpty|os\.openpty|zpty|posix_openpt|forkpty)\s*\(`)
+	`(?i)\b(?:import\s+pty\b|pty\.spawn|openpty|os\.openpty|zpty|posix_openpt|forkpty)\s*(?:\(|$)`)
+
+// boardCredentialInScriptRe matches board credential names/values in inline scripts
+// that are not already covered by staypointTokenFileRe.
+var boardCredentialInScriptRe = regexp.MustCompile(`\bboard_(?:nonce|token)\b`)
 
 // Tier is a command risk class.
 type Tier int
@@ -712,6 +716,11 @@ func (c *Classifier) classifyFetch(name string, args []string, v *Verdict) {
 			v.raise(Red, name+": uploads data (possible exfiltration)")
 		case a == "-K" || a == "--config" || (a == "-i" && name == "wget"):
 			v.raise(Red, name+": reads request definition from a file")
+		// curl -c / --cookie-jar: writes cookies to a file.
+		// An agent using this flag against the local daemon would save the board session
+		// cookie for later use in a mutating request.
+		case name == "curl" && (a == "-c" || strings.EqualFold(a, "--cookie-jar") || strings.HasPrefix(lower, "--cookie-jar=")):
+			v.raise(Red, name+": writes session cookies to a file (possible credential theft)")
 		default:
 			// Non-flag argument: check for board-only endpoints or board bootstrap URLs.
 			// An agent fetching a board bootstrap URL (even via GET) would steal the
@@ -764,11 +773,11 @@ func classifyInlineScript(script string, v *Verdict) bool {
 		return true
 	}
 	if ptyForgingRe.MatchString(script) {
-		v.raise(Red, "inline script creates a pseudo-TTY (bypasses terminal guards)")
+		v.raise(Red, "inline script creates or imports a pseudo-TTY (bypasses terminal guards)")
 		return true
 	}
-	if boardBootstrapRe.MatchString(script) {
-		v.raise(Red, "inline script contains board bootstrap credential (board_nonce/board_token)")
+	if boardBootstrapRe.MatchString(script) || boardCredentialInScriptRe.MatchString(script) {
+		v.raise(Red, "inline script references board bootstrap credential (board_nonce/board_token)")
 		return true
 	}
 	return false
