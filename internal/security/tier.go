@@ -146,6 +146,10 @@ var alwaysRed = map[string]string{
 	"halt": "system power", "poweroff": "system power", "crontab": "persistent scheduler",
 	"launchctl": "service manager", "systemctl": "service manager", "chroot": "chroot",
 	"security": "keychain access", "gpg": "keyring access", "openssl": "key material handling",
+	// TTY-forging tools: used to defeat stdout-is-a-terminal guards.
+	"script":   "TTY-forging tool (bypasses terminal checks)",
+	"unbuffer": "TTY-forging tool (bypasses terminal checks)",
+	"expect":   "TTY-forging / automation tool (bypasses terminal checks)",
 }
 
 // wrapper commands whose real command follows their own flags.
@@ -245,6 +249,8 @@ func (c *Classifier) classifySegment(s segment, v *Verdict, depth int) {
 		c.classifyGit(args, v)
 	case name == "gh":
 		c.classifyGh(args, v)
+	case name == "staypoint":
+		c.classifyStaypoint(args, v)
 	case name == "curl" || name == "wget":
 		c.classifyFetch(name, args, v)
 	case name == "python" || name == "python2" || name == "python3":
@@ -639,20 +645,63 @@ func (c *Classifier) classifyScriptInterp(name string, args []string, inlineFlag
 	}
 }
 
+// classifyStaypoint classifies `staypoint <sub> …` calls.
+// `staypoint board …` is always Red: even with TTY-gating the board subcommand
+// contains credentials that agents must never access.
+func (c *Classifier) classifyStaypoint(args []string, v *Verdict) {
+	if len(args) > 0 && args[0] == "board" {
+		v.raise(Red, "staypoint board: accesses board credentials; agents cannot self-approve (use the Board UI)")
+		return
+	}
+	v.raise(Yellow, "")
+}
+
 func (c *Classifier) classifyFetch(name string, args []string, v *Verdict) {
 	v.raise(Yellow, "")
 	for i, a := range args {
+		lower := strings.ToLower(a)
 		switch {
-		case a == "-d" || strings.HasPrefix(a, "--data") || a == "-F" || strings.HasPrefix(a, "--form") ||
-			a == "-T" || a == "--upload-file" || a == "--json" ||
-			strings.HasPrefix(a, "--post-") || a == "--body-data" || a == "--body-file":
+		case a == "-d" || strings.HasPrefix(lower, "--data") || a == "-F" || strings.HasPrefix(lower, "--form") ||
+			a == "-T" || a == "--upload-file" || lower == "--json" ||
+			strings.HasPrefix(lower, "--post-") || lower == "--body-data" || lower == "--body-file":
 			v.raise(Red, name+": uploads data (possible exfiltration)")
-		case (a == "-X" || a == "--request") && i+1 < len(args):
+		// -X POST / --request POST  (separate token)
+		case (a == "-X" || strings.EqualFold(a, "--request")) && i+1 < len(args):
 			switch strings.ToUpper(args[i+1]) {
 			case "POST", "PUT", "PATCH", "DELETE":
 				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
 			}
-		case a == "-K" || a == "--config" || a == "-i" && name == "wget":
+		// -XPOST / -X=POST  (combined, with or without =)
+		case strings.HasPrefix(lower, "-x") && len(a) > 2:
+			raw := strings.TrimPrefix(a[2:], "=")
+			switch strings.ToUpper(raw) {
+			case "POST", "PUT", "PATCH", "DELETE":
+				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
+			}
+		// --request=POST (attached with =)
+		case strings.HasPrefix(lower, "--request="):
+			m := strings.ToUpper(a[strings.Index(a, "=")+1:])
+			switch m {
+			case "POST", "PUT", "PATCH", "DELETE":
+				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
+			}
+		// wget --method=POST / wget --method POST
+		case name == "wget" && strings.EqualFold(a, "--method") && i+1 < len(args):
+			switch strings.ToUpper(args[i+1]) {
+			case "POST", "PUT", "PATCH", "DELETE":
+				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
+			}
+		case name == "wget" && strings.HasPrefix(lower, "--method="):
+			m := strings.ToUpper(a[strings.Index(a, "=")+1:])
+			switch m {
+			case "POST", "PUT", "PATCH", "DELETE":
+				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
+			}
+		// wget --post-data / --post-file (already partially caught by --post- prefix above,
+		// kept explicit for clarity and to ensure --post-data without = is caught)
+		case name == "wget" && (lower == "--post-data" || lower == "--post-file"):
+			v.raise(Red, name+": uploads data (possible exfiltration)")
+		case a == "-K" || a == "--config" || (a == "-i" && name == "wget"):
 			v.raise(Red, name+": reads request definition from a file")
 		}
 	}

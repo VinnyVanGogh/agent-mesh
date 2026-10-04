@@ -287,3 +287,60 @@ func TestPreToolHookPythonTokenFileRead(t *testing.T) {
 		}
 	}
 }
+
+// TestSTA583AgentBoardSelfApproveChain verifies that every step of the attack
+// chain described in STA-583 is classified Red by the pre-tool hook, so the
+// hook blocks the agent before it can reach ship-review/approve or gate-requests/decide.
+func TestSTA583AgentBoardSelfApproveChain(t *testing.T) {
+	c := &Classifier{}
+
+	// Step 1: TTY-forging wrappers around `staypoint board url`.
+	// `env -u STAYPOINT_TASK_ID script -q /dev/null staypoint board url` must be Red.
+	step1 := []string{
+		"script -q /dev/null staypoint board url",
+		"unbuffer staypoint board url",
+		"expect staypoint board url",
+		"staypoint board url",
+		"staypoint board url --daemon-url http://127.0.0.1:41421",
+		// env wrapper stripping STAYPOINT_TASK_ID then running script
+		"env -u STAYPOINT_TASK_ID script -q /dev/null staypoint board url",
+	}
+	for _, cmd := range step1 {
+		v := c.Classify(cmd)
+		if v.Tier != Red {
+			t.Errorf("STA-583 step1 %q should be Red, got %s (%v)", cmd, v.Tier, v.Reasons)
+		}
+	}
+
+	// Step 3: curl with combined -XPOST flag (was previously allowed — the bug).
+	// The cookie-based board session requires the staypoint_board cookie obtained
+	// in step 2; step 3 uses -XPOST which the old classifier missed.
+	step3 := []string{
+		"curl -s -b jar -XPOST http://127.0.0.1:41421/api/tasks/abc/ship-review/approve",
+		"curl -XPOST http://127.0.0.1:41421/api/security/gate-requests/xyz/decide",
+		"curl --request=POST http://127.0.0.1:41421/api/tasks/abc/ship-review/approve",
+		"wget --method=POST http://127.0.0.1:41421/api/tasks/abc/ship-review/approve",
+		"wget --method POST http://127.0.0.1:41421/api/tasks/abc/ship-review/reject",
+		"wget --post-data='' http://127.0.0.1:41421/api/tasks/abc/ship-review/approve",
+	}
+	for _, cmd := range step3 {
+		v := c.Classify(cmd)
+		if v.Tier != Red {
+			t.Errorf("STA-583 step3 %q should be Red, got %s (%v)", cmd, v.Tier, v.Reasons)
+		}
+	}
+
+	// Regression: safe GET curl/wget should remain Yellow.
+	safe := []string{
+		"curl -s http://127.0.0.1:41421/api/health",
+		"curl -s -c jar http://127.0.0.1:41421/?token=tok&board_nonce=nonce",
+		"curl -XGET http://127.0.0.1:41421/api/tasks",
+		"wget --method=GET http://127.0.0.1:41421/api/health",
+	}
+	for _, cmd := range safe {
+		v := c.Classify(cmd)
+		if v.Tier == Red {
+			t.Errorf("STA-583 regression: %q should not be Red, got Red (%v)", cmd, v.Reasons)
+		}
+	}
+}
