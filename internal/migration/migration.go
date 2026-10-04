@@ -92,33 +92,53 @@ func stripComments(sql string) string {
 	return b.String()
 }
 
-// idempotentDropRe matches DROP POLICY/TRIGGER IF EXISTS and captures the name.
+// sqlIdentRE matches either a double-quoted SQL identifier (allowing spaces and
+// special characters inside the quotes) or an unquoted word identifier.
+const sqlIdentRE = `(?:"[^"]*"|\w+)`
+
+// idempotentDropRe matches DROP/CREATE POLICY/TRIGGER and captures the name (and
+// for policies the table ref, since policy names are scoped to a table).
 var (
-	reDropPolicyIFE  = regexp.MustCompile(`(?i)\bDROP\s+POLICY\s+IF\s+EXISTS\s+(\w+)`)
-	reDropTriggerIFE = regexp.MustCompile(`(?i)\bDROP\s+TRIGGER\s+IF\s+EXISTS\s+(\w+)`)
-	reCreatePolicyN  = regexp.MustCompile(`(?i)\bCREATE\s+POLICY\s+(\w+)`)
-	reCreateTriggerN = regexp.MustCompile(`(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+(\w+)`)
+	reDropPolicyIFE  = regexp.MustCompile(`(?i)\bDROP\s+POLICY\s+IF\s+EXISTS\s+(` + sqlIdentRE + `)\s+ON\s+((?:\w+\.)?\w+)`)
+	reDropTriggerIFE = regexp.MustCompile(`(?i)\bDROP\s+TRIGGER\s+IF\s+EXISTS\s+(` + sqlIdentRE + `)`)
+	reCreatePolicyN  = regexp.MustCompile(`(?i)\bCREATE\s+POLICY\s+(` + sqlIdentRE + `)\s+ON\s+((?:\w+\.)?\w+)`)
+	reCreateTriggerN = regexp.MustCompile(`(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+(` + sqlIdentRE + `)`)
 )
 
-// idempotentDropKeys returns a set of "policy:<name>" / "trigger:<name>" keys
+// unquoteIdent strips surrounding double-quotes from a SQL identifier.
+// Unquoted identifiers are returned unchanged.
+func unquoteIdent(s string) string {
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
+// policyKey returns the lookup key for a policy keyed on unquoted-lowercased name
+// and table so that same-named policies on different tables are not conflated.
+func policyKey(name, table string) string {
+	return "policy:" + strings.ToLower(unquoteIdent(name)) + ":" + strings.ToLower(table)
+}
+
+// idempotentDropKeys returns a set of policy/trigger keys
 // where the DROP … IF EXISTS is followed by a matching CREATE in the same file.
 func idempotentDropKeys(stripped string) map[string]bool {
 	created := map[string]bool{}
 	for _, m := range reCreatePolicyN.FindAllStringSubmatch(stripped, -1) {
-		created["policy:"+strings.ToLower(m[1])] = true
+		created[policyKey(m[1], m[2])] = true
 	}
 	for _, m := range reCreateTriggerN.FindAllStringSubmatch(stripped, -1) {
-		created["trigger:"+strings.ToLower(m[1])] = true
+		created["trigger:"+strings.ToLower(unquoteIdent(m[1]))] = true
 	}
 	keys := map[string]bool{}
 	for _, m := range reDropPolicyIFE.FindAllStringSubmatch(stripped, -1) {
-		k := "policy:" + strings.ToLower(m[1])
+		k := policyKey(m[1], m[2])
 		if created[k] {
 			keys[k] = true
 		}
 	}
 	for _, m := range reDropTriggerIFE.FindAllStringSubmatch(stripped, -1) {
-		k := "trigger:" + strings.ToLower(m[1])
+		k := "trigger:" + strings.ToLower(unquoteIdent(m[1]))
 		if created[k] {
 			keys[k] = true
 		}
@@ -153,13 +173,13 @@ func CheckRisk(sql string) (risks []string, idempotentReCreates []string, hasRis
 				seen[snippet] = true
 				// Check if this DROP POLICY/TRIGGER IF EXISTS is an idempotent re-create.
 				if m := reDropPolicyIFE.FindStringSubmatch(trimmed); m != nil {
-					if idKeys["policy:"+strings.ToLower(m[1])] {
+					if idKeys[policyKey(m[1], m[2])] {
 						idempotentReCreates = append(idempotentReCreates, snippet)
 						continue
 					}
 				}
 				if m := reDropTriggerIFE.FindStringSubmatch(trimmed); m != nil {
-					if idKeys["trigger:"+strings.ToLower(m[1])] {
+					if idKeys["trigger:"+strings.ToLower(unquoteIdent(m[1]))] {
 						idempotentReCreates = append(idempotentReCreates, snippet)
 						continue
 					}

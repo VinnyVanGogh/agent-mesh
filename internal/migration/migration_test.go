@@ -130,6 +130,52 @@ CREATE POLICY cv_select ON corporate_values FOR SELECT USING (true);`
 	}
 }
 
+func TestCheckRisk_IdempotentReCreate_QuotedPolicyName(t *testing.T) {
+	// Quoted names with spaces — the real-world failing case from STA-590.
+	sql := `DROP POLICY IF EXISTS "Public can view active corporate values" ON public.corporate_values;
+CREATE POLICY "Public can view active corporate values" ON public.corporate_values FOR SELECT TO authenticated USING (active = true);`
+	risks, idempotents, hasRisk := migration.CheckRisk(sql)
+	if hasRisk {
+		t.Errorf("quoted idempotent DROP POLICY IF EXISTS flagged as risky: %v", risks)
+	}
+	if len(idempotents) == 0 {
+		t.Error("expected idempotent re-create entry for quoted policy name with spaces")
+	}
+}
+
+func TestCheckRisk_IdempotentReCreate_QuotedPolicySchemaTable(t *testing.T) {
+	// Schema-qualified table reference with a quoted policy name.
+	sql := `DROP POLICY IF EXISTS "Admins can manage corporate values" ON public.corporate_values;
+CREATE POLICY "Admins can manage corporate values" ON public.corporate_values FOR ALL TO authenticated USING (true) WITH CHECK (true);`
+	risks, idempotents, hasRisk := migration.CheckRisk(sql)
+	if hasRisk {
+		t.Errorf("schema-qualified quoted policy flagged as risky: %v", risks)
+	}
+	if len(idempotents) == 0 {
+		t.Error("expected idempotent re-create entry for schema-qualified quoted policy")
+	}
+}
+
+func TestCheckRisk_QuotedPolicyDifferentTable_StillRisky(t *testing.T) {
+	// DROP on table_a + CREATE on table_b with the same policy name must NOT be treated
+	// as idempotent — policy names are scoped to a table.
+	sql := `DROP POLICY IF EXISTS "read_all" ON public.table_a;
+CREATE POLICY "read_all" ON public.table_b FOR SELECT USING (true);`
+	_, _, hasRisk := migration.CheckRisk(sql)
+	if !hasRisk {
+		t.Error("same policy name on different tables should still be risky")
+	}
+}
+
+func TestCheckRisk_QuotedPolicyWithoutCreate_StillRisky(t *testing.T) {
+	// Quoted DROP POLICY IF EXISTS without a matching CREATE stays destructive.
+	sql := `DROP POLICY IF EXISTS "stale policy" ON public.some_table;`
+	_, _, hasRisk := migration.CheckRisk(sql)
+	if !hasRisk {
+		t.Error("quoted DROP POLICY IF EXISTS without matching CREATE should be risky")
+	}
+}
+
 func TestDetect_DefaultGlobs(t *testing.T) {
 	files := []string{
 		"supabase/migrations/20261003120000_corporate_values.sql",
