@@ -188,13 +188,15 @@ func runDaemon(ctx context.Context) error {
 	// 4. Start HTTP & SSE Local Daemon Server (127.0.0.1 only)
 	var httpServer *server.Server
 	tokenPath := filepath.Join(cfg.DataDir, "auth_token")
+	boardTokenPath := filepath.Join(cfg.DataDir, "board_token")
 	if s, err := server.New(server.Options{
-		BindHost:     "127.0.0.1",
-		Port:         41421,
-		TokenPath:    tokenPath,
-		DB:           dbStore.DB(),
-		GitCommit:    GitCommit,
-		CORSAllowAll: cfg.CORSAllowAll,
+		BindHost:       "127.0.0.1",
+		Port:           41421,
+		TokenPath:      tokenPath,
+		BoardTokenPath: boardTokenPath,
+		DB:             dbStore.DB(),
+		GitCommit:      GitCommit,
+		CORSAllowAll:   cfg.CORSAllowAll,
 	}); err != nil {
 		slog.Warn("Failed to initialize HTTP server", slog.Any("error", err))
 	} else if err := s.Start(); err != nil {
@@ -205,7 +207,15 @@ func runDaemon(ctx context.Context) error {
 		slog.Info("HTTP and SSE server active",
 			slog.String("url", httpServer.URL()),
 			slog.String("token_path", tokenPath),
+			slog.String("board_token_path", boardTokenPath),
 		)
+		// Print Board URL only to a TTY so the credential is not captured by
+		// log collectors or piped output that an agent process could read.
+		fi, _ := os.Stdout.Stat()
+		if fi != nil && (fi.Mode()&os.ModeCharDevice) != 0 {
+			boardURL := fmt.Sprintf("%s/?token=%s&board_nonce=%s", httpServer.URL(), httpServer.Token(), httpServer.BoardNonce())
+			fmt.Printf("  Board URL:  %s\n", boardURL)
+		}
 	}
 
 	// 5. Wire GlobalDispatcher.OnWake to launch harness runs.
