@@ -533,8 +533,9 @@ func TestToolCallShipReview(t *testing.T) {
 		t.Fatalf("insert task: %v", err)
 	}
 
-	// Create a feature branch with a commit so CurrentBranchHEAD works.
-	runCmd(t, repoDir, "git", "checkout", "-b", "feature/mcp-test")
+	// Create the harness branch staypoint/<taskID> so BuildAndStartCard can resolve HEAD.
+	// git_branch="feature/mcp-test" stays in the DB to confirm BuildAndStartCard ignores it.
+	runCmd(t, repoDir, "git", "checkout", "-b", "staypoint/sr-mcp-task")
 	featureFile := filepath.Join(repoDir, "feature.txt")
 	if err := os.WriteFile(featureFile, []byte("feature\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -570,8 +571,8 @@ func TestToolCallShipReview(t *testing.T) {
 	if !strings.Contains(res.Content[0].Text, "Ship Review card created") {
 		t.Errorf("unexpected success message: %s", res.Content[0].Text)
 	}
-	if !strings.Contains(res.Content[0].Text, "feature/mcp-test") {
-		t.Errorf("expected branch in response, got: %s", res.Content[0].Text)
+	if !strings.Contains(res.Content[0].Text, "staypoint/sr-mcp-task") {
+		t.Errorf("expected harness branch in response, got: %s", res.Content[0].Text)
 	}
 }
 
