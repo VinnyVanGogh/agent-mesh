@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/config"
@@ -16,11 +17,20 @@ import (
 	"github.com/VinnyVanGogh/staypoint/internal/reporting"
 )
 
+const fleetOverviewCacheTTL = 10 * time.Second
+
+type fleetOverviewCache struct {
+	mu        sync.Mutex
+	body      []byte
+	expiresAt time.Time
+}
+
 type TelemetryHandler struct {
 	db              *sql.DB
 	hub             *EventHub
 	fleetAgg        *fleet.Aggregator
 	telemetryDBPath string
+	overviewCache   fleetOverviewCache
 }
 
 func NewTelemetryHandler(db *sql.DB, hub *EventHub, telemetryDBPath string) *TelemetryHandler {
@@ -137,21 +147,51 @@ func (h *TelemetryHandler) GetTelemetry(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(respMap)
 }
 
-// GetFleetOverview handles GET /api/fleet/overview
+// GetFleetOverview handles GET /api/fleet/overview.
+// Results are cached for fleetOverviewCacheTTL (10 s) to avoid the ≈3–4 s
+// Paperclip API round-trip on every page load.
 func (h *TelemetryHandler) GetFleetOverview(w http.ResponseWriter, r *http.Request) {
 	if h.fleetAgg == nil {
 		http.Error(w, `{"error":"fleet aggregator unavailable"}`, http.StatusServiceUnavailable)
 		return
 	}
+
+	h.overviewCache.mu.Lock()
+	if time.Now().Before(h.overviewCache.expiresAt) && len(h.overviewCache.body) > 0 {
+		body := h.overviewCache.body
+		h.overviewCache.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Fleet-Cache", "hit")
+		_, _ = w.Write(body)
+		return
+	}
+	h.overviewCache.mu.Unlock()
+
+	t0 := time.Now()
 	overview, err := h.fleetAgg.Gather(r.Context())
+	elapsed := time.Since(t0)
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	body, err := json.Marshal(overview)
+	if err != nil {
+		http.Error(w, `{"error":"marshal failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	h.overviewCache.mu.Lock()
+	h.overviewCache.body = body
+	h.overviewCache.expiresAt = time.Now().Add(fleetOverviewCacheTTL)
+	h.overviewCache.mu.Unlock()
+
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(overview)
+	w.Header().Set("X-Fleet-Cache", "miss")
+	w.Header().Set("X-Fleet-Gather-Ms", fmt.Sprintf("%d", elapsed.Milliseconds()))
+	_, _ = w.Write(body)
 }
 
 // paperclipAPIBase returns the Paperclip local server base URL.

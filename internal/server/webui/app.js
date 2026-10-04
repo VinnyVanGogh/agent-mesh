@@ -9629,24 +9629,42 @@ document.getElementById('projects-org-filter')?.addEventListener('change', (e) =
 });
 
 // ── Boot ──────────────────────────────────────────────────
-loadAll().then(() => {
-  // Pre-render and cache Boss Cards on initial load / first daily access
-  loadBossReportCache();
-  preloadBossReports(false);
-
+// Route first: parse the URL immediately so the correct view renders
+// without waiting for the slow /api/fleet/overview call (≈3–4 s).
+// openTaskPage() fetches /api/tasks/{id} itself; it does not need state.fleet.
+// Non-task views that depend on fleet data will show a loading state until
+// loadAll() populates state; SSE updates fill in the rest incrementally.
+(function boot() {
   const initialRoute = pathToRoute();
-  if (initialRoute.taskId || initialRoute.identifier) {
-    // Direct deep link or refresh on a task URL → render full page
+  const isTaskRoute = !!(initialRoute.taskId || initialRoute.identifier);
+
+  if (isTaskRoute) {
+    // Render task page immediately — no fleet data required.
     openTaskPage(initialRoute, false);
   } else {
+    // Non-task view: activate it now; loadAll() will re-render once data arrives.
     navigateTo(initialRoute.view, initialRoute.org, false);
   }
+
   connectSSE();
   updateDevTourToggleUI();
   if (isWalkthroughActive()) {
     renderWalkthroughHUD();
   }
-});
+
+  // Load fleet/tasks/sessions in the background; re-render non-task views on completion.
+  const t0 = performance.now();
+  loadAll().then(() => {
+    const elapsed = Math.round(performance.now() - t0);
+    console.debug(`[boot] loadAll() completed in ${elapsed} ms`);
+    loadBossReportCache();
+    preloadBossReports(false);
+    // If we are still on a non-task view, re-render it now that fleet data is ready.
+    if (!isTaskRoute) {
+      navigateTo(initialRoute.view, initialRoute.org, false);
+    }
+  });
+}());
 
 // Periodic Boss Card re-render (every 30 minutes)
 setInterval(() => {
