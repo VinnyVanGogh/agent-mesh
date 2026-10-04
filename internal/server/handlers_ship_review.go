@@ -230,8 +230,13 @@ func (h *ShipReviewHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
 	// Block if any migration has not been verified, unless override supplied.
+	// Fail-closed: if we can't determine unverified migrations, block approval.
 	if req.MigrationOverrideReason == "" {
-		unverified, _ := unverifiedMigrations(r.Context(), h.db, task)
+		unverified, unverifiedErr := unverifiedMigrations(r.Context(), h.db, task)
+		if unverifiedErr != nil {
+			writeError(w, http.StatusInternalServerError, "could not check migration verification status: "+unverifiedErr.Error())
+			return
+		}
 		if len(unverified) > 0 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
