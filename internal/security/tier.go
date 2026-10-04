@@ -718,9 +718,12 @@ func (c *Classifier) classifyFetch(name string, args []string, v *Verdict) {
 			v.raise(Red, name+": reads request definition from a file")
 		// curl -c / --cookie-jar: writes cookies to a file.
 		// An agent using this flag against the local daemon would save the board session
-		// cookie for later use in a mutating request.
-		case name == "curl" && (a == "-c" || strings.EqualFold(a, "--cookie-jar") || strings.HasPrefix(lower, "--cookie-jar=")):
+		// cookie for later use in a mutating request. Also detect short-option clusters
+		// that contain 'c' (e.g. -sc, -vc), since curl supports combined short options.
+		case name == "curl" && (strings.EqualFold(a, "--cookie-jar") || strings.HasPrefix(lower, "--cookie-jar=")):
 			v.raise(Red, name+": writes session cookies to a file (possible credential theft)")
+		case name == "curl" && strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsRune(a, 'c'):
+			v.raise(Red, name+": -c flag writes session cookies to a file (possible credential theft)")
 		default:
 			// Non-flag argument: check for board-only endpoints or board bootstrap URLs.
 			// An agent fetching a board bootstrap URL (even via GET) would steal the
