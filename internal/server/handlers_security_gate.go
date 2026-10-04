@@ -142,19 +142,37 @@ func (h *SecurityGateHandler) DecideGateRequest(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Write to governance audit log so the decision (and who made it) is durable.
+	// Write to security_gate_audit_log so the decision (and who made it) is durable.
+	// governance_audit_log has a FK to tasks(id) so it cannot hold gate UUIDs.
 	pendingStatus := string(security.GateRequestPending)
 	decidedStatus := string(gr.Status)
-	_ = governance.LogEvent(h.db, gr.ID, "board", "security_gate_decided",
+	if err := governance.LogGateEvent(h.db, gr.ID, "board", "security_gate_decided",
 		&pendingStatus, &decidedStatus,
 		map[string]any{"cmdline": gr.Cmdline, "decision": string(gr.Status), "run_id": gr.RunID},
-	)
+	); err != nil {
+		http.Error(w, `{"error":"audit log write failed"}`, http.StatusInternalServerError)
+		return
+	}
 
 	h.hub.Publish("security_gate_decided", map[string]any{
 		"id":       gr.ID,
 		"decision": gr.Status,
 	})
 	writeJSON(w, gr)
+}
+
+// ListGateAuditLog handles GET /api/security/gate-requests/{id}/audit-log
+func (h *SecurityGateHandler) ListGateAuditLog(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	entries, err := governance.ListGateAuditLog(h.db, id)
+	if err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+	if entries == nil {
+		entries = []map[string]any{}
+	}
+	writeJSON(w, map[string]any{"audit_log": entries})
 }
 
 // GetSecurityGateSettings handles GET /api/settings/security-gate

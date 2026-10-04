@@ -148,6 +148,10 @@ export class StayPointAPI {
   async listGateRequests(status = 'pending'): Promise<{ gate_requests: Array<{ id: string; cmdline: string; status: string; reasons: string[]; run_id: string; created_at: string }> }> {
     return this.json('GET', `/api/security/gate-requests?status=${status}`);
   }
+
+  async listGateAuditLog(gateId: string): Promise<{ audit_log: Array<{ id: string; gate_id: string; actor_id: string; event_type: string; from_status?: string; to_status?: string; created_at: string }> }> {
+    return this.json('GET', `/api/security/gate-requests/${gateId}/audit-log`);
+  }
 }
 
 /** URL of the full task page, matching taskToPath() in app.js for local tasks. */

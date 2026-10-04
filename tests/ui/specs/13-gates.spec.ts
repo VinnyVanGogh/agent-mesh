@@ -39,7 +39,7 @@ test.describe('Gates page', () => {
     await expect(matchRow.locator('.gate-deny-btn')).toBeVisible();
   });
 
-  test('Deny button records decision and actor in governance_audit_log', async ({ api, boardPage }) => {
+  test('Deny button records decision and actor in security_gate_audit_log', async ({ api, boardPage }) => {
     const cmd = `git push origin main ${Date.now().toString(36)}`;
     const gr = await api.createGateRequest(cmd, ['Red-tier: push to main'], 'run-sta-587-deny');
 
@@ -56,11 +56,19 @@ test.describe('Gates page', () => {
     // Row should update to 'denied' status
     await expect(matchRow.locator('.gate-status-denied')).toBeVisible({ timeout: 5_000 });
 
-    // Verify via API that the decision is persisted
+    // Verify decision persisted in security_gate_requests
     const list = await api.listGateRequests('denied');
     const found = list.gate_requests.find(r => r.id === gr.id);
     expect(found).toBeTruthy();
     expect(found?.status).toBe('denied');
+
+    // Verify audit log entry was written with actor_id = "board"
+    const audit = await api.listGateAuditLog(gr.id);
+    const entry = audit.audit_log.find(e => e.event_type === 'security_gate_decided');
+    expect(entry).toBeTruthy();
+    expect(entry?.actor_id).toBe('board');
+    expect(entry?.from_status).toBe('pending');
+    expect(entry?.to_status).toBe('denied');
   });
 
   test('Approve button records decision', async ({ api, boardPage }) => {
