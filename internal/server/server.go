@@ -181,6 +181,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		mux.Handle("POST /api/settings/ship-review", s.secMid.WrapBoardAction(http.HandlerFunc(shipH.SetSettings)))
 		mux.HandleFunc("GET /api/project-dev-configs", shipH.ListProjectDevConfigs)
 		mux.HandleFunc("PUT /api/project-dev-configs", shipH.UpsertProjectDevConfig)
+		if s.opts.TestMode {
+			mux.HandleFunc("PUT /api/tasks/{id}/ship-review/seed", shipH.SeedCard)
+		}
 	}
 
 	// Embedded web UI (must be registered last so /api/* patterns take precedence)

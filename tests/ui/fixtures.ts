@@ -110,6 +110,14 @@ export class StayPointAPI {
   async markMigrationApplied(id: string, path: string, appliedBy = 'board'): Promise<{ ok: boolean; path: string; applied_by: string }> {
     return this.json('POST', `/api/tasks/${encodeURIComponent(id)}/migrations/mark-applied`, { path, applied_by: appliedBy });
   }
+
+  /** Seeds a ship review card directly into the DB (test-only endpoint). */
+  async upsertShipReview(id: string, status = 'pending'): Promise<{ id: string; status: string; head_sha: string }> {
+    return this.json('PUT', `/api/tasks/${encodeURIComponent(id)}/ship-review/seed`, {
+      status,
+      test_steps: ['Open the preview URL and verify the feature.'],
+    });
+  }
 }
 
 /** URL of the full task page, matching taskToPath() in app.js for local tasks. */

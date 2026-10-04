@@ -7244,7 +7244,7 @@ async function openTaskPage(target, pushHistory = true) {
   const apiBase = isFleet ? '/api/fleet/tasks' : '/api/tasks';
 
   try {
-    const [taskResp, commentsResp, stepsResp, interactionsResp, diffResp, checkpointsResp, runErrorsResp] = await Promise.all([
+    const [taskResp, commentsResp, stepsResp, interactionsResp, diffResp, checkpointsResp, runErrorsResp, shipCardResp] = await Promise.all([
       apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}`),
       apiFetch(`${apiBase}/${encodeURIComponent(resolvedId)}/comments`).catch(() => ({ comments: [] })),
       (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/run-steps`).catch(() => ({ steps: [] })) : Promise.resolve({ steps: [] })),
@@ -7252,6 +7252,7 @@ async function openTaskPage(target, pushHistory = true) {
       (!isFleet ? fetchTaskDiff(resolvedId, '') : Promise.resolve({ diff: '', files: [], checkpoint_id: '' })),
       (!isFleet ? fetchTaskCheckpoints(resolvedId) : Promise.resolve([])),
       (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/run-errors?limit=20`).catch(() => ({ errors: [] })) : Promise.resolve({ errors: [] })),
+      (!isFleet ? apiFetch(`/api/tasks/${encodeURIComponent(resolvedId)}/ship-review`).catch(() => null) : Promise.resolve(null)),
     ]);
     const task = taskResp.task || taskResp;
     const comments = (taskResp.comments && taskResp.comments.length)
@@ -7263,6 +7264,7 @@ async function openTaskPage(target, pushHistory = true) {
     const interactions = interactionsResp?.interactions || [];
     task._diffData = diffResp;
     task._checkpoints = checkpointsResp;
+    const shipCard = (shipCardResp && !shipCardResp.error) ? shipCardResp : null;
 
     if (task.id) state.openDetailTaskId = task.id;
 
@@ -7281,7 +7283,7 @@ async function openTaskPage(target, pushHistory = true) {
     if (task.description) state.taskDescriptions[activeId] = task.description;
     state.taskComments[activeId] = comments;
 
-    renderTaskPage(pageContent, task, comments, interactions, task._diffData, task._checkpoints, task.runErrors);
+    renderTaskPage(pageContent, task, comments, interactions, task._diffData, task._checkpoints, task.runErrors, shipCard);
     startChatPoll(activeId);
   } catch (err) {
     const is404 = err && /^404\b/.test(err.message);
@@ -7334,17 +7336,12 @@ function renderFinalShipReviewCard(taskId, headSHA, status, mainSHA, rejectComme
   return section;
 }
 
-async function renderShipReviewCard(container, taskId) {
-  if (!taskId) return;
-  let card;
-  try {
-    const resp = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review`);
-    card = resp;
-  } catch {
-    return; // no card or fetch error — silently skip
-  }
-
-  if (!card) return;
+// renderShipReviewCardFromData renders the ship review card synchronously from
+// a pre-fetched card object. Pass null/undefined to render nothing.
+// Called both from renderTaskPage (pre-fetched data) and from the async
+// renderShipReviewCard (SSE-triggered refresh).
+function renderShipReviewCardFromData(container, taskId, card) {
+  if (!card || !taskId) return;
 
   // Render collapsed final state for terminal statuses.
   if (card.status === 'approved' || card.status === 'rejected') {
@@ -7555,12 +7552,24 @@ async function renderShipReviewCard(container, taskId) {
   section.appendChild(actions);
   container.appendChild(section);
 
-  // B3: hide Run Now and Mark done while a ship review card is active — the card's
-  // own actions (Approve / Send back / Reject) are the only valid next step.
+  // For SSE-driven re-renders the buttons may already be in the DOM.
+  // Hide them so they don't sit alongside the card's own action buttons.
   const page = container.closest('.task-page-main') || container;
-  for (const btn of page.querySelectorAll('.run-now-btn, .mark-done-btn, .mark-done-error')) {
+  for (const btn of page.querySelectorAll('.run-now-btn, .mark-done-btn, .mark-done-error, .ship-review-see-card-link')) {
     btn.style.display = 'none';
   }
+}
+
+async function renderShipReviewCard(container, taskId) {
+  if (!taskId) return;
+  let card;
+  try {
+    const resp = await apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/ship-review`);
+    card = resp;
+  } catch {
+    return; // no card or fetch error — silently skip
+  }
+  renderShipReviewCardFromData(container, taskId, card);
 }
 
 // ── Migrations panel ──────────────────────────────────────────────────────────
@@ -7826,7 +7835,7 @@ function renderInteractionCards(container, taskId, interactions) {
   container.appendChild(section);
 }
 
-function renderTaskPage(container, task, comments, interactions, diffData, checkpoints, runErrors) {
+function renderTaskPage(container, task, comments, interactions, diffData, checkpoints, runErrors, shipCard) {
   container.innerHTML = '';
 
   // Back bar
@@ -8026,8 +8035,10 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
     main.appendChild(errSection);
   }
 
-  // Ship Review card (when agent has created one for Board approval)
-  renderShipReviewCard(main, task.id || '');
+  // Ship Review card (when agent has created one for Board approval).
+  // Rendered synchronously from the pre-fetched shipCard so it appears
+  // immediately alongside the title with no extra round-trip.
+  renderShipReviewCardFromData(main, task.id || '', shipCard || null);
 
   // Migrations panel — lazy-loads migration files from the task's diff
   if (task.id && !isFleetTaskId(task.id || '')) {
@@ -8169,9 +8180,15 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
     meta.appendChild(lblWrap);
   }
 
+  // A ship review card in pending/sent_back/approved/rejected state blocks
+  // Run Now and Mark done — starting a new run on finished work or closing
+  // without merging both confuse the review flow.
+  const activeCardStatuses = new Set(['pending', 'sent_back', 'approved', 'rejected']);
+  const hasActiveCard = !!(shipCard && activeCardStatuses.has(shipCard.status));
+
   // ── Run Now button ──
   const runableStatuses = new Set(['active', 'todo', 'backlog', 'blocked', 'in_review']);
-  if (task.id && runableStatuses.has(task.status)) {
+  if (task.id && runableStatuses.has(task.status) && !hasActiveCard) {
     const runBtn = el('button', 'run-now-btn', '▶ Run Now');
     runBtn.type = 'button';
     runBtn.addEventListener('click', async () => {
@@ -8193,10 +8210,19 @@ function renderTaskPage(container, task, comments, interactions, diffData, check
       }
     });
     meta.appendChild(runBtn);
+  } else if (task.id && runableStatuses.has(task.status) && shipCard && ['pending', 'sent_back'].includes(shipCard.status)) {
+    const reviewLink = el('a', 'ship-review-see-card-link', '↓ See review card');
+    reviewLink.href = '#';
+    reviewLink.style.cssText = 'display:block;margin-top:8px;font-size:0.85rem;';
+    reviewLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      document.getElementById(`ship-review-${task.id}`)?.scrollIntoView({ behavior: 'smooth' });
+    });
+    meta.appendChild(reviewLink);
   }
 
   // ── Mark done button (in_review only) ──
-  if (task.id && (task.execution_stage === 'in_review' || task.status === 'in_review')) {
+  if (task.id && (task.execution_stage === 'in_review' || task.status === 'in_review') && !hasActiveCard) {
     const doneError = el('div', 'mark-done-error');
     doneError.style.display = 'none';
 

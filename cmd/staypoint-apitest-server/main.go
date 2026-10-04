@@ -102,6 +102,7 @@ func run() error {
 		DB:              store.DB(),
 		TelemetryDBPath: *telemetryDB,
 		GitCommit:       "apitest",
+		TestMode:        true,
 	})
 	if err != nil {
 		return err
