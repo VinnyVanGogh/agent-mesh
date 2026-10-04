@@ -12,6 +12,10 @@ import (
 var boardEndpointRe = regexp.MustCompile(
 	`/(?:ship-review/(?:approve|send-back|reject)|gate-requests/[^/\s'"]+/decide|settings/(?:security-gate|ship-review))`)
 
+// boardBootstrapRe matches the board-session bootstrap URL pattern (board_nonce or board_token
+// query parameter). An agent fetching this URL (even via GET) would obtain the board cookie.
+var boardBootstrapRe = regexp.MustCompile(`[?&]board_(?:nonce|token)=`)
+
 // httpMutationRe detects POST/mutation indicators inside inline scripts.
 var httpMutationRe = regexp.MustCompile(
 	`(?i)\bPOST\b|\.post\s*\(|urlopen\s*\(|method\s*[=:]\s*["']\s*POST`)
@@ -19,6 +23,10 @@ var httpMutationRe = regexp.MustCompile(
 // staypointTokenFileRe matches reads of the staypoint auth/board token files in inline scripts.
 var staypointTokenFileRe = regexp.MustCompile(
 	`/\.staypoint/(?:auth_token|board_token)\b|['"](auth_token|board_token)['"]`)
+
+// ptyForgingRe matches PTY-creation calls in inline scripts that bypass terminal guards.
+var ptyForgingRe = regexp.MustCompile(
+	`(?i)\b(?:pty\.spawn|openpty|os\.openpty|zpty|posix_openpt|forkpty)\s*\(`)
 
 // Tier is a command risk class.
 type Tier int
@@ -656,6 +664,15 @@ func (c *Classifier) classifyStaypoint(args []string, v *Verdict) {
 	v.raise(Yellow, "")
 }
 
+// isMutatingMethod reports whether a HTTP method string is a mutating operation.
+func isMutatingMethod(m string) bool {
+	switch strings.ToUpper(m) {
+	case "POST", "PUT", "PATCH", "DELETE":
+		return true
+	}
+	return false
+}
+
 func (c *Classifier) classifyFetch(name string, args []string, v *Verdict) {
 	v.raise(Yellow, "")
 	for i, a := range args {
@@ -667,34 +684,26 @@ func (c *Classifier) classifyFetch(name string, args []string, v *Verdict) {
 			v.raise(Red, name+": uploads data (possible exfiltration)")
 		// -X POST / --request POST  (separate token)
 		case (a == "-X" || strings.EqualFold(a, "--request")) && i+1 < len(args):
-			switch strings.ToUpper(args[i+1]) {
-			case "POST", "PUT", "PATCH", "DELETE":
+			if isMutatingMethod(args[i+1]) {
 				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
 			}
 		// -XPOST / -X=POST  (combined, with or without =)
 		case strings.HasPrefix(lower, "-x") && len(a) > 2:
-			raw := strings.TrimPrefix(a[2:], "=")
-			switch strings.ToUpper(raw) {
-			case "POST", "PUT", "PATCH", "DELETE":
+			if isMutatingMethod(strings.TrimPrefix(a[2:], "=")) {
 				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
 			}
 		// --request=POST (attached with =)
 		case strings.HasPrefix(lower, "--request="):
-			m := strings.ToUpper(a[strings.Index(a, "=")+1:])
-			switch m {
-			case "POST", "PUT", "PATCH", "DELETE":
+			if isMutatingMethod(a[strings.Index(a, "=")+1:]) {
 				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
 			}
 		// wget --method=POST / wget --method POST
 		case name == "wget" && strings.EqualFold(a, "--method") && i+1 < len(args):
-			switch strings.ToUpper(args[i+1]) {
-			case "POST", "PUT", "PATCH", "DELETE":
+			if isMutatingMethod(args[i+1]) {
 				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
 			}
 		case name == "wget" && strings.HasPrefix(lower, "--method="):
-			m := strings.ToUpper(a[strings.Index(a, "=")+1:])
-			switch m {
-			case "POST", "PUT", "PATCH", "DELETE":
+			if isMutatingMethod(a[strings.Index(a, "=")+1:]) {
 				v.raise(Red, name+": mutating HTTP method (possible exfiltration)")
 			}
 		// wget --post-data / --post-file (already partially caught by --post- prefix above,
@@ -703,6 +712,18 @@ func (c *Classifier) classifyFetch(name string, args []string, v *Verdict) {
 			v.raise(Red, name+": uploads data (possible exfiltration)")
 		case a == "-K" || a == "--config" || (a == "-i" && name == "wget"):
 			v.raise(Red, name+": reads request definition from a file")
+		default:
+			// Non-flag argument: check for board-only endpoints or board bootstrap URLs.
+			// An agent fetching a board bootstrap URL (even via GET) would steal the
+			// board session cookie, granting approve/decide rights.
+			if !strings.HasPrefix(a, "-") {
+				if boardEndpointRe.MatchString(a) {
+					v.raise(Red, name+": URL targets a board-only endpoint (agents cannot call these)")
+				}
+				if boardBootstrapRe.MatchString(a) {
+					v.raise(Red, name+": URL contains board bootstrap credential (board_nonce/board_token)")
+				}
+			}
 		}
 	}
 }
@@ -729,6 +750,8 @@ func (c *Classifier) sensitiveDirs() []string {
 // classifyInlineScript checks an inline script body (from -c / -e / --eval) for:
 //   - reads of staypoint token files
 //   - HTTP POST mutations to board-only API endpoints
+//   - PTY-forging calls that bypass terminal guards
+//   - board bootstrap credential patterns (board_nonce / board_token in URLs)
 //
 // Returns true if a Red verdict was raised.
 func classifyInlineScript(script string, v *Verdict) bool {
@@ -738,6 +761,14 @@ func classifyInlineScript(script string, v *Verdict) bool {
 	}
 	if boardEndpointRe.MatchString(script) && httpMutationRe.MatchString(script) {
 		v.raise(Red, "inline script calls board-only API endpoint (agents cannot self-approve)")
+		return true
+	}
+	if ptyForgingRe.MatchString(script) {
+		v.raise(Red, "inline script creates a pseudo-TTY (bypasses terminal guards)")
+		return true
+	}
+	if boardBootstrapRe.MatchString(script) {
+		v.raise(Red, "inline script contains board bootstrap credential (board_nonce/board_token)")
 		return true
 	}
 	return false

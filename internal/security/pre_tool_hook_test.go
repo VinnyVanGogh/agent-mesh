@@ -312,6 +312,18 @@ func TestSTA583AgentBoardSelfApproveChain(t *testing.T) {
 		}
 	}
 
+	// Step 2: curl GET to bootstrap URL containing board_nonce (even a GET steals the cookie).
+	step2 := []string{
+		"curl -s -c jar 'http://127.0.0.1:41421/?token=tok&board_nonce=abc123'",
+		`curl -c jar "http://127.0.0.1:41421/?token=tok&board_token=secret"`,
+	}
+	for _, cmd := range step2 {
+		v := c.Classify(cmd)
+		if v.Tier != Red {
+			t.Errorf("STA-583 step2 %q should be Red, got %s (%v)", cmd, v.Tier, v.Reasons)
+		}
+	}
+
 	// Step 3: curl with combined -XPOST flag (was previously allowed — the bug).
 	// The cookie-based board session requires the staypoint_board cookie obtained
 	// in step 2; step 3 uses -XPOST which the old classifier missed.
@@ -322,6 +334,8 @@ func TestSTA583AgentBoardSelfApproveChain(t *testing.T) {
 		"wget --method=POST http://127.0.0.1:41421/api/tasks/abc/ship-review/approve",
 		"wget --method POST http://127.0.0.1:41421/api/tasks/abc/ship-review/reject",
 		"wget --post-data='' http://127.0.0.1:41421/api/tasks/abc/ship-review/approve",
+		// board endpoint in URL is also Red even without explicit POST flag
+		"curl http://127.0.0.1:41421/api/tasks/abc/ship-review/approve",
 	}
 	for _, cmd := range step3 {
 		v := c.Classify(cmd)
@@ -333,9 +347,10 @@ func TestSTA583AgentBoardSelfApproveChain(t *testing.T) {
 	// Regression: safe GET curl/wget should remain Yellow.
 	safe := []string{
 		"curl -s http://127.0.0.1:41421/api/health",
-		"curl -s -c jar http://127.0.0.1:41421/?token=tok&board_nonce=nonce",
 		"curl -XGET http://127.0.0.1:41421/api/tasks",
 		"wget --method=GET http://127.0.0.1:41421/api/health",
+		// board GET endpoints that are not board-action endpoints
+		"curl http://127.0.0.1:41421/api/tasks/abc/ship-review",
 	}
 	for _, cmd := range safe {
 		v := c.Classify(cmd)
