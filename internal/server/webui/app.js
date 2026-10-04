@@ -7377,7 +7377,9 @@ function renderShipReviewCardFromData(container, taskId, card) {
   if (card.agent_summary) {
     const summarySection = el('div', 'ship-review-summary-section');
     summarySection.appendChild(el('div', 'ship-review-section-title', 'Agent summary'));
-    const summaryBody = el('pre', 'ship-review-summary-body', card.agent_summary);
+    const summaryBody = el('div', 'ship-review-summary-body markdown-body');
+    // The completion marker is harness plumbing, not part of the summary.
+    summaryBody.innerHTML = renderMarkdown(card.agent_summary.replace(/^\s*\[\[TASK_COMPLETE\]\]\s*$/gm, '').trim());
     summarySection.appendChild(summaryBody);
     section.appendChild(summarySection);
   }
@@ -7387,6 +7389,19 @@ function renderShipReviewCardFromData(container, taskId, card) {
     const migBanner = el('div', 'ship-review-migration-banner');
     migBanner.textContent = '⚠ DB migration detected — apply migration separately before approving.';
     section.appendChild(migBanner);
+    // Show whether each migration has been marked applied (not yet verified).
+    apiFetch(`/api/tasks/${encodeURIComponent(taskId)}/migrations`).then((m) => {
+      const migs = (m && m.migrations) || [];
+      if (!migs.length) return;
+      const pending = migs.filter((x) => !x.applied_at);
+      if (pending.length === 0) {
+        const when = migs.map((x) => x.applied_at).sort().pop();
+        migBanner.className = 'ship-review-migration-banner ship-review-migration-banner--applied';
+        migBanner.textContent = `✓ Migration marked applied by ${migs[0].applied_by || 'board'} (${new Date(when).toLocaleString()}). Not verified against the database yet.`;
+      } else {
+        migBanner.textContent = `⚠ ${pending.length} DB migration${pending.length > 1 ? 's' : ''} not yet marked applied. Apply in the SQL editor, then Mark applied, before approving.`;
+      }
+    }).catch(() => {});
   }
 
   // Dev URL — only render http/https loopback URLs to prevent XSS via javascript: etc.
@@ -7704,7 +7719,12 @@ async function renderMigrationsPanel(container, taskId) {
     const applyBtn = el('button', 'btn btn-secondary btn-sm migration-apply-btn', 'Mark applied');
     applyBtn.title = 'Record that this migration was applied';
     applyBtn.dataset.path = mig.path;
-    applyBtn.dataset.applied = '';
+    applyBtn.dataset.applied = mig.applied_at ? '1' : '';
+    if (mig.applied_at) {
+      applyBtn.textContent = '✓ Marked applied';
+      applyBtn.title = `Marked applied by ${mig.applied_by || 'board'} at ${new Date(mig.applied_at).toLocaleString()} (not verified against the database)`;
+      card.classList.add('migration-applied');
+    }
     applyBtn.addEventListener('click', async () => {
       if (applyBtn.dataset.applied) return;
       applyBtn.disabled = true;
