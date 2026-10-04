@@ -4,14 +4,18 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/VinnyVanGogh/staypoint/internal/db"
 	"github.com/VinnyVanGogh/staypoint/internal/orchestrator"
+	"github.com/VinnyVanGogh/staypoint/internal/server"
 )
 
 // openTestStore opens a real SQLite store in a temp dir with the full schema.
@@ -203,3 +207,123 @@ func TestWireOnWake_ParseDeltaUsesClaudeAdapter(t *testing.T) {
 		t.Error("no tool/text steps recorded in run_steps; ClaudeAdapter stream parsing is broken (AdapterFor may be using wrong provider)")
 	}
 }
+
+// TestStaypointd_BoardToken_PersistedAndUsable is an E2E test on the staypointd
+// options path (not just the apitest server). It verifies:
+//  1. When BoardTokenPath is set (as it now is in runDaemon), the board_token
+//     file is written to DataDir at server startup.
+//  2. A Board session bootstrapped with the persisted board_token can call a
+//     WrapBoardAction-protected endpoint and receives 200 (not 403).
+//  3. An agent-only request (no staypoint_board cookie) to the same endpoint
+//     receives 403, confirming agents cannot self-approve Board actions.
+func TestStaypointd_BoardToken_PersistedAndUsable(t *testing.T) {
+	dataDir := t.TempDir()
+	boardTokenPath := filepath.Join(dataDir, "board_token")
+
+	store := openTestStore(t)
+
+	// Mirror the server.Options now used by runDaemon.
+	srv, err := server.New(server.Options{
+		BindHost:       "127.0.0.1",
+		Port:           0, // ephemeral
+		TokenPath:      filepath.Join(dataDir, "auth_token"),
+		BoardTokenPath: boardTokenPath,
+		DB:             store.DB(),
+	})
+	if err != nil {
+		t.Fatalf("server.New: %v", err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatalf("srv.Start: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	})
+
+	// 1. board_token file must have been written to DataDir.
+	data, err := os.ReadFile(boardTokenPath)
+	if err != nil {
+		t.Fatalf("board_token file not created at %s: %v", boardTokenPath, err)
+	}
+	boardToken := strings.TrimSpace(string(data))
+	if len(boardToken) < 16 {
+		t.Fatalf("board_token too short: %q", boardToken)
+	}
+	if boardToken != srv.BoardToken() {
+		t.Errorf("persisted board_token %q != srv.BoardToken() %q", boardToken, srv.BoardToken())
+	}
+
+	authToken := srv.Token()
+	base := srv.URL()
+
+	// Bootstrap a board session using the persisted board_token.
+	// The middleware sets the staypoint_board cookie on the /?token=…&board_token=… redirect.
+	jar := newTestCookieJar()
+	client := &http.Client{
+		Jar: jar,
+		// Follow redirects so the cookie is captured.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return nil
+		},
+	}
+	bootstrapURL := fmt.Sprintf("%s/?token=%s&board_token=%s", base, authToken, boardToken)
+	resp, err := client.Get(bootstrapURL)
+	if err != nil {
+		t.Fatalf("bootstrap GET: %v", err)
+	}
+	resp.Body.Close()
+
+	// Confirm staypoint_board cookie was set.
+	var gotBoardCookie bool
+	for _, c := range jar.cookies {
+		if c.Name == "staypoint_board" {
+			gotBoardCookie = true
+			break
+		}
+	}
+	if !gotBoardCookie {
+		t.Fatal("staypoint_board cookie was not set after bootstrap with valid board_token")
+	}
+
+	// 2. Board session → POST /api/settings/security-gate must return something other than 403.
+	// (It may return 400/422 due to missing body, but not 403 — the board gate is passed.)
+	req, _ := http.NewRequest("POST", base+"/api/settings/security-gate", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer "+authToken)
+	req.Header.Set("Content-Type", "application/json")
+	for _, c := range jar.cookies {
+		req.AddCookie(c)
+	}
+	resp2, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("board-session POST: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode == http.StatusForbidden {
+		t.Errorf("board session got 403 Forbidden on /api/settings/security-gate; board cookie gate is broken")
+	}
+
+	// 3. Agent-only (no board cookie) → must get 403.
+	req3, _ := http.NewRequest("POST", base+"/api/settings/security-gate", strings.NewReader(`{}`))
+	req3.Header.Set("Authorization", "Bearer "+authToken)
+	req3.Header.Set("Content-Type", "application/json")
+	resp3, err := http.DefaultClient.Do(req3)
+	if err != nil {
+		t.Fatalf("agent-only POST: %v", err)
+	}
+	resp3.Body.Close()
+	if resp3.StatusCode != http.StatusForbidden {
+		t.Errorf("agent-only request expected 403, got %d", resp3.StatusCode)
+	}
+}
+
+// testCookieJar is a minimal http.CookieJar for tests.
+type testCookieJar struct{ cookies []*http.Cookie }
+
+func newTestCookieJar() *testCookieJar { return &testCookieJar{} }
+
+func (j *testCookieJar) SetCookies(_ *url.URL, cookies []*http.Cookie) {
+	j.cookies = append(j.cookies, cookies...)
+}
+func (j *testCookieJar) Cookies(_ *url.URL) []*http.Cookie { return j.cookies }

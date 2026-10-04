@@ -70,11 +70,72 @@ Features:
 	},
 }
 
+// boardURLCmd prints the Board bootstrap URL so the human can open a Board
+// session in their browser. It is TTY-gated: it refuses to run when stdout is
+// not a terminal or when STAYPOINT_TASK_ID is set (agent context), so the
+// board_token credential is never captured in logs or piped output.
+var boardURLCmd = &cobra.Command{
+	Use:   "url",
+	Short: "Print the Board bootstrap URL (TTY-only; refuses in agent context)",
+	Long: `Print the Board bootstrap URL containing the auth token and board token.
+Open the URL in a browser to start a Board session with full approve/reject/decide rights.
+
+Refused when:
+  - stdout is not a terminal (prevents credential capture in logs/pipes)
+  - STAYPOINT_TASK_ID is set (running inside an agent harness)
+
+The board_token is read from DataDir/board_token, which staypointd persists on startup.
+Run 'scripts/reinstall-daemon.sh' once after upgrading to create the file.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Refuse in agent context.
+		if os.Getenv("STAYPOINT_TASK_ID") != "" {
+			return fmt.Errorf("board url: refused in agent context (STAYPOINT_TASK_ID is set)")
+		}
+		// Refuse when stdout is not a TTY.
+		fi, err := os.Stdout.Stat()
+		if err != nil || (fi.Mode()&os.ModeCharDevice) == 0 {
+			return fmt.Errorf("board url: stdout is not a terminal; refusing to print board credential")
+		}
+
+		if cfg == nil {
+			return fmt.Errorf("board url: config not loaded")
+		}
+
+		authTokenPath := filepath.Join(cfg.DataDir, "auth_token")
+		boardTokenPath := filepath.Join(cfg.DataDir, "board_token")
+
+		authData, err := os.ReadFile(authTokenPath)
+		if err != nil {
+			return fmt.Errorf("board url: cannot read auth token from %s: %w", authTokenPath, err)
+		}
+		authToken := strings.TrimSpace(string(authData))
+		if len(authToken) < 16 {
+			return fmt.Errorf("board url: auth token at %s is too short or invalid", authTokenPath)
+		}
+
+		boardData, err := os.ReadFile(boardTokenPath)
+		if err != nil {
+			return fmt.Errorf("board url: cannot read board token from %s: %w\nRun 'scripts/reinstall-daemon.sh' to create it", boardTokenPath, err)
+		}
+		boardToken := strings.TrimSpace(string(boardData))
+		if len(boardToken) < 16 {
+			return fmt.Errorf("board url: board token at %s is too short or invalid", boardTokenPath)
+		}
+
+		daemonURL, _ := cmd.Flags().GetString("daemon-url")
+		fmt.Printf("%s/?token=%s&board_token=%s\n", daemonURL, authToken, boardToken)
+		return nil
+	},
+}
+
 func init() {
 	boardCmd.Flags().String("db", "", "Path to SQLite database")
 	boardCmd.Flags().String("daemon-url", "http://127.0.0.1:41421", "Daemon HTTP/SSE server URL")
 	boardCmd.Flags().String("token", "", "Daemon authentication token")
 	boardCmd.Flags().Bool("standalone", false, "Force standalone mode without connecting to daemon SSE")
+
+	boardURLCmd.Flags().String("daemon-url", "http://127.0.0.1:41421", "Daemon base URL")
+	boardCmd.AddCommand(boardURLCmd)
 
 	rootCmd.AddCommand(boardCmd)
 }
