@@ -3744,11 +3744,14 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
   padding: 16px 18px;
   background: rgba(79,142,247,.07);
   margin-bottom: 12px;
+  min-width: 0;
+  overflow: hidden;
 }
 .ship-review-header {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
   margin-bottom: 12px;
 }
 .ship-review-badge {
@@ -3759,12 +3762,14 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
   border-radius: 4px;
   background: var(--accent, #4f8ef7);
   color: #fff;
+  white-space: nowrap;
 }
 .ship-review-status-badge {
   font-size: 11px;
   font-weight: 600;
   padding: 3px 8px;
   border-radius: 4px;
+  white-space: nowrap;
 }
 .ship-review-status-badge.status-pending { background: rgba(79,142,247,.2); color: var(--accent, #4f8ef7); }
 .ship-review-status-badge.status-sent_back { background: rgba(248,196,54,.15); color: #f8c436; }
@@ -3775,27 +3780,37 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
   border-left: 3px solid #f8c436;
   border-radius: 4px;
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 .ship-review-feedback-label { font-weight: 600; margin-bottom: 4px; color: #f8c436; font-size: 11px; }
+.ship-review-feedback-body { overflow-wrap: anywhere; }
 .ship-review-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
   font-size: 13px;
   margin-bottom: 8px;
+  min-width: 0;
 }
 .ship-review-row-label {
   min-width: 80px;
+  flex-shrink: 0;
   font-weight: 600;
   color: var(--text-muted, #7f849c);
   font-size: 11px;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 .ship-review-dev-link {
   color: var(--accent, #4f8ef7);
   text-decoration: none;
   font-family: monospace;
   font-size: 13px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 .ship-review-dev-link:hover { text-decoration: underline; }
 .ship-review-restart-btn {
@@ -3806,6 +3821,7 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
   border: 1px solid var(--border, #30304a);
   color: var(--text-muted, #7f849c);
   cursor: pointer;
+  flex-shrink: 0;
 }
 .ship-review-restart-btn:hover { color: var(--text, #cdd6f4); }
 .ship-review-sha {
@@ -3814,11 +3830,15 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
   background: var(--surface2, #28283e);
   padding: 2px 6px;
   border-radius: 4px;
+  flex-shrink: 0;
 }
 .ship-review-branch {
   font-size: 11px;
   color: var(--text-muted, #7f849c);
   font-family: monospace;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 .ship-review-section-title {
   font-size: 11px;
@@ -3835,7 +3855,16 @@ body:has(#sidebar.collapsed) .detail-panel.full-page {
   font-size: 13px;
   line-height: 1.6;
 }
-.ship-review-test-step { margin-bottom: 2px; }
+.ship-review-test-step {
+  margin-bottom: 2px;
+  overflow-wrap: anywhere;
+}
+.ship-review-test-step > code, .ship-review-test-step > pre {
+  white-space: pre-wrap;
+  overflow-x: auto;
+  display: block;
+  max-width: 100%;
+}
 .ship-review-actions {
   display: flex;
   gap: 8px;

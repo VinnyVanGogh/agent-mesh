@@ -7449,7 +7449,9 @@ function renderShipReviewCardFromData(container, taskId, card) {
     testSection.appendChild(el('div', 'ship-review-section-title', 'What to test'));
     const list = el('ol', 'ship-review-test-list');
     for (const step of card.test_steps) {
-      list.appendChild(el('li', 'ship-review-test-step', step));
+      // Strip leading "1. " / "1) " the agent already included — <ol> adds its own.
+      const text = step.replace(/^\s*\d+[.)]\s*/, '');
+      list.appendChild(el('li', 'ship-review-test-step', text));
     }
     testSection.appendChild(list);
     section.appendChild(testSection);
